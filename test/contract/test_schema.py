@@ -107,7 +107,7 @@ def main() -> int:
     conn = connect()
 
     objects = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
-    record("DDL executes", "schema", objects == 77, f"{objects} objects in sqlite_master")
+    record("DDL executes", "schema", objects == 80, f"{objects} objects in sqlite_master")
 
     seed(conn)
     record("seed rows", "schema", True, "goal / specnode / screen / pin / doc / block / link")
@@ -125,6 +125,11 @@ def main() -> int:
     obj_insert(conn, "pin parent is not a screen", kind="pin", subtype="policy", state="open",
                parent_id="N_bbbbbbbbbbbb")
     obj_insert(conn, "props is not JSON", kind="goal", props="not json")
+    expect_reject(
+        conn,
+        "project without a name",
+        "INSERT INTO project(id,name,created_at,updated_at) VALUES('PRJ_000000000001','   ','t','t')",
+    )
 
     expect_reject(conn, "obj.kind is immutable",
                   "UPDATE obj SET kind='goal' WHERE id='N_bbbbbbbbbbbb'")
@@ -213,6 +218,12 @@ def main() -> int:
 
     # ── 10 more normal paths (11 with the publish record above) ────────────
     normal_paths = [
+        ("project registry",
+         "INSERT INTO project(id,name,created_at,updated_at) "
+         "VALUES('PRJ_000000000001','주문 상세','t','t')"),
+        ("object belonging to a project",
+         "INSERT INTO obj(id,project_id,kind,title,props,state,rev,hash,created_at,updated_at) "
+         "VALUES('G_100000000001','PRJ_000000000001','goal','프로젝트 소속','{}','active',1,'h','t','t')"),
         ("state_def L0",
          "INSERT INTO state_def(id,screen_id,name,level,ref,selectors,evidence) "
          "VALUES('ST_000000000010','S_cccccccccccc','default','L0','figma://f/9','{}',0)"),

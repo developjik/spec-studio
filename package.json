@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": "^20.19 || >=22.12"
+    "node": ">=22.14"
   },
   "scripts": {
     "dev": "pnpm --filter @spec-studio/web dev",

@@ -5,6 +5,7 @@ interface TopBarProps {
   onExport: () => void;
   onImport: () => void;
   onReset: () => void;
+  onOpenOutputs: () => void;
 }
 
 function sourceLabel(screen: Screen): string {
@@ -18,13 +19,13 @@ function sourceLabel(screen: Screen): string {
   }
 }
 
-export function TopBar({ screen, onExport, onImport, onReset }: TopBarProps) {
+export function TopBar({ screen, onExport, onImport, onReset, onOpenOutputs }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">spec-studio</span>
-        <span className="chip">W1</span>
+        <span className="chip">W2</span>
       </div>
 
       {screen !== null && (
@@ -42,6 +43,16 @@ export function TopBar({ screen, onExport, onImport, onReset }: TopBarProps) {
           <span className="topbar-note">브라우저에서만 동작하는 프로토타입</span>
         ) : (
           <>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={onOpenOutputs}
+              data-testid="open-outputs"
+              title="오버레이 PNG · 정적 HTML · QA CSV"
+            >
+              출력 3종
+            </button>
+            <span className="topbar-divider" aria-hidden="true" />
             <button type="button" className="btn" onClick={onExport}>
               JSON 내보내기
             </button>

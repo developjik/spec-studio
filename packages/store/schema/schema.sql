@@ -10,9 +10,21 @@ PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
 PRAGMA user_version = 11;
 
+-- 0. 프로젝트 ───────────────────────────────────────────────────
+-- One database file is one project. The row is how the file introduces
+-- itself; `obj.project_id` says which objects belong to it. Without it the
+-- store could read screens and pins but never know whose they were.
+CREATE TABLE project (
+  id         TEXT PRIMARY KEY,                 -- PRJ_ + nanoid(12)
+  name       TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 1. 기획 객체 ─────────────────────────────────────────────────────
 CREATE TABLE obj (
   id          TEXT PRIMARY KEY,                 -- G_/I_/N_/S_/P_/C_/V_ + nanoid(12)
+  project_id  TEXT REFERENCES project(id) ON DELETE RESTRICT,
   kind        TEXT NOT NULL
               CHECK (kind IN ('goal','insight','specnode','screen','pin','contract','verification')),
   subtype     TEXT,   -- specnode: ia|requirement|policy · pin: function|policy|exception|state|data|permission · contract: api|state|event
@@ -51,6 +63,7 @@ CREATE TABLE obj (
 );
 CREATE INDEX obj_kind    ON obj(kind, subtype, state) WHERE deleted_at IS NULL;
 CREATE INDEX obj_parent  ON obj(parent_id);
+CREATE INDEX obj_project ON obj(project_id, kind) WHERE deleted_at IS NULL;
 CREATE INDEX obj_hash    ON obj(hash);
 
 -- 부모 종류 고정: pin의 부모는 screen, specnode(ia/requirement)의 부모는 specnode
@@ -345,6 +358,11 @@ CREATE TABLE ui_state (
 );
 
 -- 12. 검색: trigram + 한글 음절 바이그램 보조 + 청크 매핑 ───────────
+-- @optional-fts5
+-- FTS5은 SQLite 빌드 옵션이다. Node가 함께 배포하는 SQLite에는 빠져 있을 수
+-- 있으므로 런타임 어댑터는 이 줄 아래만 건너뛴다 — 검색 인덱스가 없어도
+-- 프로젝트·화면·핀은 그대로 저장된다. 계약 시험은 항상 이 절까지 적용해
+-- 스키마 전체(80 objects)를 검사한다.
 CREATE TABLE search_chunk (
   id       INTEGER PRIMARY KEY,                 -- search.rowid와 동일
   block_id TEXT NOT NULL REFERENCES block(id) ON DELETE CASCADE,

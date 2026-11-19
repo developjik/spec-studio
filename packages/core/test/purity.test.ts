@@ -5,6 +5,20 @@ import { describe, expect, it } from 'vitest';
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 
+async function sources(dir: string, prefix = ''): Promise<Array<{ name: string; text: string }>> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: Array<{ name: string; text: string }> = [];
+  for (const entry of entries) {
+    const name = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      files.push(...(await sources(join(dir, entry.name), name)));
+    } else if (entry.name.endsWith('.ts')) {
+      files.push({ name, text: await readFile(join(dir, entry.name), 'utf8') });
+    }
+  }
+  return files;
+}
+
 /**
  * `core-is-pure` is enforced two ways: dependency-cruiser blocks I/O imports,
  * and this test blocks the clock and randomness, which no import graph sees.
@@ -22,14 +36,13 @@ const FORBIDDEN: Array<{ name: string; pattern: RegExp }> = [
 
 describe('core purity', () => {
   it('never reaches for the clock, randomness or I/O', async () => {
-    const files = (await readdir(SRC)).filter((file) => file.endsWith('.ts'));
+    const files = await sources(SRC);
     expect(files.length).toBeGreaterThan(0);
 
     const offences: string[] = [];
     for (const file of files) {
-      const text = await readFile(join(SRC, file), 'utf8');
       for (const rule of FORBIDDEN) {
-        if (rule.pattern.test(text)) offences.push(`${file}: ${rule.name}`);
+        if (rule.pattern.test(file.text)) offences.push(`${file.name}: ${rule.name}`);
       }
     }
 

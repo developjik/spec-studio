@@ -10,12 +10,16 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
     "test:contract": "python3 ../../test/contract/test_schema.py"
   },
   "dependencies": {
+    "@spec-studio/core": "workspace:*",
     "@spec-studio/protocol": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "~5.9.3"
+    "@types/node": "^22.15.0",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.12"
   }
 }

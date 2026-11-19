@@ -28,6 +28,11 @@ export const CommandSchema = z.discriminatedUnion('type', [
     pinType: PinTypeSchema.optional(),
     title: z.string().trim().min(1).max(120).optional(),
     body: z.string().max(4000).optional(),
+    /**
+     * A drag on the screen is the same edit: the anchor moves, the number
+     * does not. Kept on `pin.update` so repositioning has one write path.
+     */
+    anchor: AnchorSchema.optional(),
   }),
   z.object({
     type: z.literal('pin.delete'),

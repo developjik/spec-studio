@@ -1111,3 +1111,301 @@ button {
     transition: none !important;
   }
 }
+
+/* ── pin editor (W2) ─────────────────────────────────────────────────── */
+
+.editor {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 12px 0;
+  padding: 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg-sub);
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.editor-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.editor .icon-btn,
+.modal .icon-btn {
+  margin-top: 0;
+  opacity: 0.75;
+}
+
+.editor .icon-btn:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.editor-hint {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-dirty {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ── dragging a pin ─────────────────────────────────────────────────── */
+
+.stage.is-dragging {
+  cursor: grabbing;
+}
+
+.stage.is-dragging .stage-image {
+  cursor: grabbing;
+}
+
+.pin.is-dragging {
+  z-index: 15;
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.12);
+  box-shadow:
+    0 0 0 5px rgba(36, 83, 201, 0.22),
+    0 4px 12px rgba(15, 18, 22, 0.4);
+}
+
+
+/* ── output modal (W2) ──────────────────────────────────────────────── */
+
+.topbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.modal-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 18, 22, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 100%);
+  height: min(760px, calc(100vh - 48px));
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 24px 64px rgba(15, 18, 22, 0.3);
+  overflow: hidden;
+}
+
+.modal-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-title h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.modal-title p {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.modal-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 10px 16px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 2px solid transparent;
+  background: var(--bg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.modal-tab:last-child {
+  border-right: 0;
+}
+
+.modal-tab:hover {
+  background: var(--bg-sub);
+}
+
+.modal-tab.is-active {
+  border-bottom-color: var(--ink);
+  background: var(--bg-sub);
+}
+
+.modal-tab-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.modal-tab-hint {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.modal-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-sub);
+  padding: 16px;
+}
+
+.modal-loading,
+.modal-error {
+  margin: 0;
+  padding: 18px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.modal-error {
+  color: var(--danger);
+}
+
+.preview-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.preview-figure img {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--line-2);
+  background: #fff;
+}
+
+.preview-figure figcaption {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.preview-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border: 1px solid var(--line-2);
+  background: #fff;
+}
+
+.preview-code {
+  margin: 0;
+  padding: 14px;
+  min-height: 100%;
+  border: 1px solid var(--line-2);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.modal-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.modal-file {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.modal-file .mono {
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.modal-size {
+  font-family: var(--mono);
+  flex: none;
+}
+
+.modal-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 760px) {
+  .modal-tabs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modal-tab {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .modal-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

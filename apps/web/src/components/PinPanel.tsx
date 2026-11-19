@@ -11,16 +11,20 @@ import {
   pinLabel,
   type PinFilter,
 } from '@spec-studio/core';
+import { PinEditor, type PinEditInput } from './PinEditor';
 
 interface PinPanelProps {
   pins: Pin[];
   filter: PinFilter;
   screenCode: string;
   nextNumber: number;
+  pinSeq: number;
   selectedPinId: string | null;
   onFilter: (filter: PinFilter) => void;
   onSelect: (pinId: string) => void;
   onDelete: (pin: Pin) => void;
+  onUpdate: (pinId: string, input: PinEditInput) => void;
+  onCloseEditor: () => void;
 }
 
 export function PinPanel({
@@ -28,15 +32,19 @@ export function PinPanel({
   filter,
   screenCode,
   nextNumber,
+  pinSeq,
   selectedPinId,
   onFilter,
   onSelect,
   onDelete,
+  onUpdate,
+  onCloseEditor,
 }: PinPanelProps) {
   const counts = countByType(pins);
   const visible = filterPins(pins, filter);
-  const gaps = missingPinNumbers(pins);
+  const gaps = missingPinNumbers(pins, pinSeq);
   const allCount = pins.length;
+  const selected = pins.find((pin) => pin.id === selectedPinId) ?? null;
 
   return (
     <aside className="pin-panel" aria-label="핀 목록" data-testid="pin-panel">
@@ -49,6 +57,16 @@ export function PinPanel({
           다음 #{nextNumber}
         </span>
       </div>
+
+      {selected !== null && (
+        <PinEditor
+          key={selected.id}
+          pin={selected}
+          screenCode={screenCode}
+          onSave={(input) => onUpdate(selected.id, input)}
+          onClose={onCloseEditor}
+        />
+      )}
 
       <div className="filters" role="group" aria-label="핀 타입 필터">
         <button

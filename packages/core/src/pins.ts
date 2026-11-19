@@ -29,10 +29,14 @@ export function pinLabel(screenCode: string, number: number): string {
 /**
  * Numbers that were handed out and are no longer present. They stay gaps
  * forever: a renumbering would make every published reference to them false.
+ *
+ * `upTo` is the screen's high-water mark (`pinSeq`). It matters when the
+ * *last* pin was deleted: without the mark there is no surviving pin to
+ * compare against, and the gap would silently disappear.
  */
-export function missingPinNumbers(pins: readonly Pin[]): number[] {
+export function missingPinNumbers(pins: readonly Pin[], upTo?: number): number[] {
   const present = new Set(pins.map((pin) => pin.number));
-  const top = pinHighWater(pins);
+  const top = Math.max(pinHighWater(pins), Math.trunc(upTo ?? 0));
   const gaps: number[] = [];
   for (let n = 1; n <= top; n += 1) {
     if (!present.has(n)) gaps.push(n);

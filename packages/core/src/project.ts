@@ -2,6 +2,7 @@ import {
   PinSchema,
   type Command,
   type DomainEvent,
+  type Anchor,
   type Pin,
   type Project,
   type Screen,
@@ -42,6 +43,14 @@ const round = (value: number, places = 4): number => {
 };
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+/** A click or a drag both land in 0..1; anything else is a bug upstream. */
+function requireAnchor(anchor: Anchor): Anchor {
+  if (anchor.x < 0 || anchor.x > 1 || anchor.y < 0 || anchor.y > 1) {
+    throw new DomainError('invalid_input', 'anchor must be inside the screen (0..1)');
+  }
+  return { x: round(clamp01(anchor.x)), y: round(clamp01(anchor.y)) };
+}
 
 export function createProject(input: { id: string; name: string; at: string }): Project {
   if (input.id.trim() === '') throw new DomainError('invalid_input', 'project id is required');
@@ -115,9 +124,7 @@ export function execute(
       const screen = requireScreen(project, command.screenId);
       const title = command.title.trim();
       if (title === '') throw new DomainError('invalid_input', 'a pin needs a title');
-      if (command.anchor.x < 0 || command.anchor.x > 1 || command.anchor.y < 0 || command.anchor.y > 1) {
-        throw new DomainError('invalid_input', 'anchor must be inside the screen (0..1)');
-      }
+      const anchor = requireAnchor(command.anchor);
       const number = nextPinNumber(project.pinSeq);
       const pin = PinSchema.parse({
         id: ctx.nextId('pin'),
@@ -126,7 +133,7 @@ export function execute(
         type: command.pinType,
         title,
         body: command.body.trim(),
-        anchor: { x: round(clamp01(command.anchor.x)), y: round(clamp01(command.anchor.y)) },
+        anchor,
         createdAt: ctx.at,
         updatedAt: ctx.at,
       });
@@ -150,11 +157,14 @@ export function execute(
       }
       const title = command.title === undefined ? current.title : command.title.trim();
       if (title === '') throw new DomainError('invalid_input', 'a pin needs a title');
+      const anchor =
+        command.anchor === undefined ? current.anchor : requireAnchor(command.anchor);
       const pin = PinSchema.parse({
         ...current,
         type: command.pinType ?? current.type,
         title,
         body: command.body === undefined ? current.body : command.body.trim(),
+        anchor,
         updatedAt: ctx.at,
       });
       return {

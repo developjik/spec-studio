@@ -13,6 +13,8 @@ import { EntryGate } from './components/EntryGate';
 import { CanvasStage } from './components/CanvasStage';
 import { PinPanel } from './components/PinPanel';
 import type { PinDraftInput } from './components/PinComposer';
+import type { PinEditInput } from './components/PinEditor';
+import { OutputModal } from './components/OutputModal';
 import { newPinId, newProjectId, newScreenId } from './model/ids';
 import {
   clearStoredProject,
@@ -43,6 +45,7 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [outputOpen, setOutputOpen] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
 
@@ -242,6 +245,27 @@ export default function App() {
     if (result !== null && selectedPinId === pin.id) setSelectedPinId(null);
   };
 
+  /** Editing a pin's type, title or body — the number is not in the command. */
+  const updatePin = (pinId: string, input: PinEditInput) => {
+    const screen = project?.screen ?? null;
+    if (screen === null) return;
+    applyCommand({
+      type: 'pin.update',
+      screenId: screen.id,
+      pinId,
+      pinType: input.pinType,
+      title: input.title,
+      body: input.body,
+    });
+  };
+
+  /** A drag on the image: same command, only the anchor changes. */
+  const movePin = (pinId: string, anchor: Anchor) => {
+    const screen = project?.screen ?? null;
+    if (screen === null) return;
+    applyCommand({ type: 'pin.update', screenId: screen.id, pinId, anchor });
+  };
+
   const reset = () => {
     if (
       !window.confirm('현재 화면과 핀을 모두 지우고 처음으로 돌아갑니다. 계속할까요?')
@@ -253,6 +277,7 @@ export default function App() {
     setDraftAnchor(null);
     setFilter('all');
     setGateError(null);
+    setOutputOpen(false);
     clearStoredProject();
   };
 
@@ -286,6 +311,7 @@ export default function App() {
         }}
         onImport={() => importInput.current?.click()}
         onReset={reset}
+        onOpenOutputs={() => setOutputOpen(true)}
       />
 
       <input
@@ -335,6 +361,7 @@ export default function App() {
                 setSelectedPinId(null);
               }}
               onSelectPin={setSelectedPinId}
+              onMovePin={movePin}
               onSavePin={savePin}
               onCancelDraft={() => setDraftAnchor(null)}
             />
@@ -352,10 +379,13 @@ export default function App() {
             filter={filter}
             screenCode={screen.code}
             nextNumber={nextNumber}
+            pinSeq={project.pinSeq}
             selectedPinId={selectedPinId}
             onFilter={setFilter}
             onSelect={setSelectedPinId}
             onDelete={deletePin}
+            onUpdate={updatePin}
+            onCloseEditor={() => setSelectedPinId(null)}
           />
         </main>
       ) : (
@@ -370,6 +400,14 @@ export default function App() {
       )}
 
       {dragging && <div className="drop-veil">이미지를 놓으면 화면으로 등록됩니다</div>}
+      {outputOpen && screen !== null && project !== null && (
+        <OutputModal
+          screen={screen}
+          pins={pins}
+          pinSeq={project.pinSeq}
+          onClose={() => setOutputOpen(false)}
+        />
+      )}
       {notice !== null && (
         <div className={`toast${notice.tone === 'error' ? ' toast--error' : ''}`} role="status">
           {notice.text}

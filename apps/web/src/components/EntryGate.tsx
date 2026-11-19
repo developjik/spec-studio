@@ -19,7 +19,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
   return (
     <main className="gate">
       <div className="gate-inner">
-        <p className="eyebrow">W1 · 첫 3분</p>
+        <p className="eyebrow">W2 · 첫 3분</p>
         <h1>
           화면 한 장이면
           <br />

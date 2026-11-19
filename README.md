@@ -6,9 +6,10 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
-> **Status: W1 prototype.** The browser app in `apps/web` is the first-week entry point. The
-> SQLite schema and its contract tests are in place; the daemon and the store adapter are the
-> next milestone. See [Scope](#scope--what-w1-does-not-do-yet).
+> **Status: W2.** The browser app in `apps/web` edits and moves pins and produces the three
+> handoff outputs. `packages/store` has a working SQLite adapter with round-trip tests; the web
+> build still keeps its project in `localStorage`, because the renderer may not import the store.
+> The daemon that connects the two is the next milestone.
 
 ## Why
 
@@ -31,16 +32,30 @@ Three commitments follow from that:
   screen, or register a Figma frame URL.
 - **Numbered pins in three types** — 기능(function) · 정책(policy) · 예외(exception), each with a
   title and a description, placed at the exact point you clicked.
+- **Edit in place** — click a pin or its row to change its type, title and description. The
+  number is not a field on the form, because it cannot change.
+- **Move by dragging** — drag a marker on the screenshot and its `(x, y)` anchor follows the
+  pointer; the number stays with it.
 - **A pin panel that tells the truth** — filter by type, select, delete; deleted numbers appear
   as **결번** (gaps) and are never reused. The next number is always visible.
-- **Local persistence** — the project survives a reload in `localStorage`, and exports/imports
-  as plain JSON.
-- **Schema contract test** — 23 constraints that must reject bad data and 11 normal paths that
+- **Three handoff outputs, built from one read of the pins**:
+  1. **Overlay PNG** — the screenshot with numbered, type-coloured markers composited at the
+     image's own resolution;
+  2. **Static HTML** — one self-contained file: inline CSS, base64 image, the three tables and
+     the gap notice. It opens from `file://` with **zero network requests**;
+  3. **QA CSV** — UTF-8 with a BOM (so Excel reads `기능` correctly), CRLF, and the nine promised
+     columns. `케이스ID` is derived from the pin number, so deleting a pin never renumbers a case.
+- **A SQLite adapter** — `openSqliteStore()` reads and writes projects, screens and pins against
+  `schema.sql`, applies every command through core in one transaction, records events and
+  `op_log` rows, and keeps deleted pins as tombstones so the number survives in the file.
+- **Local persistence in the app** — the project survives a reload in `localStorage`, and
+  exports/imports as plain JSON.
+- **Schema contract test** — 24 constraints that must reject bad data and 13 normal paths that
   must insert, run against real SQLite.
 
 ## Quick start
 
-Node 20.19+ and pnpm 9.15.4 (via corepack):
+Node 22.14+ (the store uses the runtime's own `node:sqlite`) and pnpm 9.15.4 (via corepack):
 
 ```bash
 corepack enable          # pnpm 9.15.4
@@ -52,7 +67,7 @@ Verification, the same commands CI runs:
 
 ```bash
 pnpm typecheck           # tsc --noEmit across the workspace
-pnpm test                # vitest: pin numbering, command semantics, core purity
+pnpm test                # vitest: pin numbering, command semantics, purity, SQLite round trip
 pnpm build               # vite production build
 pnpm dep:check           # dependency-cruiser boundary rules
 pnpm test:contract       # python3 test/contract/test_schema.py
@@ -65,11 +80,12 @@ The contract test needs only Python 3 (standard library `sqlite3`).
 
 ```
 apps/
-  web/                 React 19 + Vite shell — the W1 entry point
+  web/                 React 19 + Vite shell — pins, editing, drag, the three outputs
 packages/
   protocol/            Zod: object kinds, pin types, screen refs, commands, events
-  core/                Pure domain: pin numbering, gap preservation, command execution
-  store/               schema.sql · the single-writer port (adapter lands in W2)
+  core/                Pure domain: pin numbering, gap preservation, command execution,
+                       output generators (tables · QA CSV · static HTML · marker layout)
+  store/               schema.sql · the single writer · the SQLite adapter (node:sqlite)
 test/
   contract/            the SQLite schema contract (Python, no dependencies)
 ```
@@ -94,8 +110,9 @@ packages/store ─┘        (holds the schema and the future write path)
 | `protocol-has-no-deps` | Protocol depending on anything but `zod` |
 
 `core-is-pure` is checked twice: dependency-cruiser sees imports, and
-`packages/core/test/purity.test.ts` sees `Date.now()`, `Math.random()` and `fetch()` — the
-things no import graph can catch. Time and ids are arguments to every core function.
+`packages/core/test/purity.test.ts` walks every file under `src/` (subdirectories included) for
+`Date.now()`, `Math.random()` and `fetch()` — the things no import graph can catch. Time and ids
+are arguments to every core function, `generatedAt` included.
 
 ## Pin numbering, precisely
 
@@ -113,15 +130,42 @@ reference-breaking case the rule exists to prevent. When state arrives from outs
 is raised to the largest number present, never lowered —
 see `packages/core/src/pins.ts` and `packages/core/test/pins.test.ts`.
 
-## The schema contract
+## Outputs, and why each promise is testable
+
+| Output | Promise | Where it is checked |
+| --- | --- | --- |
+| Overlay PNG | Markers sit on the unchanged screenshot at its own resolution | `buildOverlayMarkers` in core, canvas painting in `apps/web/src/model/overlay.ts` |
+| Static HTML | Zero external requests; opens without the app | `renderStaticHtml` + a Playwright run that opens the downloaded file and counts requests |
+| QA CSV | BOM, CRLF, nine columns, case id stable across deletions | `buildQaCsv` + tests |
+
+All three come from the same `buildTextOutputs` / `buildOverlayMarkers` calls, so the preview in
+the modal and the downloaded file cannot disagree.
+
+## The store adapter
+
+`openSqliteStore({ file })` implements `StorePort` against `schema.sql` with the SQLite that ships
+in Node (`node:sqlite`) — no native build, no compiler in CI.
+
+- **One command, one transaction.** The command runs through `@spec-studio/core` first, so the
+  numbering rule has exactly one implementation; the resulting state is then written and
+  `COMMIT`ted with its events and `op_log` row. A rejected command writes nothing.
+- **Deletes are tombstones.** A deleted pin keeps its row with `deleted_at` set, so the number it
+  was given is still in the file. `pinSeq` lives in the screen's `props` and is only ever raised.
+- **FTS5 is optional.** Node's bundled SQLite has no FTS5, so the schema marks the search section
+  with `-- @optional-fts5`. The adapter applies everything above the marker and skips the rest on
+  builds without it (`SchemaInfo.fts5` records which happened). The contract test always applies
+  the whole file.
+- **Round trip.** `packages/store/test/sqlite.test.ts` writes a project, a screen and three pins,
+  edits one, drags one, deletes one, adds one (#4, not #3), then reopens the file and reads the
+  same state back.
 
 `packages/store/schema/schema.sql` is the canonical DDL (SQLite, `user_version = 11`).
 
 ```bash
 pnpm test:contract
 # schema   2/ 2
-# reject  23/23
-# accept  11/11
+# reject  24/24
+# accept  13/13
 # plan     4/ 4
 # search   5/ 5
 # v2       1/ 1
@@ -130,6 +174,7 @@ pnpm test:contract
 
 It proves, against a real database, that:
 
+- a project row exists, and objects can name the project they belong to;
 - a pin cannot exist without its screen, and its parent must be a screen;
 - `obj.kind` cannot be updated, and objects with links cannot be physically deleted;
 - proposal, state-definition and publish records enforce their state-specific columns;
@@ -141,15 +186,18 @@ It proves, against a real database, that:
 The script exits non-zero on any mismatch, so a schema that quietly stops enforcing something
 cannot pass CI.
 
-## Scope — what W1 does *not* do yet
+## Scope — what W2 does *not* do yet
 
-- **No SQLite runtime adapter.** The browser prototype persists to `localStorage`. The schema
-  and its contract are authoritative; `StorePort` in `packages/store` is the shape the adapter
-  will implement.
-- **No daemon, no capture, no static export.** Pins are the only object type the UI creates.
+- **The daemon is not here.** The adapter works and is tested, but the browser app still persists
+  to `localStorage`: `renderer-never-touches-store` forbids the other arrangement. Binding them
+  needs the daemon.
+- **No publishing.** Overlay, HTML and CSV are local files; Confluence is W3.
+- **No capture, no states, no Figma import.** Pins are the only object type the UI creates.
 - **No network calls at runtime.** A Figma URL is stored as a reference; the frame is not
   embedded and no request is made. Everything on screen is local.
-- **One screen per project.** The numbering rule is per screen; W1 opens one at a time.
+- **One screen per project.** The numbering rule is per screen; W2 opens one at a time.
+- **Search needs a build with FTS5.** Storing pins does not; the index simply stays empty when the
+  SQLite build cannot create it.
 
 ## Scripts
 
