@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,9 +75,20 @@ interface Envelope {
       }>;
     } | null;
     proposal?: { id: string; state: string; summary: string; patches: unknown[] } | null;
+    graph?: {
+      nodes: Array<{ id: string; type: string; title: string; state: string }>;
+      links: Array<{ id: string; type: string; src: string; dst: string; suspectSince: string | null }>;
+    };
+    graphProposal?: { id: string; state: string; nodes: unknown[]; links: unknown[] } | null;
   };
+  bundle?: {
+    format: string;
+    version: number;
+    project: { id: string; graph: { nodes: Array<{ id: string }> } };
+  };
+  backup?: { path: string; bytes: number; at: string; projectId: string };
   opSeq?: number;
-  revert?: { seq: number; summary: string; blocks: number } | null;
+  revert?: { seq: number; summary: string; blocks: number; kind: string; nodes: number } | null;
   revertedSeq?: number;
   blocks?: number;
   records?: Array<{ id: string; pageId: string | null; status: string; specHash: string | null }>;
@@ -122,7 +133,7 @@ describe('the daemon API', () => {
   it('reports health and names SQLite as the canonical store', async () => {
     const health = await api<{ ok: boolean; schemaVersion: number; mode: string }>(daemon, '/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ ok: true, schemaVersion: 13, mode: 'sqlite' });
+    expect(health.body).toMatchObject({ ok: true, schemaVersion: 14, mode: 'sqlite' });
   });
 
   it('serves only the app origins', async () => {
@@ -415,5 +426,130 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     });
     expect(response.status).toBe(400);
     expect(response.body.error?.message).toContain('되돌릴');
+  });
+});
+
+describe('v1: six node types, seven links, export/import and backup', () => {
+  async function projectWithPins(): Promise<{ projectId: string; pinIds: string[] }> {
+    const created = await api<Envelope>(daemon, '/api/projects', { body: { name: '취소 정책' } });
+    const projectId = created.body.project?.id as string;
+    await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'screen.attach', screen: SCREEN } },
+    });
+    const pinIds: string[] = [];
+    for (const [title, pinType, x] of [
+      ['취소 요청', 'function', 0.2],
+      ['배송 시작 후 취소 불가', 'policy', 0.45],
+      ['재고 없음 안내', 'exception', 0.7],
+    ] as const) {
+      const result = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+        body: {
+          command: {
+            type: 'pin.create',
+            screenId: SCREEN.id,
+            pinType,
+            title,
+            body: '',
+            anchor: { x, y: 0.4 },
+          },
+        },
+      });
+      pinIds.push(result.body.project!.pins.at(-1)!.id);
+    }
+    return { projectId, pinIds };
+  }
+
+  async function command(
+    projectId: string,
+    payload: unknown,
+  ): Promise<{ status: number; body: Envelope }> {
+    return api<Envelope>(daemon, `/api/projects/${projectId}/commands`, { body: { command: payload } });
+  }
+
+  it('stores the four graph kinds as obj rows and connects all seven link types', async () => {
+    const { projectId, pinIds } = await projectWithPins();
+    const req = await command(projectId, { type: 'node.create', nodeType: 'req', title: '취소 조건', body: '배송 전' });
+    const reqId = req.body.project!.graph!.nodes[0]!.id;
+    const policy = await command(projectId, { type: 'node.create', nodeType: 'policy', title: '배송 전만 취소', body: '' });
+    const policyId = policy.body.project!.graph!.nodes[1]!.id;
+    const contract = await command(projectId, { type: 'node.create', nodeType: 'contract', title: '취소 API', body: '' });
+    const contractId = contract.body.project!.graph!.nodes[2]!.id;
+    const qa = await command(projectId, { type: 'node.create', nodeType: 'qa', title: '취소 확인', body: '' });
+    const qaId = qa.body.project!.graph!.nodes[3]!.id;
+
+    expect(reqId.startsWith('N_')).toBe(true);
+    expect(contractId.startsWith('C_')).toBe(true);
+    expect(qaId.startsWith('V_')).toBe(true);
+
+    const links: Array<[string, string, string]> = [
+      ['implements', pinIds[0]!, reqId],
+      ['governs', policyId, pinIds[0]!],
+      ['handles_edge', pinIds[2]!, policyId],
+      ['verifies', qaId, pinIds[0]!],
+      ['references', reqId, qaId],
+      ['derived_from', contractId, pinIds[0]!],
+      ['blocks', qaId, reqId],
+    ];
+    for (const [linkType, src, dst] of links) {
+      const result = await command(projectId, { type: 'link.create', linkType, src, dst });
+      expect(result.status).toBe(200);
+    }
+
+    const read = await api<Envelope>(daemon, `/api/projects/${projectId}`);
+    expect(read.body.project!.graph!.nodes).toHaveLength(4);
+    expect(new Set(read.body.project!.graph!.links.map((link) => link.type)).size).toBe(7);
+
+    const kinds = daemon.store.database
+      .prepare("SELECT kind, subtype FROM obj WHERE id IN (?, ?, ?, ?)")
+      .all(reqId, policyId, contractId, qaId) as Array<{ kind: string; subtype: string | null }>;
+    expect(kinds).toEqual(
+      expect.arrayContaining([
+        { kind: 'specnode', subtype: 'requirement' },
+        { kind: 'specnode', subtype: 'policy' },
+        { kind: 'contract', subtype: 'api' },
+        { kind: 'verification', subtype: null },
+      ]),
+    );
+
+    const refused = await command(projectId, { type: 'link.create', linkType: 'implements', src: reqId, dst: pinIds[0]! });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error?.code).toBe('invalid_input');
+  });
+
+  it('turns pins into a decision card, adopts it, reverts it, and carries it through export/import', async () => {
+    const { projectId } = await projectWithPins();
+    const suggested = await command(projectId, { type: 'graph.proposal.create' });
+    const card = suggested.body.project!.graphProposal!;
+    expect(card.nodes.length).toBeGreaterThan(2);
+
+    const adopted = await command(projectId, { type: 'graph.proposal.adopt', proposalId: card.id });
+    expect(adopted.body.project!.graph!.nodes.length).toBe(card.nodes.length);
+    expect(adopted.body.project!.graph!.links.length).toBe(card.links.length);
+    const revertable = await api<Envelope>(daemon, `/api/projects/${projectId}`);
+    expect(revertable.body.revert?.kind).toBe('graph');
+
+    const paused = await api<Envelope>(daemon, `/api/projects/${projectId}/export`);
+    expect(paused.body.bundle?.format).toBe('spec-studio.bundle');
+    expect(paused.body.bundle!.project.graph.nodes.length).toBe(card.nodes.length);
+
+    const imported = await api<Envelope>(daemon, '/api/projects/import', {
+      body: { bundle: paused.body.bundle },
+    });
+    expect(imported.status).toBe(201);
+    const importedId = imported.body.project!.id;
+    expect(importedId).not.toBe(projectId);
+    expect(imported.body.project!.graph!.nodes).toHaveLength(card.nodes.length);
+    const originalIds = new Set(paused.body.bundle!.project.graph.nodes.map((node) => node.id));
+    expect(imported.body.project!.graph!.nodes.every((node) => !originalIds.has(node.id))).toBe(true);
+
+    const backup = await api<Envelope>(daemon, `/api/projects/${projectId}/backup`, { body: {} });
+    expect(backup.status).toBe(200);
+    expect(backup.body.backup!.bytes).toBeGreaterThan(0);
+    expect(existsSync(backup.body.backup!.path)).toBe(true);
+
+    const reverted = await api<Envelope>(daemon, `/api/projects/${projectId}/revert`, { body: {} });
+    expect(reverted.status).toBe(200);
+    expect(reverted.body.project!.graph!.nodes).toHaveLength(0);
+    expect(reverted.body.project!.graphProposal?.state).toBe('reverted');
   });
 });

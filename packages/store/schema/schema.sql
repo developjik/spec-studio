@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 13;
+PRAGMA user_version = 14;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -189,10 +189,24 @@ INSERT INTO link_type (id, name, src_kinds, dst_kinds, v1) VALUES
   ('derives',    '도출한다', '["goal","insight"]',        '["specnode"]',  1),
   ('applies_to', '적용된다', '["specnode"]',              '["screen","pin"]', 1),
   ('contracts',  '계약한다', '["screen","specnode"]',     '["contract"]',  1),
-  ('verifies',   '검증한다', '["verification"]',          '["specnode","screen","contract"]', 1),
+  ('verifies',   '검증한다', '["verification"]',          '["specnode","screen","contract","pin"]', 1),
   ('expresses',  '표현한다', '["specnode"]',              '["screen"]',    0),
   ('satisfies',  '충족한다', '["screen","specnode"]',     '["specnode"]',  0),
   ('supersedes', '뒤집는다', '["specnode"]',              '["specnode"]',  0);
+
+-- v1 object graph: the seven named links a screen spec is traced with. Four
+-- of them are new here; `verifies` above already carried the same meaning, so
+-- it is the one row that did not need adding.
+INSERT INTO link_type (id, name, src_kinds, dst_kinds, v1) VALUES
+  ('implements',   '구현한다',        '["screen","pin"]',                    '["specnode"]', 1),
+  ('governs',      '규율한다',        '["specnode"]',                        '["screen","pin","specnode"]', 1),
+  ('handles_edge', '예외를 처리한다', '["pin","screen","specnode"]',         '["specnode"]', 1),
+  ('references',   '참조한다',        '["screen","pin","specnode","contract","verification"]',
+                                      '["screen","pin","specnode","contract","verification"]', 1),
+  ('derived_from', '도출된다',        '["specnode","contract","verification"]',
+                                      '["specnode","contract","verification","pin"]', 1),
+  ('blocks',       '막는다',          '["specnode","contract","verification","pin"]',
+                                      '["specnode","contract","verification","pin"]', 1);
 
 CREATE TRIGGER link_kind_guard_ins BEFORE INSERT ON link FOR EACH ROW
 WHEN NOT EXISTS (
@@ -260,6 +274,23 @@ CREATE TABLE proposal_op (
 );
 CREATE UNIQUE INDEX proposal_op_seq ON proposal_op(proposal_id, seq);
 CREATE INDEX proposal_op_target ON proposal_op(target_block);
+
+-- 6b. 핀에서 읽은 초안: 제안 1건 = 결정 카드 1장 ────────────────────
+-- The W4 proposal layer edits document blocks; this one creates graph nodes
+-- and links. They share the word "proposal" but not a table, because adopting
+-- each means a different write and a different undo. `payload` is the JSON the
+-- protocol already validates, so the store keeps no second copy of its shape.
+CREATE TABLE graph_proposal (
+  id         TEXT PRIMARY KEY,                  -- GP_...
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  state      TEXT NOT NULL
+             CHECK (state IN ('open','adopted','rejected','reverted')),
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  payload    TEXT NOT NULL CHECK (json_valid(payload)),
+  CHECK (state NOT IN ('adopted','rejected','reverted') OR decided_at IS NOT NULL)
+);
+CREATE INDEX graph_proposal_project ON graph_proposal(project_id, created_at DESC);
 
 -- 7. 상태 레지스트리 L0/L1/L2 ─────────────────────────────────────
 CREATE TABLE state_def (

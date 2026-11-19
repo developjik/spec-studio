@@ -227,7 +227,7 @@ describe('the v11 → v12 migration', () => {
     `);
 
     const info = applySchema(legacy);
-    expect(info.actual).toBe(13);
+    expect(info.actual).toBe(14);
     expect(info.created).toBe(false);
 
     const columns = legacy

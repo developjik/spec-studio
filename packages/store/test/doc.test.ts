@@ -286,7 +286,7 @@ describe('the document in SQLite', () => {
     raw.close();
 
     const upgraded = open();
-    expect(upgraded.schema.actual).toBe(13);
+    expect(upgraded.schema.actual).toBe(14);
     const columns = upgraded.database
       .prepare('PRAGMA table_info(doc)')
       .all() as Array<{ name: string }>;

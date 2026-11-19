@@ -6,11 +6,13 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
-> **Status: W4.** The screen now has a document beside it. Paragraphs stand on the numbered pins
-> in both directions, a paragraph whose pin facts moved goes `stale`, and a change can arrive as
-> one proposal shown as a single decision card — adopted in one click, undone in one click from
-> the `op_log.before` snapshot the store wrote. Publishing still copies a spec once per content
-> hash.
+> **Status: v1 phase 1.** The project is now a graph as well as a screen. Six object types
+> (화면 · 핀 · 요구사항 · 정책 · 계약 · QA) are joined by seven named links, the traceability view
+> marks orphan pins and links that need a re-read, and the header walks **L0 → L1 → L2** as the
+> spec becomes publish-ready. A pin-derived proposal drafts requirements, policies and QA cases
+> as one decision card; adopting it creates them and their links in one write, and the same
+> `op_log.before` undo reverses it. The whole project exports as one JSON bundle, imports as a new
+> project with fresh ids, and the daemon snapshots the SQLite file on demand.
 
 ## Why
 
@@ -61,6 +63,25 @@ Three commitments follow from that:
   and changes nothing until **채택**. Adopting writes the patches and an `op_log.before`
   snapshot in the same transaction; **되돌리기** restores exactly those blocks from that snapshot,
   also as a ledger row, so the undo has an undo.
+- **Six types, seven links, one traceability view (v1)** — 화면 · 핀 · 요구사항(req) · 정책(policy) ·
+  계약(contract) · QA(qa) are joined only by `implements` · `governs` · `handles_edge` · `verifies` ·
+  `references` · `derived_from` · `blocks`. The **그래프 · RTM** tab draws the six lanes, highlights
+  orphan pins and orphan nodes, and keeps a link `suspect` (with the reason) after an endpoint is
+  rewritten until a person acknowledges it. Selecting a node edits its title, body, state and links
+  in place; pins stay read-only here and are edited in the studio, so every object has one writer.
+- **L0 → L1 → L2 in the header** — `evaluateMaturityLevel` is a pure function: L0 needs a screen and
+  a pin; L1 needs a paragraph citing a pin, zero `stale` citations and a requirement or policy that
+  is actually linked; L2 needs a linked QA case plus a Figma frame (or a real publication). The
+  badge opens the full checklist with the sentence that would move it up.
+- **A pin-derived proposal** — `graph.proposal.create` reads the pins and drafts only what the graph
+  does not already carry: a policy for a policy pin, a requirement for a behaviour, a QA case that
+  would prove it, an edge handler or a contract where the pin is one. The card lists every draft and
+  the links it will make; adopting creates all of them in one transaction and the revert removes the
+  nodes and every link that touched them, both recorded in `op_log`.
+- **Export, import, backup** — the daemon serves the whole project as a `spec-studio.bundle` JSON
+  (`GET /api/projects/:id/export`); import remaps every id so a bundle can be opened beside the
+  project it came from; `POST /api/projects/:id/backup` writes a consistent SQLite copy with
+  `VACUUM INTO`.
 
 ## Quick start
 
@@ -106,8 +127,12 @@ End-to-end, against a real daemon, a real SQLite file and a Confluence-shaped mo
 ```bash
 test/e2e/run_w3.sh       # W3 · pins + Confluence publish
 test/e2e/run_w4.sh       # W4 · document ↔ pin, stale, decision card, revert
-                         # both need Playwright (Python) and a chromium binary
+test/e2e/run_v1.sh       # v1 · six types, seven links, L0–L2, export/import, backup
+                         # all need Playwright (Python) and a chromium binary
 ```
+
+The runners build the app and serve it with Vite's preview server, so the browser loads the same
+bundle that ships rather than the dev transform.
 
 `run_w3.sh` loads the sample, registers a Figma link, creates three pins, verifies the rows in the
 SQLite file, restarts the daemon and reloads, publishes, checks the page and three attachments on
@@ -163,11 +188,11 @@ apps/
 packages/
   protocol/            Zod: object kinds, pin types, screen refs, blocks, proposals, commands
   core/                Pure domain: pin numbering, blocks, stale, proposals, output generators
-  store/               schema.sql (v13) · the SQLite adapter · publish records
+  store/               schema.sql (v14) · the SQLite adapter · publish records
   publish/             Confluence client, Storage-Format body, idempotent publish flow
 test/
   contract/            the SQLite schema contract (Python, no dependencies)
-  e2e/                 the W3 and W4 browser checks and their runners
+  e2e/                 the W3, W4 and v1 browser checks and their runners
 ```
 
 Dependency direction is one-way:
@@ -200,7 +225,10 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 | --- | --- | --- |
 | `GET` | `/api/health` | liveness, schema version, project count |
 | `GET` · `POST` | `/api/projects` | list summaries · create |
-| `GET` | `/api/projects/:id` | project (screen, pins, `doc`, `proposal`) + publish records + what a revert would undo |
+| `GET` | `/api/projects/:id` | project (screen, pins, `doc`, `proposal`, `graph`, `graphProposal`) + publish records + what a revert would undo |
+| `GET` | `/api/projects/:id/export` | the whole project as a `spec-studio.bundle` |
+| `POST` | `/api/projects/import` | a bundle → a new project with every id remapped |
+| `POST` | `/api/projects/:id/backup` | one consistent copy of the SQLite file (`VACUUM INTO`) |
 | `POST` | `/api/projects/:id/commands` | apply one validated command; answers with `seq`, `opSeq` and events |
 | `POST` | `/api/projects/:id/revert` | restore `op_log.before` of an adoption (`{ seq }`, latest by default) |
 | `POST` | `/api/projects/:id/publish/preview` | plan (`create`/`update`/`skip`), body, attachments |
@@ -209,6 +237,41 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 
 Requests from an origin outside the allow-list are refused with 403. The API has no delete
 route, and no endpoint accepts a credential in a query string.
+
+## The object graph
+
+Six types, but only two new node tables' worth of storage: requirements and policies are
+`specnode` subtypes, QA is `verification`, and a graph contract is a `contract` with the `api`
+subtype. The node kinds already existed in `schema.sql`; v1 made them reachable, and the migration
+(`migrate-13-14.sql`) only adds the missing link types and the `graph_proposal` card table.
+
+| Type | `obj.kind` | `subtype` |
+| --- | --- | --- |
+| 화면 `screen` | `screen` | — |
+| 핀 `pin` | `pin` | the six pin types |
+| 요구사항 `req` | `specnode` | `requirement` |
+| 정책 `policy` | `specnode` | `policy` |
+| 계약 `contract` | `contract` | `api` |
+| QA `qa` | `verification` | — |
+
+| Link | From → to | Means |
+| --- | --- | --- |
+| `implements` | screen/pin → req | this screen or pin carries out the requirement |
+| `governs` | policy → screen/pin/req | the policy constrains it |
+| `handles_edge` | pin/screen/req → req/policy | this edge case is handled here |
+| `verifies` | qa → screen/pin/req/policy/contract | the QA case proves it |
+| `references` | any → any | a plain citation, kept explicit rather than untyped |
+| `derived_from` | req/policy/contract/qa → req/policy/contract/qa/pin | the source it was read from |
+| `blocks` | req/policy/contract/qa/pin → req/policy/contract/qa/pin | it cannot proceed until the other is settled |
+
+The `link_type` registry in SQLite holds the same `src_kinds`/`dst_kinds` lists and a trigger
+refuses an edge whose ends do not fit, so an invalid link cannot be written even by a client that
+skips the protocol. A rewritten pin or node keeps its edges but stamps `suspect_since` and
+`suspect_why` on them; the RTM panel lists them until a person presses **확인**.
+
+`evaluateMaturityLevel(project, { published })` is pure and lives in `packages/core/src/graph.ts`,
+next to `traceability` and `extractGraphProposal` — the three rules the UI shows are the three
+functions the unit tests drive without a database.
 
 ## The document, the proposal and the revert
 

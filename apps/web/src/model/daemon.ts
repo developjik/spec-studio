@@ -1,4 +1,4 @@
-import type { Command, Project } from '@spec-studio/protocol';
+import type { Command, Project, ProjectBundle } from '@spec-studio/protocol';
 
 /**
  * The browser's only door to the project: HTTP on the loopback daemon.
@@ -22,6 +22,9 @@ export interface DaemonProjectSummary {
   docTitle: string | null;
   blocks: number;
   proposalState: string | null;
+  graphNodes: number;
+  graphLinks: number;
+  graphProposalState: string | null;
 }
 
 /** The adopted proposal a revert button would restore (W4). */
@@ -31,6 +34,8 @@ export interface RevertableView {
   summary: string;
   proposalId: string | null;
   blocks: number;
+  kind: 'doc' | 'graph';
+  nodes: number;
 }
 
 export interface PublishRecordView {
@@ -154,12 +159,39 @@ export class DaemonClient {
     project: Project;
     revertedSeq: number;
     blocks: number;
+    nodes?: number;
     revert: RevertableView | null;
   }> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/revert`, {
       method: 'POST',
       body: seq === undefined ? {} : { seq },
     });
+  }
+
+  /** The whole project as one bundle the browser saves as a file. */
+  async exportProject(projectId: string): Promise<ProjectBundle> {
+    const body = await this.#request<{ bundle: ProjectBundle }>(
+      `/api/projects/${encodeURIComponent(projectId)}/export`,
+    );
+    return body.bundle;
+  }
+
+  /** A bundle becomes a new project; every id is remapped by the daemon. */
+  async importBundle(bundle: ProjectBundle): Promise<Project> {
+    const body = await this.#request<{ project: Project }>('/api/projects/import', {
+      method: 'POST',
+      body: { bundle },
+    });
+    return body.project;
+  }
+
+  /** A consistent copy of the SQLite file, written beside it. */
+  async backup(projectId: string): Promise<{ path: string; bytes: number; at: string }> {
+    const body = await this.#request<{ backup: { path: string; bytes: number; at: string } }>(
+      `/api/projects/${encodeURIComponent(projectId)}/backup`,
+      { method: 'POST', body: {} },
+    );
+    return body.backup;
   }
 
   async publishes(projectId: string): Promise<PublishRecordView[]> {

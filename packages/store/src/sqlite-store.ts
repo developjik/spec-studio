@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DatabaseSync as Database } from 'node:sqlite';
+import { mkdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   DomainError,
   execute as applyCommand,
@@ -13,6 +15,9 @@ import type {
   Doc,
   DocSnapshot,
   DomainEvent,
+  EditableNodeType,
+  GraphLink,
+  GraphProposal,
   Project,
   Proposal,
 } from '@spec-studio/protocol';
@@ -23,10 +28,16 @@ import {
   newBlockId,
   newDocId,
   newOpId,
+  newGraphProposalId,
+  newLinkId,
+  newNodeId,
   newPinId,
   newProjectId,
   newProposalId,
   newScreenId,
+  graphNodeToRow,
+  type GraphProposalRow,
+  type LinkRow,
   pinToRow,
   projectFromRows,
   proposalFromRows,
@@ -56,8 +67,19 @@ export interface SqliteStoreOptions {
   schemaPath?: string;
   /** Supplied so tests get deterministic timestamps; the port itself has no clock rule. */
   clock?: () => string;
-  newId?: (kind: 'project' | 'screen' | 'pin' | 'doc' | 'block' | 'proposal') => string;
+  newId?: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
 }
+
+export type StoreIdKind =
+  | 'project'
+  | 'screen'
+  | 'pin'
+  | 'doc'
+  | 'block'
+  | 'proposal'
+  | 'node'
+  | 'link'
+  | 'graphProposal';
 
 interface ProjectRow {
   id: string;
@@ -98,6 +120,15 @@ const OP_KIND: Readonly<Record<string, string>> = {
   'doc.pin.link': 'block.pin.link',
   'doc.pin.unlink': 'block.pin.unlink',
   'doc.stale.clear': 'block.stale.clear',
+  'node.create': 'node.create',
+  'node.update': 'node.update',
+  'node.delete': 'node.delete',
+  'link.create': 'link.create',
+  'link.delete': 'link.delete',
+  'link.ack': 'link.ack',
+  'graph.proposal.create': 'graph.proposal.create',
+  'graph.proposal.adopt': 'graph.proposal.adopt',
+  'graph.proposal.reject': 'graph.proposal.reject',
 };
 
 const DEFAULT_IDS = {
@@ -107,6 +138,9 @@ const DEFAULT_IDS = {
   doc: newDocId,
   block: newBlockId,
   proposal: newProposalId,
+  node: (nodeType: EditableNodeType) => newNodeId(nodeType),
+  link: newLinkId,
+  graphProposal: newGraphProposalId,
 } as const;
 
 /**
@@ -126,14 +160,17 @@ const DEFAULT_IDS = {
 export class SqliteStore implements StorePort {
   readonly #db: DatabaseSync;
   readonly #clock: () => string;
-  readonly #newId: (kind: 'project' | 'screen' | 'pin' | 'doc' | 'block' | 'proposal') => string;
+  readonly #newId: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
   readonly #schema: SchemaInfo;
   #closed = false;
 
   private constructor(options: SqliteStoreOptions) {
     this.#db = new Database(options.file);
     this.#clock = options.clock ?? (() => new Date().toISOString());
-    this.#newId = options.newId ?? ((kind) => DEFAULT_IDS[kind]());
+    this.#newId = options.newId ?? ((kind, nodeType) =>
+      kind === 'node'
+        ? DEFAULT_IDS.node(nodeType ?? 'req')
+        : (DEFAULT_IDS[kind] as () => string)());
     this.#db.exec('PRAGMA foreign_keys = ON');
     this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#schema = applySchema(this.#db, options.schemaPath);
@@ -145,6 +182,11 @@ export class SqliteStore implements StorePort {
 
   get schema(): SchemaInfo {
     return this.#schema;
+  }
+
+  /** The id source the daemon uses when it has to name an object itself. */
+  nextId(kind: StoreIdKind, nodeType?: EditableNodeType): string {
+    return this.#newId(kind, nodeType);
   }
 
   /** Escape hatch for the adapter's own tests; not part of `StorePort`. */
@@ -176,6 +218,8 @@ export class SqliteStore implements StorePort {
       pinSeq: 0,
       doc: null,
       proposal: null,
+      graph: { nodes: [], links: [] },
+      graphProposal: null,
       createdAt: at,
       updatedAt: at,
     };
@@ -213,6 +257,27 @@ export class SqliteStore implements StorePort {
     );
     const doc = docRow === undefined ? null : docFromRows(docRow, this.#readBlocks(docRow.id));
     const proposal = doc === null ? null : this.#readProposal(doc.id);
+    const graphNodes = allRows<ObjRow>(
+      this.#db,
+      `SELECT * FROM obj WHERE project_id = ? AND deleted_at IS NULL AND (
+         (kind = 'specnode' AND subtype IN ('requirement','policy'))
+         OR kind IN ('contract','verification')) ORDER BY created_at, rowid`,
+      projectId,
+    );
+    const links = allRows<LinkRow>(
+      this.#db,
+      `SELECT id, type, src, dst, suspect_since, suspect_why, created_at FROM link
+        WHERE src IN (SELECT id FROM obj WHERE project_id = ?)
+           OR dst IN (SELECT id FROM obj WHERE project_id = ?)
+        ORDER BY created_at, rowid`,
+      projectId,
+      projectId,
+    );
+    const graphProposalRow = oneRow<GraphProposalRow>(
+      this.#db,
+      'SELECT * FROM graph_proposal WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+      projectId,
+    );
 
     return normalizeProject(
       projectFromRows({
@@ -224,8 +289,27 @@ export class SqliteStore implements StorePort {
         pins,
         doc,
         proposal,
+        graphNodes,
+        links,
+        graphProposal: graphProposalRow ?? null,
       }),
     );
+  }
+
+  /**
+   * Writes a whole project that came from outside (an imported bundle). The
+   * caller has already remapped its ids; this is one transaction so a bundle
+   * that fails half-way leaves no half project behind.
+   */
+  async importProject(project: Project): Promise<Project> {
+    const exists = oneRow<{ id: string }>(this.#db, 'SELECT id FROM project WHERE id = ?', project.id);
+    if (exists !== undefined) throw new Error(`project ${project.id} already exists`);
+    const at = this.#clock();
+    transaction(this.#db, () => {
+      this.#writeProject(null, project, at);
+      this.#appendEvents(project.id, [], at);
+    });
+    return project;
   }
 
   async listProjectIds(): Promise<string[]> {
@@ -240,7 +324,7 @@ export class SqliteStore implements StorePort {
     const at = this.#clock();
     const result = applyCommand(before, command, {
       at,
-      nextId: (kind) => this.#newId(kind),
+      nextId: (kind, nodeType) => this.#newId(kind, nodeType),
     });
     const after: Project = { ...result.project, updatedAt: at };
 
@@ -265,11 +349,8 @@ export class SqliteStore implements StorePort {
   async revert(projectId: string, seq?: number): Promise<RevertOutcome> {
     const project = await this.readProject(projectId);
     if (project === null) throw new Error(`no project ${projectId} in this database`);
-    if (project.doc === null) {
-      throw new DomainError('doc_missing', '이 프로젝트에는 되돌릴 문서가 없습니다');
-    }
 
-    const adopt = this.#findAdoptable(project.doc.id, seq);
+    const adopt = this.#findAdoptable(projectId, project.doc?.id ?? null, seq);
     if (adopt === null) {
       throw new DomainError(
         'invalid_input',
@@ -278,6 +359,12 @@ export class SqliteStore implements StorePort {
     }
 
     const at = this.#clock();
+    if (adopt.kind === 'graph.proposal.adopt') {
+      return this.#revertGraph(project, adopt, at);
+    }
+    if (project.doc === null) {
+      throw new DomainError('doc_missing', '이 프로젝트에는 되돌릴 문서가 없습니다');
+    }
     const snapshot = DocSnapshotSchema.parse(JSON.parse(adopt.before ?? '{}'));
     const currentSnapshot = snapshotOfBlocks(project.doc, snapshot.entries.map((entry) => entry.blockId), project.doc.rev);
     const doc = restoreSnapshot(project.doc, snapshot, at);
@@ -321,10 +408,21 @@ export class SqliteStore implements StorePort {
       'SELECT * FROM doc WHERE project_id = ? ORDER BY coalesce(updated_at, created_at) DESC, rowid DESC LIMIT 1',
       projectId,
     );
-    if (docRow === undefined) return null;
-    const adopt = this.#findAdoptable(docRow.id, undefined);
+    const adopt = this.#findAdoptable(projectId, docRow?.id ?? null, undefined);
     if (adopt === null) return null;
     const payload = JSON.parse(adopt.payload) as { summary?: string; proposalId?: string };
+    if (adopt.kind === 'graph.proposal.adopt') {
+      const before = JSON.parse(adopt.before ?? '{}') as { nodes?: string[] };
+      return {
+        seq: adopt.seq,
+        at: adopt.at,
+        summary: payload.summary ?? '',
+        proposalId: payload.proposalId ?? null,
+        blocks: 0,
+        kind: 'graph',
+        nodes: before.nodes?.length ?? 0,
+      };
+    }
     const snapshot = DocSnapshotSchema.safeParse(JSON.parse(adopt.before ?? '{}'));
     return {
       seq: adopt.seq,
@@ -332,7 +430,22 @@ export class SqliteStore implements StorePort {
       summary: payload.summary ?? '',
       proposalId: payload.proposalId ?? null,
       blocks: snapshot.success ? snapshot.data.entries.length : 0,
+      kind: 'doc',
+      nodes: 0,
     };
+  }
+
+  /**
+   * Writes a full copy of this database beside it. `VACUUM INTO` is SQLite's
+   * own snapshot: one consistent file even while the daemon is serving reads.
+   */
+  backupTo(directory: string): { path: string; bytes: number; at: string } {
+    mkdirSync(directory, { recursive: true });
+    const at = this.#clock();
+    const stamp = at.replace(/[:.]/g, '-');
+    const path = join(directory, `graph-${stamp}.db`);
+    this.#db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+    return { path, bytes: statSync(path).size, at };
   }
 
   /** Newest publish records first — the modal's history list. */
@@ -367,6 +480,67 @@ export class SqliteStore implements StorePort {
     if (this.#closed) return;
     this.#closed = true;
     this.#db.close();
+  }
+
+  /**
+   * Undoes one graph adoption: the nodes and links it created leave the graph,
+   * the ones that already existed stay. Written as its own `op_log` row, so the
+   * undo has an undo.
+   */
+  #revertGraph(project: Project, adopt: OpLogRow & { kind: string }, at: string): RevertOutcome {
+    const before = JSON.parse(adopt.before ?? '{}') as {
+      nodes?: string[];
+      links?: string[];
+      proposalId?: string | null;
+      summary?: string;
+    };
+    const createdNodes = new Set(before.nodes ?? []);
+    const createdLinks = new Set(before.links ?? []);
+    const graph = {
+      nodes: project.graph.nodes.filter((node) => !createdNodes.has(node.id)),
+      links: project.graph.links.filter(
+        (link) =>
+          !createdLinks.has(link.id) && !createdNodes.has(link.src) && !createdNodes.has(link.dst),
+      ),
+    };
+    const graphProposal: GraphProposal | null =
+      project.graphProposal === null || project.graphProposal.state !== 'adopted'
+        ? project.graphProposal
+        : { ...project.graphProposal, state: 'reverted', decidedAt: at };
+    const next: Project = { ...project, graph, graphProposal, updatedAt: at };
+    const currentSnapshot = {
+      nodes: [...createdNodes],
+      links: [...createdLinks],
+    };
+
+    transaction(this.#db, () => {
+      this.#writeProject(project, next, at);
+      this.#appendEvents(
+        project.id,
+        [{ type: 'graph.proposal.reverted', proposalId: before.proposalId ?? '', nodes: createdNodes.size }],
+        at,
+      );
+      this.#insertLog({
+        at,
+        kind: 'graph.proposal.revert',
+        target: project.id,
+        before: currentSnapshot,
+        after: { nodes: [], links: [] },
+        payload: {
+          revertedSeq: adopt.seq,
+          proposalId: before.proposalId ?? null,
+          summary: before.summary ?? '',
+        },
+      });
+    });
+
+    return {
+      project: next,
+      revertedSeq: adopt.seq,
+      blocks: 0,
+      nodes: createdNodes.size,
+      seq: this.#lastSeq(project.id),
+    };
   }
 
   #threadId(projectId: string): string {
@@ -412,27 +586,36 @@ export class SqliteStore implements StorePort {
     );
   }
 
-  #findAdoptable(docId: string, seq: number | undefined): OpLogRow | null {
-    const adopt =
-      seq === undefined
-        ? oneRow<OpLogRow>(
-            this.#db,
-            "SELECT * FROM op_log WHERE kind = 'proposal.adopt' AND target = ? ORDER BY seq DESC LIMIT 1",
-            docId,
-          )
-        : oneRow<OpLogRow>(
-            this.#db,
-            "SELECT * FROM op_log WHERE kind = 'proposal.adopt' AND target = ? AND seq = ?",
-            docId,
-            seq,
-          );
-    if (adopt === undefined) return null;
-    const reverted = oneRow<{ seq: number }>(
+  /**
+   * The most recent adoption of either kind that has not been reverted yet.
+   * Both the document proposal and the graph proposal are decisions a person
+   * can take back; the ledger, not the proposal table, is what says which is
+   * still undoable.
+   */
+  #findAdoptable(
+    projectId: string,
+    docId: string | null,
+    seq: number | undefined,
+  ): (OpLogRow & { kind: string }) | null {
+    const rows = allRows<OpLogRow>(
       this.#db,
-      "SELECT seq FROM op_log WHERE kind = 'proposal.revert' AND json_extract(payload,'$.revertedSeq') = ? LIMIT 1",
-      adopt.seq,
+      `SELECT * FROM op_log
+        WHERE kind IN ('proposal.adopt','graph.proposal.adopt')
+        ORDER BY seq DESC`,
     );
-    return reverted === undefined ? adopt : null;
+    for (const row of rows) {
+      if (row.target !== projectId && (docId === null || row.target !== docId)) continue;
+      if (seq !== undefined && row.seq !== seq) continue;
+      const reverted = oneRow<{ seq: number }>(
+        this.#db,
+        `SELECT seq FROM op_log
+          WHERE kind IN ('proposal.revert','graph.proposal.revert')
+            AND json_extract(payload,'\$.revertedSeq') = ? LIMIT 1`,
+        row.seq,
+      );
+      if (reverted === undefined) return row;
+    }
+    return null;
   }
 
   #appendEvents(projectId: string, events: readonly DomainEvent[], at: string): void {
@@ -504,6 +687,31 @@ export class SqliteStore implements StorePort {
       });
     }
 
+    if (command.type === 'graph.proposal.adopt') {
+      const proposal = before.graphProposal;
+      if (proposal === null) throw new Error('an adopted graph proposal needs the card it came from');
+      const beforeNodes = new Set(before.graph.nodes.map((node) => node.id));
+      const beforeLinks = new Set(before.graph.links.map((link) => link.id));
+      const createdNodes = after.graph.nodes.filter((node) => !beforeNodes.has(node.id)).map((node) => node.id);
+      const createdLinks = after.graph.links.filter((link) => !beforeLinks.has(link.id)).map((link) => link.id);
+      return this.#insertLog({
+        at,
+        kind: 'graph.proposal.adopt',
+        target: before.id,
+        before: {
+          nodes: createdNodes,
+          links: createdLinks,
+          proposalId: proposal.id,
+          summary: proposal.summary,
+        },
+        after: {
+          nodes: proposal.nodes.length,
+          links: proposal.links.length,
+        },
+        payload: { proposalId: proposal.id, summary: proposal.summary, projectId: before.id },
+      });
+    }
+
     const kind = OP_KIND[command.type] ?? command.type;
     if (command.type.startsWith('doc.') || command.type.startsWith('proposal.')) {
       const blockId = 'blockId' in command ? command.blockId : null;
@@ -517,6 +725,29 @@ export class SqliteStore implements StorePort {
         before: { block: snapshotBefore },
         after: { block: snapshotAfter },
         payload: { events: events.map((event) => event.type) },
+      });
+    }
+
+    if (command.type.startsWith('node.') || command.type.startsWith('link.') || command.type.startsWith('graph.')) {
+      const nodeId =
+        command.type === 'node.create'
+          ? after.graph.nodes.filter((node) => !before.graph.nodes.some((old) => old.id === node.id)).at(-1)?.id
+          : 'nodeId' in command
+            ? command.nodeId
+            : null;
+      const linkId =
+        command.type === 'link.create'
+          ? after.graph.links.filter((link) => !before.graph.links.some((old) => old.id === link.id)).at(-1)?.id
+          : 'linkId' in command
+            ? command.linkId
+            : null;
+      return this.#insertLog({
+        at,
+        kind,
+        target: nodeId ?? linkId ?? before.id,
+        before: nodeId === null ? null : { node: before.graph.nodes.find((node) => node.id === nodeId) ?? null },
+        after: nodeId === null ? null : { node: after.graph.nodes.find((node) => node.id === nodeId) ?? null },
+        payload: { events: events.map((event) => event.type), projectId: before.id },
       });
     }
 
@@ -569,6 +800,69 @@ export class SqliteStore implements StorePort {
     }
 
     if (project.proposal !== null) this.#writeProposal(project.proposal);
+
+    for (const node of project.graph.nodes) {
+      this.#upsertObj(graphNodeToRow(node, project.id));
+    }
+    const keptNodes = new Set(project.graph.nodes.map((node) => node.id));
+    for (const old of before?.graph.nodes ?? []) {
+      if (!keptNodes.has(old.id)) this.#tombstone(old.id, at);
+    }
+
+    this.#writeLinks(project.id, project.graph.links);
+    if (project.graphProposal !== null) this.#writeGraphProposal(project.graphProposal, project.id);
+  }
+
+  /**
+   * Links have no tombstone: a `link` row is only a name for an edge that
+   * exists, and `op_log` already keeps what it was when it was removed. The
+   * project's own edges are the set written here, so one that is gone is
+   * deleted rather than left to point at a node nobody reads.
+   */
+  #writeLinks(projectId: string, links: readonly GraphLink[]): void {
+    const keep = new Set(links.map((link) => link.id));
+    const existing = allRows<{ id: string }>(
+      this.#db,
+      `SELECT id FROM link
+        WHERE src IN (SELECT id FROM obj WHERE project_id = ?)
+           OR dst IN (SELECT id FROM obj WHERE project_id = ?)`,
+      projectId,
+      projectId,
+    );
+    const remove = this.#db.prepare('DELETE FROM link WHERE id = ?');
+    for (const row of existing) {
+      if (!keep.has(row.id)) remove.run(row.id);
+    }
+    const upsert = this.#db.prepare(
+      `INSERT INTO link(id, type, src, dst, suspect_since, suspect_why, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         suspect_since = excluded.suspect_since,
+         suspect_why   = excluded.suspect_why`,
+    );
+    for (const link of links) {
+      upsert.run(link.id, link.type, link.src, link.dst, link.suspectSince, link.suspectWhy, link.createdAt);
+    }
+  }
+
+  #writeGraphProposal(proposal: GraphProposal, projectId: string): void {
+    this.#db
+      .prepare(
+        `INSERT INTO graph_proposal(id, project_id, state, created_at, decided_at, payload)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           state      = excluded.state,
+           decided_at = excluded.decided_at,
+           payload    = excluded.payload`,
+      )
+      .run(
+        proposal.id,
+        projectId,
+        proposal.state,
+        proposal.createdAt,
+        proposal.decidedAt,
+        JSON.stringify(proposal),
+      );
   }
 
   /**

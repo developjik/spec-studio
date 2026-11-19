@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DocSchema } from './doc';
+import { GraphProposalSchema, GraphSchema } from './graph';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
 import { ScreenSchema } from './screen';
@@ -24,6 +25,15 @@ export const ProjectSchema = z.object({
   pinSeq: z.number().int().min(0),
   doc: DocSchema.nullable().default(null),
   proposal: ProposalSchema.nullable().default(null),
+  /**
+   * v1 object graph: the four editable node kinds and the seven named links.
+   * Screens and pins live in their own fields above; the graph view joins the
+   * two sets when it renders. Keeping them apart means the graph could be added
+   * to an old project without touching a single screen or pin.
+   */
+  graph: GraphSchema.default({ nodes: [], links: [] }),
+  /** The pin-derived drafts waiting for one decision, or the last decision. */
+  graphProposal: GraphProposalSchema.nullable().default(null),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });
@@ -32,3 +42,16 @@ export type Project = z.infer<typeof ProjectSchema>;
 
 export const ProjectFileSchema = ProjectSchema;
 export type ProjectFile = Project;
+
+/**
+ * The file a person keeps. It is the project state the store would read back,
+ * wrapped with the two facts a reader needs before trusting it: what it is and
+ * when it left. Import remaps every id, so a bundle can be opened twice.
+ */
+export const ProjectBundleSchema = z.object({
+  format: z.literal('spec-studio.bundle'),
+  version: z.literal(1),
+  exportedAt: z.string().min(1),
+  project: ProjectSchema,
+});
+export type ProjectBundle = z.infer<typeof ProjectBundleSchema>;

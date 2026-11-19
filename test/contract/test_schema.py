@@ -126,7 +126,25 @@ def main() -> int:
         {"created_at", "updated_at"} <= block_columns,
         ", ".join(sorted(block_columns)),
     )
-    record("DDL executes", "schema", objects == 82, f"{objects} objects in sqlite_master")
+    record("DDL executes", "schema", objects == 85, f"{objects} objects in sqlite_master")
+
+    # v1: six node types are the existing kinds (req/policy are specnode
+    # subtypes, QA is verification), and the seven named links are registered.
+    link_types = {row[0] for row in conn.execute("SELECT id FROM link_type").fetchall()}
+    record(
+        "seven graph links are registered",
+        "schema",
+        {"implements", "governs", "handles_edge", "verifies", "references", "derived_from", "blocks"}
+        <= link_types,
+        ", ".join(sorted(link_types)),
+    )
+    graph_columns = {row[1] for row in conn.execute("PRAGMA table_info(graph_proposal)").fetchall()}
+    record(
+        "graph_proposal keeps state and payload",
+        "schema",
+        {"id", "project_id", "state", "created_at", "decided_at", "payload"} <= graph_columns,
+        ", ".join(sorted(graph_columns)),
+    )
 
     seed(conn)
     record("seed rows", "schema", True, "goal / specnode / screen / pin / doc / block / link")
@@ -320,6 +338,57 @@ def main() -> int:
     ]
     for label, sql in normal_paths:
         expect_accept(conn, label, sql)
+
+    # ── v1 graph: a requirement node and the links the RTM view draws ─────
+    expect_accept(
+        conn,
+        "requirement node",
+        "INSERT INTO obj(id,kind,subtype,title,props,state,rev,hash,created_at,updated_at) "
+        "VALUES('N_300000000001','specnode','requirement','취소 요청','{\"body\":\"설명\"}',"
+        "'draft',1,'h-req','t','t')",
+    )
+    expect_accept(
+        conn,
+        "pin implements a requirement",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_300000000001','implements','P_dddddddddddd','N_300000000001','t')",
+    )
+    expect_reject(
+        conn,
+        "implements in the wrong direction",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_300000000002','implements','N_300000000001','P_dddddddddddd','t')",
+    )
+    expect_accept(
+        conn,
+        "policy governs a screen",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_300000000003','governs','N_bbbbbbbbbbbb','S_cccccccccccc','t')",
+    )
+    expect_accept(
+        conn,
+        "QA verifies a pin",
+        "INSERT INTO obj(id,kind,subtype,title,props,state,rev,hash,created_at,updated_at) "
+        "VALUES('V_300000000001','verification',NULL,'취소 확인','{}','blocked',1,'h-qa','t','t')",
+    )
+    expect_accept(
+        conn,
+        "QA case verifies the pin",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_300000000004','verifies','V_300000000001','P_dddddddddddd','t')",
+    )
+    expect_accept(
+        conn,
+        "graph proposal open",
+        "INSERT INTO graph_proposal(id,project_id,state,created_at,payload) "
+        "VALUES('GP_300000000001','PRJ_000000000001','open','t','{\"summary\":\"초안\"}')",
+    )
+    expect_reject(
+        conn,
+        "adopted graph proposal without decided_at",
+        "INSERT INTO graph_proposal(id,project_id,state,created_at,payload) "
+        "VALUES('GP_300000000002','PRJ_000000000001','adopted','t','{\"summary\":\"초안\"}')",
+    )
 
     # ── query plans: the indexes the design promises ───────────────────────
     plan_link = " | ".join(r[3] for r in conn.execute(

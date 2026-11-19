@@ -38,6 +38,8 @@ function context(): ExecuteContext {
     nextId: (kind) => {
       n += 1;
       switch (kind) {
+        case 'project':
+          return `PRJ_${'p'.repeat(12)}`;
         case 'screen':
           return `S_${'a'.repeat(12)}`;
         case 'pin':
@@ -49,6 +51,12 @@ function context(): ExecuteContext {
           return blocks === 1 ? `B_${'b'.repeat(12)}` : `B_${String(blocks).padStart(12, '0')}`;
         case 'proposal':
           return `PR_${'p'.repeat(12)}`;
+        case 'node':
+          return `N_${String(n).padStart(12, '0')}`;
+        case 'link':
+          return `L_${String(n).padStart(12, '0')}`;
+        case 'graphProposal':
+          return `GP_${String(n).padStart(12, '0')}`;
       }
     },
   };

@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { createProject, execute, normalizeProject, type ExecutionResult } from '@spec-studio/core';
+import {
+  createProject,
+  evaluateMaturityLevel,
+  execute,
+  graphViewNodes,
+  normalizeProject,
+  traceability,
+  type ExecutionResult,
+  type Maturity,
+} from '@spec-studio/core';
 import type {
   Anchor,
   BlockType,
@@ -10,7 +19,8 @@ import type {
   Screen,
 } from '@spec-studio/protocol';
 import type { PinFilter } from '@spec-studio/core';
-import { TopBar } from './components/TopBar';
+import { TopBar, type StudioView } from './components/TopBar';
+import { GraphView } from './components/GraphView';
 import { EntryGate } from './components/EntryGate';
 import { CanvasStage } from './components/CanvasStage';
 import { PinPanel } from './components/PinPanel';
@@ -19,13 +29,14 @@ import type { PinEditInput } from './components/PinEditor';
 import { OutputModal } from './components/OutputModal';
 import { PublishModal } from './components/PublishModal';
 import { FigmaBar } from './components/FigmaBar';
-import { DocPanel, type DocMode, type RevertableView } from './components/DocPanel';
+import { DocPanel, type DocMode } from './components/DocPanel';
 import { newProjectId, newScreenId, nextEntityId } from './model/ids';
 import {
+  bundleOf,
   clearStoredProject,
-  downloadProject,
+  downloadBundle,
   loadProject,
-  parseProjectFile,
+  parseBundleFile,
   saveProject,
 } from './model/storage';
 import { imageFromFile } from './model/image';
@@ -34,6 +45,7 @@ import {
   DaemonError,
   type DaemonStatus,
   type PublishRecordView,
+  type RevertableView,
 } from './model/daemon';
 import {
   SAMPLE_CODE,
@@ -46,7 +58,22 @@ import {
 type Notice = { tone: 'info' | 'error'; text: string };
 
 const nowIso = () => new Date().toISOString();
-const nextId = (kind: 'screen' | 'pin' | 'doc' | 'block' | 'proposal') => nextEntityId(kind);
+const nextId = (
+  kind: 'project' | 'screen' | 'pin' | 'doc' | 'block' | 'proposal' | 'node' | 'link' | 'graphProposal',
+  nodeType?: 'req' | 'policy' | 'contract' | 'qa',
+) => nextEntityId(kind, nodeType);
+
+/** Before a project exists the header still needs a badge; L0 with no checks. */
+const EMPTY_MATURITY: Maturity = {
+  level: 'L0',
+  levels: [
+    { level: 'L0', checks: [] },
+    { level: 'L1', checks: [] },
+    { level: 'L2', checks: [] },
+  ],
+  next: { level: 'L1', todo: [] },
+  todo: [],
+};
 
 /** What a command application returns; `opSeq` is the store's undo handle. */
 type ApplyResult = ExecutionResult & { opSeq?: number };
@@ -69,6 +96,8 @@ export default function App() {
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [revertable, setRevertable] = useState<RevertableView | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<StudioView>('studio');
+  const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
 
@@ -486,7 +515,15 @@ export default function App() {
       { type: 'proposal.adopt', docId: doc.id, proposalId },
       (result) => {
         if (result.opSeq === undefined) return;
-        setRevertable({ seq: result.opSeq, at: nowIso(), summary, blocks: patches });
+        setRevertable({
+          seq: result.opSeq,
+          at: nowIso(),
+          summary,
+          blocks: patches,
+          kind: 'doc',
+          nodes: 0,
+          proposalId: proposalId,
+        });
         setNotice({ tone: 'info', text: '제안을 채택했습니다. 문단이 갱신되었습니다.' });
       },
     );
@@ -502,7 +539,10 @@ export default function App() {
       setRevertable(outcome.revert);
       setNotice({
         tone: 'info',
-        text: `채택 ${outcome.revertedSeq}번을 되돌렸습니다. 문단 ${outcome.blocks}개를 채택 직전 상태로 복원했습니다.`,
+        text:
+          revertable.kind === 'graph'
+            ? `그래프 채택 ${outcome.revertedSeq}번을 되돌렸습니다. 객체 ${revertable.nodes}개와 그 링크를 제거했습니다.`
+            : `채택 ${outcome.revertedSeq}번을 되돌렸습니다. 문단 ${outcome.blocks}개를 채택 직전 상태로 복원했습니다.`,
       });
     } catch (error) {
       setNotice({
@@ -544,22 +584,53 @@ export default function App() {
     clearStoredProject();
   };
 
-  const importProject = async (file: File) => {
-    if (daemonStatus === 'connected') {
-      setNotice({
-        tone: 'info',
-        text: 'SQLite 데몬 연결 중에는 JSON 불러오기를 지원하지 않습니다. 데몬 DB가 정본입니다.',
-      });
+  /**
+   * A bundle leaves through the daemon when one is connected, so what is saved
+   * is what SQLite holds — not a browser copy that could lag a write.
+   */
+  const exportProject = async () => {
+    if (project === null) return;
+    if (sqliteMode && daemonProjectId !== null) {
+      try {
+        downloadBundle(await client.exportProject(daemonProjectId));
+        setNotice({ tone: 'info', text: 'SQLite 프로젝트를 번들 JSON으로 내보냈습니다.' });
+      } catch (error) {
+        setNotice({
+          tone: 'error',
+          text: error instanceof DaemonError ? error.message : '번들을 내보내지 못했습니다.',
+        });
+      }
       return;
     }
+    downloadBundle(bundleOf(project));
+  };
+
+  /** Import always becomes a new project; the one on screen is never overwritten. */
+  const importProject = async (file: File) => {
     try {
-      const text = await file.text();
-      const imported = parseProjectFile(text);
-      setProject(imported);
+      const bundle = parseBundleFile(await file.text());
+      if (sqliteMode) {
+        const created = await client.importBundle(bundle);
+        setDaemonProjectId(created.id);
+        setProject(normalizeProject(created));
+        setPublishes([]);
+        setRevertable(null);
+        setSelectedPinId(null);
+        setSelectedGraphId(null);
+        setDraftAnchor(null);
+        setFilter('all');
+        setNotice({
+          tone: 'info',
+          text: `번들을 새 프로젝트 "${created.name}"(으)로 가져왔습니다. 객체 ${created.graph.nodes.length}개 · 링크 ${created.graph.links.length}개.`,
+        });
+        return;
+      }
+      setProject(bundle.project);
       setSelectedPinId(null);
+      setSelectedGraphId(null);
       setDraftAnchor(null);
       setFilter('all');
-      setNotice({ tone: 'info', text: '프로젝트를 불러왔습니다.' });
+      setNotice({ tone: 'info', text: '프로젝트 번들을 불러왔습니다.' });
     } catch (error) {
       setNotice({
         tone: 'error',
@@ -568,8 +639,118 @@ export default function App() {
     }
   };
 
+  const backupProject = async () => {
+    if (daemonProjectId === null) return;
+    setBusy(true);
+    try {
+      const backup = await client.backup(daemonProjectId);
+      setNotice({
+        tone: 'info',
+        text: `SQLite 스냅샷을 저장했습니다 · ${(backup.bytes / 1024).toFixed(1)}KB · ${backup.path}`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '백업하지 못했습니다.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reload = async () => {
+    if (daemonProjectId === null) return;
+    try {
+      const detail = await client.readProject(daemonProjectId);
+      setProject(normalizeProject(detail.project));
+      setRevertable(detail.revert);
+    } catch {
+      // A reload is a convenience; the command answer already updated state.
+    }
+  };
+
+  const createGraphProposal = () => {
+    void runDoc({ type: 'graph.proposal.create' }, (result) => {
+      const summary = result.project.graphProposal?.summary ?? '';
+      setNotice({ tone: 'info', text: summary });
+      setSelectedGraphId(null);
+    });
+  };
+
+  const adoptGraphProposal = () => {
+    const proposal = project?.graphProposal ?? null;
+    if (proposal === null) return;
+    void runDoc({ type: 'graph.proposal.adopt', proposalId: proposal.id }, (result) => {
+      setNotice({
+        tone: 'info',
+        text: `초안 ${proposal.nodes.length}개와 링크 ${proposal.links.length}개를 만들었습니다.`,
+      });
+      if (result.opSeq !== undefined) {
+        setRevertable({
+          seq: result.opSeq,
+          at: nowIso(),
+          summary: proposal.summary,
+          blocks: 0,
+          kind: 'graph',
+          nodes: proposal.nodes.length,
+          proposalId: proposal.id,
+        });
+      }
+      setSelectedGraphId(null);
+    });
+  };
+
+  const rejectGraphProposal = () => {
+    const proposal = project?.graphProposal ?? null;
+    if (proposal === null) return;
+    void runDoc({ type: 'graph.proposal.reject', proposalId: proposal.id });
+  };
+
+  const createGraphNode = (
+    nodeType: 'req' | 'policy' | 'contract' | 'qa',
+    title: string,
+    body: string,
+  ) => {
+    void runDoc({ type: 'node.create', nodeType, title, body }, (result) => {
+      setSelectedGraphId(result.project.graph.nodes.at(-1)?.id ?? null);
+    });
+  };
+
+  const updateGraphNode = (
+    nodeId: string,
+    patch: { title?: string; body?: string; state?: string },
+  ) => {
+    void runDoc({ type: 'node.update', nodeId, ...patch });
+  };
+
+  const deleteGraphNode = (nodeId: string) => {
+    void runDoc({ type: 'node.delete', nodeId }, () => {
+      if (selectedGraphId === nodeId) setSelectedGraphId(null);
+    });
+  };
+
+  const createGraphLink = (linkType: string, src: string, dst: string) => {
+    void runDoc({ type: 'link.create', linkType, src, dst } as Command, () => void reload());
+  };
+
+  const deleteGraphLink = (linkId: string) => {
+    void runDoc({ type: 'link.delete', linkId }, () => void reload());
+  };
+
+  const ackGraphLink = (linkId: string) => {
+    void runDoc({ type: 'link.ack', linkId });
+  };
+
   const screen = project?.screen ?? null;
   const pins = project?.pins ?? [];
+  const maturity =
+    project === null
+      ? EMPTY_MATURITY
+      : evaluateMaturityLevel(project, {
+          published: publishes.some((record) => record.status === 'ok'),
+        });
+  const report = project === null ? null : traceability(project);
+  const graphNodes = project === null ? [] : graphViewNodes(project);
   const nextNumber = (project?.pinSeq ?? 0) + 1;
 
   return (
@@ -577,10 +758,12 @@ export default function App() {
       <TopBar
         screen={screen}
         daemonStatus={daemonStatus}
-        onExport={() => {
-          if (project !== null) downloadProject(project);
-        }}
+        view={view}
+        maturity={maturity}
+        onView={setView}
+        onExport={() => void exportProject()}
         onImport={() => importInput.current?.click()}
+        onBackup={() => void backupProject()}
         onReset={() => void reset()}
         onOpenOutputs={() => setOutputOpen(true)}
         onOpenPublish={() => setPublishOpen(true)}
@@ -603,6 +786,31 @@ export default function App() {
           <span className="boot-mark" aria-hidden="true" />
           로컬 SQLite 데몬(127.0.0.1)을 확인하는 중…
         </div>
+      ) : screen !== null && project !== null && view === 'graph' && report !== null ? (
+        <GraphView
+          project={project}
+          nodes={graphNodes}
+          report={report}
+          maturity={maturity}
+          busy={busy}
+          selectedId={selectedGraphId}
+          revertable={
+            revertable === null
+              ? null
+              : { seq: revertable.seq, summary: revertable.summary, nodes: revertable.nodes }
+          }
+          onSelect={setSelectedGraphId}
+          onCreateNode={createGraphNode}
+          onUpdateNode={updateGraphNode}
+          onDeleteNode={deleteGraphNode}
+          onCreateLink={createGraphLink}
+          onDeleteLink={deleteGraphLink}
+          onAckLink={ackGraphLink}
+          onProposal={createGraphProposal}
+          onAdopt={adoptGraphProposal}
+          onReject={rejectGraphProposal}
+          onRevert={() => void revertAdopted()}
+        />
       ) : screen !== null && project !== null ? (
         <main className="studio">
           <section className="canvas-column">

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockTypeSchema, DocIdSchema, ProposalIdSchema } from './doc';
-import { PinIdSchema, ScreenIdSchema } from './ids';
+import {
+  EditableNodeTypeSchema,
+  GraphLinkTypeSchema,
+} from './graph';
+import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { AnchorSchema, PinTypeSchema, PinTypeSchema as TypeSchema } from './pin';
 import { ScreenSchema } from './screen';
 
@@ -116,6 +120,52 @@ export const CommandSchema = z.discriminatedUnion('type', [
     docId: DocIdSchema,
     proposalId: ProposalIdSchema,
   }),
+
+  // ── object graph (v1) ─────────────────────────────────────────────────
+  z.object({
+    type: z.literal('node.create'),
+    nodeType: EditableNodeTypeSchema,
+    title: z.string().trim().min(1).max(200),
+    body: z.string().max(4000).default(''),
+  }),
+  z.object({
+    type: z.literal('node.update'),
+    nodeId: ObjectIdSchema,
+    title: z.string().trim().min(1).max(200).optional(),
+    body: z.string().max(4000).optional(),
+    state: z.string().min(1).max(40).optional(),
+  }),
+  z.object({
+    type: z.literal('node.delete'),
+    nodeId: ObjectIdSchema,
+  }),
+  z.object({
+    type: z.literal('link.create'),
+    linkType: GraphLinkTypeSchema,
+    src: ObjectIdSchema,
+    dst: ObjectIdSchema,
+  }),
+  z.object({
+    type: z.literal('link.delete'),
+    linkId: z.string().min(1),
+  }),
+  /** A person read the suspect link and says it still holds. */
+  z.object({
+    type: z.literal('link.ack'),
+    linkId: z.string().min(1),
+  }),
+  /** Reads the screen's pins and drafts policy / req / qa nodes plus their links. */
+  z.object({
+    type: z.literal('graph.proposal.create'),
+  }),
+  z.object({
+    type: z.literal('graph.proposal.adopt'),
+    proposalId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('graph.proposal.reject'),
+    proposalId: z.string().min(1),
+  }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
@@ -128,3 +178,6 @@ export type DocBlockCreateCommand = Extract<Command, { type: 'doc.block.create' 
 export type DocBlockUpdateCommand = Extract<Command, { type: 'doc.block.update' }>;
 export type ProposalCreateCommand = Extract<Command, { type: 'proposal.create' }>;
 export type ProposalAdoptCommand = Extract<Command, { type: 'proposal.adopt' }>;
+export type NodeCreateCommand = Extract<Command, { type: 'node.create' }>;
+export type LinkCreateCommand = Extract<Command, { type: 'link.create' }>;
+export type GraphProposalAdoptCommand = Extract<Command, { type: 'graph.proposal.adopt' }>;

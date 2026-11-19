@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockSchema, DocIdSchema, DocSchema, ProposalIdSchema } from './doc';
-import { PinIdSchema, ScreenIdSchema } from './ids';
+import { GraphLinkSchema, GraphNodeSchema, GraphProposalSchema } from './graph';
+import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
 import { ScreenSchema } from './screen';
@@ -77,6 +78,30 @@ export const EventSchema = z.discriminatedUnion('type', [
     /** The `op_log.seq` this revert restored. */
     revertedSeq: z.number().int().min(1),
     blocks: z.number().int().min(0),
+  }),
+
+  // ── object graph (v1) ─────────────────────────────────────────────────
+  z.object({ type: z.literal('node.created'), node: GraphNodeSchema }),
+  z.object({ type: z.literal('node.updated'), node: GraphNodeSchema }),
+  z.object({ type: z.literal('node.deleted'), nodeId: ObjectIdSchema }),
+  z.object({ type: z.literal('link.created'), link: GraphLinkSchema }),
+  z.object({ type: z.literal('link.deleted'), linkId: z.string().min(1) }),
+  z.object({ type: z.literal('link.acked'), linkId: z.string().min(1) }),
+  z.object({ type: z.literal('graph.proposal.created'), proposal: GraphProposalSchema }),
+  z.object({
+    type: z.literal('graph.proposal.adopted'),
+    proposalId: z.string().min(1),
+    nodes: z.number().int().min(0),
+    links: z.number().int().min(0),
+  }),
+  z.object({
+    type: z.literal('graph.proposal.rejected'),
+    proposalId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('graph.proposal.reverted'),
+    proposalId: z.string().min(1),
+    nodes: z.number().int().min(0),
   }),
 ]);
 

@@ -26,6 +26,10 @@ export interface RevertableOp {
   summary: string;
   proposalId: string | null;
   blocks: number;
+  /** Which layer the decision belongs to: the document or the object graph. */
+  kind: 'doc' | 'graph';
+  /** Graph nodes the undo would remove. */
+  nodes: number;
 }
 
 export interface RevertOutcome {
@@ -33,6 +37,8 @@ export interface RevertOutcome {
   /** The `op_log.seq` of the adopted work that was restored. */
   revertedSeq: number;
   blocks: number;
+  /** Graph nodes removed by the undo (0 for a document revert). */
+  nodes?: number;
   seq: number;
 }
 

@@ -8,6 +8,7 @@ export type DomainErrorCode =
   | 'block_not_found'
   | 'proposal_missing'
   | 'proposal_decided'
+  | 'node_not_found'
   | 'invalid_input';
 
 export class DomainError extends Error {

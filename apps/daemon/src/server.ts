@@ -1,8 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { CommandSchema, type Project } from '@spec-studio/protocol';
-import { DomainError } from '@spec-studio/core';
+import {
+  CommandSchema,
+  ProjectBundleSchema,
+  type Project,
+  type ProjectBundle,
+} from '@spec-studio/protocol';
+import { DomainError, remapProject } from '@spec-studio/core';
 import {
   openSqliteStore,
   SCHEMA_VERSION,
@@ -46,6 +51,8 @@ export interface DaemonOptions {
   now?: () => string;
   /** Injected so tests can reuse a store they already opened. */
   store?: SqliteStore;
+  /** Where `POST /api/projects/:id/backup` writes; defaults beside the db file. */
+  backupDir?: string;
 }
 
 export interface Daemon {
@@ -85,6 +92,9 @@ function projectSummary(project: Project): Record<string, unknown> {
     docTitle: project.doc?.title ?? null,
     blocks: project.doc?.blocks.length ?? 0,
     proposalState: project.proposal?.state ?? null,
+    graphNodes: project.graph.nodes.length,
+    graphLinks: project.graph.links.length,
+    graphProposalState: project.graphProposal?.state ?? null,
   };
 }
 
@@ -204,6 +214,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
   const store = options.store ?? openSqliteStore({ file: options.dbPath });
+  const backupDir =
+    options.backupDir ??
+    (options.dbPath === ':memory:' ? `${process.cwd()}/backups` : `${dirname(options.dbPath)}/backups`);
 
   const handle = async (
     req: IncomingMessage,
@@ -260,6 +273,26 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       throw new HttpError(405, 'method_not_allowed', 'GET · POST만 허용됩니다.');
     }
 
+    // POST /api/projects/import — a bundle becomes a new project with new ids.
+    if (segments[2] === 'import' && segments.length === 3) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const body = asObject(await readBody(req));
+      const parsed = ProjectBundleSchema.safeParse(body.bundle);
+      if (!parsed.success) {
+        throw new HttpError(
+          400,
+          'invalid_bundle',
+          'spec-studio 프로젝트 번들이 아닙니다.',
+          parsed.error.issues.map((issue) => issue.message).join(' / '),
+        );
+      }
+      const imported = remapProject(parsed.data.project, (kind, nodeType) =>
+        store.nextId(kind, nodeType),
+      );
+      const project = await store.importProject(imported);
+      return send(res, 201, { project, sourceProjectId: parsed.data.project.id });
+    }
+
     const projectId = segments[2] ?? '';
     const project = await store.readProject(projectId);
     if (project === null) throw new HttpError(404, 'project_not_found', '프로젝트를 찾지 못했습니다.');
@@ -314,6 +347,25 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         seq: outcome.seq,
         revert: store.lastRevertable(projectId),
       });
+    }
+
+    // GET /api/projects/:id/export — the whole project as one JSON bundle.
+    if (action === 'export' && segments.length === 4) {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      const bundle: ProjectBundle = {
+        format: 'spec-studio.bundle',
+        version: 1,
+        exportedAt: now(),
+        project,
+      };
+      return send(res, 200, { bundle });
+    }
+
+    // POST /api/projects/:id/backup — a consistent copy of the SQLite file.
+    if (action === 'backup' && segments.length === 4) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const backup = store.backupTo(backupDir);
+      return send(res, 200, { backup: { ...backup, projectId } });
     }
 
     // GET /api/projects/:id/publishes

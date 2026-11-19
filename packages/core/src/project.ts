@@ -1,10 +1,14 @@
 import {
   PinSchema,
   ScreenSchema,
+  linkEndsAllow,
   type Command,
   type DomainEvent,
   type Anchor,
   type Doc,
+  type EditableNodeType,
+  type GraphLink,
+  type GraphNode,
   type Pin,
   type Project,
   type Proposal,
@@ -24,15 +28,37 @@ import {
   withBlocks,
 } from './doc';
 import { DomainError } from './errors';
+import {
+  extractGraphProposal,
+  makeGraphNode,
+  markLinksSuspect,
+  nodeStateOptions,
+  normalizeGraph,
+  resolveProposalRef,
+} from './graph';
 import { filterPins, findPin, nextPinNumber, resolvePinSeq, sortPinsByNumber } from './pins';
 
 export { DomainError, type DomainErrorCode } from './errors';
 
+export type IdKind =
+  | 'project'
+  | 'screen'
+  | 'pin'
+  | 'doc'
+  | 'block'
+  | 'proposal'
+  | 'node'
+  | 'link'
+  | 'graphProposal';
+
 export interface ExecuteContext {
   /** Passed in, never read from the clock — core stays pure. */
   at: string;
-  /** Ids are supplied by the caller for the same reason. */
-  nextId: (kind: 'screen' | 'pin' | 'doc' | 'block' | 'proposal') => string;
+  /**
+   * Ids are supplied by the caller for the same reason. A graph node carries
+   * its type because the id prefix has to match the `obj` kind it becomes.
+   */
+  nextId: (kind: IdKind, nodeType?: EditableNodeType) => string;
 }
 
 export interface ExecutionResult {
@@ -68,6 +94,8 @@ export function createProject(input: { id: string; name: string; at: string }): 
     pinSeq: 0,
     doc: null,
     proposal: null,
+    graph: { nodes: [], links: [] },
+    graphProposal: null,
     createdAt: input.at,
     updatedAt: input.at,
   };
@@ -81,9 +109,29 @@ export function createProject(input: { id: string; name: string; at: string }): 
 export function normalizeProject(project: Project): Project {
   const pins = sortPinsByNumber(project.pins);
   const pinSeq = resolvePinSeq(project.pinSeq, project.pins);
+  const graph = normalizeGraph(project);
   const alreadyOrdered = project.pins.every((pin, index) => pin.id === pins[index]?.id);
-  if (alreadyOrdered && pinSeq === project.pinSeq) return project;
-  return { ...project, pins, pinSeq };
+  if (alreadyOrdered && pinSeq === project.pinSeq && graph === project.graph) return project;
+  return { ...project, pins, pinSeq, graph };
+}
+
+/** A node of the editable four kinds, by id. */
+export function findGraphNode(project: Project, nodeId: string): GraphNode | undefined {
+  return project.graph.nodes.find((node) => node.id === nodeId);
+}
+
+function requireGraphNode(project: Project, nodeId: string): GraphNode {
+  const node = findGraphNode(project, nodeId);
+  if (node === undefined) throw new DomainError('node_not_found', '그래프에서 그 객체를 찾지 못했습니다');
+  return node;
+}
+
+/** The type a link endpoint stands for, or null when the id is not in the project. */
+export function graphNodeType(project: Project, id: string) {
+  if (project.screen !== null && project.screen.id === id) return 'screen' as const;
+  if (project.pins.some((pin) => pin.id === id)) return 'pin' as const;
+  const node = findGraphNode(project, id);
+  return node === undefined ? null : node.type;
 }
 
 export function pinsForScreen(project: Project, screenId: string): Pin[] {
@@ -234,10 +282,16 @@ export function execute(
         anchor,
         updatedAt: ctx.at,
       });
+      const moved = pin.type !== current.type || pin.title !== current.title || pin.body !== current.body;
       return {
         project: {
           ...project,
           pins: project.pins.map((candidate) => (candidate.id === pin.id ? pin : candidate)),
+          // A link that still names this pin now names a different sentence;
+          // the edge stays and asks for a re-read instead of disappearing.
+          graph: moved
+            ? { ...project.graph, links: markLinksSuspect(project.graph.links, pin.id, 'pin-changed', ctx.at) }
+            : project.graph,
           updatedAt: ctx.at,
         },
         events: [{ type: 'pin.updated', pin }],
@@ -499,6 +553,236 @@ export function execute(
       };
     }
 
+    // ── object graph ───────────────────────────────────────────────────
+    case 'node.create': {
+      const id = ctx.nextId('node', command.nodeType);
+      const node = makeGraphNode({
+        id,
+        type: command.nodeType,
+        title: command.title,
+        body: command.body,
+        at: ctx.at,
+      });
+      return {
+        project: {
+          ...project,
+          graph: { ...project.graph, nodes: [...project.graph.nodes, node] },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'node.created', node }],
+      };
+    }
+
+    case 'node.update': {
+      const current = requireGraphNode(project, command.nodeId);
+      const title = command.title === undefined ? current.title : command.title.trim();
+      if (title === '') throw new DomainError('invalid_input', '객체에는 제목이 필요합니다');
+      const state = command.state ?? current.state;
+      const states = nodeStateOptions(current.type);
+      if (!states.includes(state)) {
+        throw new DomainError('invalid_input', `${current.type} 상태는 ${states.join(' · ')} 중 하나입니다`);
+      }
+      const node: GraphNode = {
+        ...current,
+        title,
+        body: command.body === undefined ? current.body : command.body.trim(),
+        state,
+        updatedAt: ctx.at,
+      };
+      const moved = node.title !== current.title || node.body !== current.body;
+      return {
+        project: {
+          ...project,
+          graph: {
+            ...project.graph,
+            nodes: project.graph.nodes.map((candidate) =>
+              candidate.id === node.id ? node : candidate,
+            ),
+            links: moved
+              ? markLinksSuspect(project.graph.links, node.id, 'node-changed', ctx.at)
+              : project.graph.links,
+          },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'node.updated', node }],
+      };
+    }
+
+    case 'node.delete': {
+      requireGraphNode(project, command.nodeId);
+      return {
+        project: {
+          ...project,
+          graph: {
+            nodes: project.graph.nodes.filter((node) => node.id !== command.nodeId),
+            links: project.graph.links.filter(
+              (link) => link.src !== command.nodeId && link.dst !== command.nodeId,
+            ),
+          },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'node.deleted', nodeId: command.nodeId }],
+      };
+    }
+
+    case 'link.create': {
+      const srcType = graphNodeType(project, command.src);
+      const dstType = graphNodeType(project, command.dst);
+      if (srcType === null || dstType === null) {
+        throw new DomainError('node_not_found', '링크의 한쪽 객체를 찾지 못했습니다');
+      }
+      if (command.src === command.dst) {
+        throw new DomainError('invalid_input', '같은 객체로는 링크할 수 없습니다');
+      }
+      if (!linkEndsAllow(command.linkType, srcType, dstType)) {
+        throw new DomainError(
+          'invalid_input',
+          `${command.linkType} 링크는 ${srcType} → ${dstType} 를 연결할 수 없습니다`,
+        );
+      }
+      const exists = project.graph.links.some(
+        (link) =>
+          link.type === command.linkType && link.src === command.src && link.dst === command.dst,
+      );
+      if (exists) throw new DomainError('invalid_input', '같은 링크가 이미 있습니다');
+      const link: GraphLink = {
+        id: ctx.nextId('link'),
+        type: command.linkType,
+        src: command.src,
+        dst: command.dst,
+        suspectSince: null,
+        suspectWhy: null,
+        createdAt: ctx.at,
+      };
+      return {
+        project: {
+          ...project,
+          graph: { ...project.graph, links: [...project.graph.links, link] },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'link.created', link }],
+      };
+    }
+
+    case 'link.delete': {
+      if (!project.graph.links.some((link) => link.id === command.linkId)) {
+        throw new DomainError('invalid_input', '그 링크를 찾지 못했습니다');
+      }
+      return {
+        project: {
+          ...project,
+          graph: {
+            ...project.graph,
+            links: project.graph.links.filter((link) => link.id !== command.linkId),
+          },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'link.deleted', linkId: command.linkId }],
+      };
+    }
+
+    case 'link.ack': {
+      const link = project.graph.links.find((candidate) => candidate.id === command.linkId);
+      if (link === undefined) throw new DomainError('invalid_input', '그 링크를 찾지 못했습니다');
+      return {
+        project: {
+          ...project,
+          graph: {
+            ...project.graph,
+            links: project.graph.links.map((candidate) =>
+              candidate.id === link.id
+                ? { ...candidate, suspectSince: null, suspectWhy: null }
+                : candidate,
+            ),
+          },
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'link.acked', linkId: link.id }],
+      };
+    }
+
+    case 'graph.proposal.create': {
+      const proposal = extractGraphProposal(project, {
+        id: ctx.nextId('graphProposal'),
+        at: ctx.at,
+      });
+      return {
+        project: { ...project, graphProposal: proposal, updatedAt: ctx.at },
+        events: [{ type: 'graph.proposal.created', proposal }],
+      };
+    }
+
+    case 'graph.proposal.adopt': {
+      const proposal = project.graphProposal;
+      if (proposal === null || proposal.id !== command.proposalId) {
+        throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
+      }
+      if (proposal.state !== 'open') {
+        throw new DomainError('proposal_decided', '이미 결정된 제안입니다');
+      }
+      if (proposal.nodes.length === 0) {
+        throw new DomainError('invalid_input', '추출된 초안이 없습니다');
+      }
+      const created = new Map<string, string>();
+      const nodes: GraphNode[] = [...project.graph.nodes];
+      for (const draft of proposal.nodes) {
+        const id = ctx.nextId('node', draft.type);
+        created.set(draft.key, id);
+        nodes.push(
+          makeGraphNode({ id, type: draft.type, title: draft.title, body: draft.body, at: ctx.at }),
+        );
+      }
+      const links: GraphLink[] = [...project.graph.links];
+      for (const draft of proposal.links) {
+        const src = resolveProposalRef(draft.src, created);
+        const dst = resolveProposalRef(draft.dst, created);
+        if (src === null || dst === null) {
+          throw new DomainError('invalid_input', '제안 링크의 대상을 풀지 못했습니다');
+        }
+        links.push({
+          id: ctx.nextId('link'),
+          type: draft.type,
+          src,
+          dst,
+          suspectSince: null,
+          suspectWhy: null,
+          createdAt: ctx.at,
+        });
+      }
+      const decided = { ...proposal, state: 'adopted' as const, decidedAt: ctx.at };
+      return {
+        project: {
+          ...project,
+          graph: { nodes, links },
+          graphProposal: decided,
+          updatedAt: ctx.at,
+        },
+        events: [
+          {
+            type: 'graph.proposal.adopted',
+            proposalId: proposal.id,
+            nodes: proposal.nodes.length,
+            links: proposal.links.length,
+          },
+        ],
+      };
+    }
+
+    case 'graph.proposal.reject': {
+      const proposal = project.graphProposal;
+      if (proposal === null || proposal.id !== command.proposalId) {
+        throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
+      }
+      if (proposal.state !== 'open') {
+        throw new DomainError('proposal_decided', '이미 결정된 제안입니다');
+      }
+      const decided = { ...proposal, state: 'rejected' as const, decidedAt: ctx.at };
+      return {
+        project: { ...project, graphProposal: decided, updatedAt: ctx.at },
+        events: [{ type: 'graph.proposal.rejected', proposalId: proposal.id }],
+      };
+    }
+
     default: {
       const exhaustive: never = command;
       throw new DomainError('invalid_input', `unknown command ${JSON.stringify(exhaustive)}`);
@@ -509,4 +793,17 @@ export function execute(
 /** Convenience for list views: pins of the screen, optionally filtered by type. */
 export function visiblePins(project: Project, filter: Parameters<typeof filterPins>[1] = 'all'): Pin[] {
   return filterPins(project.pins, filter);
+}
+
+/**
+ * One decision card, one call: adopts whichever pin-derived proposal is on the
+ * table. Kept beside `execute` so a caller (test, store revert path) does not
+ * have to know the command name to spend a decision.
+ */
+export function applyGraphProposal(project: Project, ctx: ExecuteContext): ExecutionResult {
+  const proposal = project.graphProposal;
+  if (proposal === null) {
+    throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
+  }
+  return execute(project, { type: 'graph.proposal.adopt', proposalId: proposal.id }, ctx);
 }

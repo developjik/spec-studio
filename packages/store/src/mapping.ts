@@ -1,14 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type {
-  Block,
-  BlockPinRef,
-  Doc,
-  Pin,
-  Project,
-  Proposal,
-  ProposalPatch,
-  Screen,
-  ScreenRef,
+import {
+  NODE_TYPE_KIND,
+  type Block,
+  type BlockPinRef,
+  type Doc,
+  type EditableNodeType,
+  type GraphLink,
+  type GraphNode,
+  type GraphProposal,
+  type Pin,
+  type Project,
+  type Proposal,
+  type ProposalPatch,
+  type Screen,
+  type ScreenRef,
 } from '@spec-studio/protocol';
 
 /**
@@ -72,6 +77,23 @@ export const newPinId = (): string => `P_${newSuffix()}`;
 export const newDocId = (): string => `D_${newSuffix()}`;
 export const newBlockId = (): string => `B_${newSuffix()}`;
 export const newProposalId = (): string => `PR_${newSuffix()}`;
+export const newLinkId = (): string => `L_${newSuffix()}`;
+export const newGraphProposalId = (): string => `GP_${newSuffix()}`;
+
+/** A graph node's id prefix is its `obj` kind: N_ req/policy, C_ contract, V_ qa. */
+export function newNodeId(type: EditableNodeType): string {
+  const { kind } = NODE_TYPE_KIND[type];
+  switch (kind) {
+    case 'specnode':
+      return `N_${newSuffix()}`;
+    case 'contract':
+      return `C_${newSuffix()}`;
+    case 'verification':
+      return `V_${newSuffix()}`;
+    default:
+      throw new Error(`a graph node cannot be a ${kind}`);
+  }
+}
 export const newOpId = (): string => `op_${newSuffix()}`;
 
 export function screenToRow(screen: Screen, projectId: string): ObjRow {
@@ -156,6 +178,71 @@ export function pinFromRow(row: ObjRow): Pin {
   };
 }
 
+export function graphNodeToRow(node: GraphNode, projectId: string): ObjRow {
+  const { kind, subtype } = NODE_TYPE_KIND[node.type];
+  return {
+    id: node.id,
+    project_id: projectId,
+    kind,
+    subtype,
+    title: node.title,
+    parent_id: null,
+    props: JSON.stringify({ body: node.body }),
+    state: node.state,
+    rev: 1,
+    hash: contentHash({ title: node.title, body: node.body, state: node.state, type: node.type }),
+    deleted_at: null,
+    created_at: node.createdAt,
+    updated_at: node.updatedAt,
+  };
+}
+
+export function graphNodeFromRow(row: ObjRow): GraphNode | null {
+  const type =
+    row.kind === 'specnode' && row.subtype === 'requirement'
+      ? ('req' as const)
+      : row.kind === 'specnode' && row.subtype === 'policy'
+        ? ('policy' as const)
+        : row.kind === 'contract'
+          ? ('contract' as const)
+          : row.kind === 'verification'
+            ? ('qa' as const)
+            : null;
+  if (type === null) return null;
+  const props = parseJson<{ body?: string }>(row.props || '{}');
+  return {
+    id: row.id,
+    type,
+    title: row.title,
+    body: props.body ?? '',
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export interface LinkRow {
+  id: string;
+  type: string;
+  src: string;
+  dst: string;
+  suspect_since: string | null;
+  suspect_why: string | null;
+  created_at: string;
+}
+
+export function linkFromRow(row: LinkRow): GraphLink {
+  return {
+    id: row.id,
+    type: row.type as GraphLink['type'],
+    src: row.src,
+    dst: row.dst,
+    suspectSince: row.suspect_since,
+    suspectWhy: row.suspect_why,
+    createdAt: row.created_at,
+  };
+}
+
 export function projectFromRows(input: {
   id: string;
   name: string;
@@ -165,6 +252,9 @@ export function projectFromRows(input: {
   pins: ObjRow[];
   doc?: Doc | null;
   proposal?: Proposal | null;
+  graphNodes?: ObjRow[];
+  links?: LinkRow[];
+  graphProposal?: GraphProposalRow | null;
 }): Project {
   const screen = input.screen === null ? null : screenFromRow(input.screen);
   const pins = input.pins.map(pinFromRow).sort((a, b) => a.number - b.number);
@@ -177,8 +267,40 @@ export function projectFromRows(input: {
     pinSeq: input.screen === null ? 0 : screenPinSeq(input.screen),
     doc: input.doc ?? null,
     proposal: input.proposal ?? null,
+    graph: {
+      nodes: (input.graphNodes ?? [])
+        .map(graphNodeFromRow)
+        .filter((node): node is GraphNode => node !== null),
+      links: (input.links ?? []).map(linkFromRow),
+    },
+    graphProposal:
+      input.graphProposal === undefined || input.graphProposal === null
+        ? null
+        : graphProposalFromRow(input.graphProposal),
     createdAt: input.createdAt,
     updatedAt: input.updatedAt,
+  };
+}
+
+// ── graph proposal rows ───────────────────────────────────────────────
+
+export interface GraphProposalRow {
+  id: string;
+  project_id: string;
+  state: string;
+  created_at: string;
+  decided_at: string | null;
+  payload: string;
+}
+
+export function graphProposalFromRow(row: GraphProposalRow): GraphProposal {
+  const parsed = JSON.parse(row.payload) as GraphProposal;
+  return {
+    ...parsed,
+    id: row.id,
+    state: row.state as GraphProposal['state'],
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
   };
 }
 

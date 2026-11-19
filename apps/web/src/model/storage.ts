@@ -1,5 +1,10 @@
 import { normalizeProject } from '@spec-studio/core';
-import { ProjectSchema, type Project } from '@spec-studio/protocol';
+import {
+  ProjectBundleSchema,
+  ProjectSchema,
+  type Project,
+  type ProjectBundle,
+} from '@spec-studio/protocol';
 
 const STORAGE_KEY = 'spec-studio.project.v1';
 
@@ -45,14 +50,40 @@ export function parseProjectFile(text: string): Project {
 }
 
 export function downloadProject(project: Project): void {
-  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  downloadBundle(bundleOf(project));
+}
+
+/** The file a person keeps: the project plus what it is and when it left. */
+export function bundleOf(project: Project, at = new Date().toISOString()): ProjectBundle {
+  return { format: 'spec-studio.bundle', version: 1, exportedAt: at, project };
+}
+
+export function downloadBundle(bundle: ProjectBundle): void {
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
-  const code = project.screen?.code ?? 'project';
+  const code = bundle.project.screen?.code ?? 'project';
   anchor.href = url;
-  anchor.download = `spec-studio-${code.toLowerCase()}.json`;
+  anchor.download = `spec-studio-${code.toLowerCase()}-bundle.json`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * A bundle is the v1 format; a bare project file (the W1–W4 export) still
+ * opens, because a file a person saved last month should not stop working.
+ */
+export function parseBundleFile(text: string): ProjectBundle {
+  const raw = JSON.parse(text) as unknown;
+  const asBundle = ProjectBundleSchema.safeParse(raw);
+  if (asBundle.success) {
+    return { ...asBundle.data, project: normalizeProject(asBundle.data.project) };
+  }
+  const asProject = ProjectSchema.safeParse(raw);
+  if (asProject.success) {
+    return bundleOf(normalizeProject(asProject.data));
+  }
+  throw new Error('spec-studio 프로젝트 번들이 아닙니다.');
 }
