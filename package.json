@@ -1,0 +1,24 @@
+{
+  "name": "spec-studio",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": "^20.19 || >=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @spec-studio/web dev",
+    "build": "pnpm --filter @spec-studio/web build",
+    "preview": "pnpm --filter @spec-studio/web preview",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "dep:check": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "test:contract": "python3 test/contract/test_schema.py",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^17.4.3",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

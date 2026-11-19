@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Test / tooling caches
+coverage/
+.vite/
+.vitest/
+playwright-report/
+test-results/
+
+# Local data — the prototype stores its project in the browser, but JSON
+# exports and local SQLite files should never be committed
+*.local
+*.db
+*.db-wal
+*.db-shm
+spec-studio-*.json
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.log
+.env
+.env.*

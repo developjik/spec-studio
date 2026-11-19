@@ -1,0 +1,21 @@
+{
+  "name": "@spec-studio/store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SQLite schema and the future single writer — the source of truth",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:contract": "python3 ../../test/contract/test_schema.py"
+  },
+  "dependencies": {
+    "@spec-studio/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}
