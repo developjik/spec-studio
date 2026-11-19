@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Pin, Project, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Project, Screen } from '@spec-studio/protocol';
 import {
   QA_CSV_COLUMNS,
   buildOverlayMarkers,
@@ -290,5 +290,42 @@ describe('editing and moving a pin', () => {
         context(),
       ),
     ).toThrow();
+  });
+});
+
+describe('the static HTML carries the document (W4)', () => {
+  const doc: Doc = {
+    id: `D_${'d'.repeat(12)}`,
+    title: '주문 상세 문서',
+    rev: 2,
+    blocks: [
+      {
+        id: `B_${'b'.repeat(12)}`,
+        type: 'paragraph',
+        text: '배송이 시작되기 전까지만 취소할 수 있다.',
+        pinRefs: [{ pinId: pins[0]!.id, fingerprint: 'ffffffff', linkedAt: AT }],
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    ],
+    createdAt: AT,
+    updatedAt: AT,
+  };
+
+  it('prints the paragraph, its pin and the stale mark without an app', () => {
+    const html = renderStaticHtml({ screen, pins, doc, generatedAt: AT });
+    expect(html).toContain('주문 상세 문서');
+    expect(html).toContain('배송이 시작되기 전까지만 취소할 수 있다.');
+    expect(html).toContain('#1 취소 요청');
+    // the recorded fingerprint no longer matches the pin, so the sheet says so
+    expect(html).toContain('핀이 바뀜 · 확인 필요');
+    // and the sheet is still self-contained
+    expect(html).not.toContain('src="http');
+  });
+
+  it('leaves the sheet unchanged when the project has no document', () => {
+    const withOut = renderStaticHtml({ screen, pins, generatedAt: AT });
+    expect(withOut).not.toContain('주문 상세 문서');
+    expect(withOut).toContain('화면설계서');
   });
 });
