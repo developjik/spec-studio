@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -7,10 +8,27 @@ import { DatabaseSync } from 'node:sqlite';
  * reads the same file, so the runtime and the test can never be looking at
  * different schemas.
  */
-export const SCHEMA_FILE = fileURLToPath(new URL('../schema/schema.sql', import.meta.url));
+/**
+ * Where the DDL lives. A bundled host (the daemon ships one file and a `schema/`
+ * directory beside it) points `SPEC_STUDIO_SCHEMA_DIR` at its copy; running from
+ * source falls back to this package's own directory.
+ */
+export const SCHEMA_DIR =
+  process.env.SPEC_STUDIO_SCHEMA_DIR ?? fileURLToPath(new URL('../schema/', import.meta.url));
+
+export const SCHEMA_FILE = join(SCHEMA_DIR, 'schema.sql');
 
 /** `PRAGMA user_version` of the DDL above. */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
+
+/**
+ * Additive steps applied when an older file is opened. A database is only ever
+ * moved forward; opening a newer file with an older build is an error, because
+ * that build would not know what the extra columns mean.
+ */
+export const MIGRATIONS: Readonly<Record<number, string>> = {
+  11: join(SCHEMA_DIR, 'migrate-11-12.sql'),
+};
 
 /**
  * Everything below this line needs FTS5, which is a SQLite build option rather
@@ -58,6 +76,14 @@ export function applySchema(db: DatabaseSync, schemaPath: string = SCHEMA_FILE):
     const { core, search } = splitSchema(ddl);
     db.exec(core);
     if (fts5 && search !== '') db.exec(search);
+  }
+
+  if (before !== 0 && before < SCHEMA_VERSION) {
+    const path = MIGRATIONS[before];
+    if (path === undefined) {
+      throw new Error(`no migration from user_version ${before} to ${SCHEMA_VERSION}`);
+    }
+    db.exec(readFileSync(path, 'utf8'));
   }
 
   const after = Number(

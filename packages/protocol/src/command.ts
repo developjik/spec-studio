@@ -35,6 +35,14 @@ export const CommandSchema = z.discriminatedUnion('type', [
     anchor: AnchorSchema.optional(),
   }),
   z.object({
+    type: z.literal('screen.update'),
+    screenId: ScreenIdSchema,
+    /** Display name of the screen in the pin list and the published copy. */
+    title: z.string().trim().min(1).max(120).optional(),
+    /** Registered Figma frame; `null` removes it. Never fetched, only linked. */
+    figmaUrl: z.string().url().max(2048).nullable().optional(),
+  }),
+  z.object({
     type: z.literal('pin.delete'),
     screenId: ScreenIdSchema,
     pinId: PinIdSchema,
@@ -46,3 +54,4 @@ export type PinCreateCommand = Extract<Command, { type: 'pin.create' }>;
 export type PinUpdateCommand = Extract<Command, { type: 'pin.update' }>;
 export type PinDeleteCommand = Extract<Command, { type: 'pin.delete' }>;
 export type ScreenAttachCommand = Extract<Command, { type: 'screen.attach' }>;
+export type ScreenUpdateCommand = Extract<Command, { type: 'screen.update' }>;

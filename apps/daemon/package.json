@@ -1,0 +1,25 @@
+{
+  "name": "@spec-studio/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Loopback HTTP API over the local SQLite project — the only writer the browser talks to",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/daemon.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@spec-studio/core": "workspace:*",
+    "@spec-studio/protocol": "workspace:*",
+    "@spec-studio/publish": "workspace:*",
+    "@spec-studio/store": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.28.2",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

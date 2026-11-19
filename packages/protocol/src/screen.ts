@@ -39,6 +39,12 @@ export const ScreenSchema = z.object({
   /** Short code used in pin labels, e.g. SCR-110 → SCR-110-3. */
   code: z.string().regex(/^SCR-\d{2,4}$/, { message: 'screen code must look like SCR-110' }),
   ref: ScreenRefSchema,
+  /**
+   * The Figma frame this screen was designed in, when one is registered. It is
+   * reference data, not state: the spec stays local and the link travels into
+   * the published copy. `null` means no frame is registered.
+   */
+  figmaUrl: z.string().url().nullable().optional(),
   viewport: ViewportSchema.nullable(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),

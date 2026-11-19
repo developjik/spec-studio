@@ -12,6 +12,14 @@ import {
   type ObjRow,
 } from './mapping';
 import { applySchema, transaction, type SchemaInfo } from './schema';
+import {
+  findLatestPublish,
+  findPublishBySpec,
+  listPublishRecords,
+  savePublishRecord,
+  type PublishRecord,
+  type PublishRecordInput,
+} from './publish-record';
 import type { ExecuteOutcome, StorePort } from './index';
 
 export interface SqliteStoreOptions {
@@ -166,6 +174,34 @@ export class SqliteStore implements StorePort {
     });
 
     return { project: after, seq, events: result.events };
+  }
+
+  /** Newest publish records first — the modal's history list. */
+  listPublishes(projectId: string, limit = 20): PublishRecord[] {
+    return listPublishRecords(this.#db, projectId, limit);
+  }
+
+  /** A successful publish of exactly this spec to this target, if one exists. */
+  findPublishBySpec(input: {
+    projectId: string;
+    target: 'confluence';
+    spaceKey: string;
+    specHash: string;
+  }): PublishRecord | null {
+    return findPublishBySpec(this.#db, input);
+  }
+
+  /** The last page this project published to a target — the update target. */
+  findLatestPublish(input: {
+    projectId: string;
+    target: 'confluence';
+    spaceKey: string;
+  }): PublishRecord | null {
+    return findLatestPublish(this.#db, input);
+  }
+
+  savePublish(input: PublishRecordInput): PublishRecord {
+    return savePublishRecord(this.#db, input);
   }
 
   async close(): Promise<void> {

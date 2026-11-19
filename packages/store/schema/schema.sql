@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 11;
+PRAGMA user_version = 12;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -290,23 +290,37 @@ CREATE UNIQUE INDEX capture_once ON capture(state_id, image_sha);
 CREATE INDEX capture_state ON capture(state_id, taken_at DESC);
 
 -- 8. 발행 기록: 사본을 어디로 보냈고 무엇을 돌려받았나 ──────────────
+-- W3 publishes a screen spec, not a document: such a row names its project and
+-- screen and carries the spec_hash it copied, so re-publishing the same spec
+-- after a restart is a lookup, not a second page. A document publish still
+-- names its doc. Exactly one of the two owners is set.
 CREATE TABLE publish_record (
   id             TEXT PRIMARY KEY,              -- PB_...
-  doc_id         TEXT NOT NULL REFERENCES doc(id) ON DELETE RESTRICT,
+  doc_id         TEXT REFERENCES doc(id) ON DELETE RESTRICT,
+  project_id     TEXT REFERENCES project(id) ON DELETE CASCADE,
+  screen_id      TEXT REFERENCES obj(id) ON DELETE SET NULL,
   target         TEXT NOT NULL CHECK (target IN ('confluence','notion','jira','local')),
-  page_id        TEXT,
+  space_key      TEXT,                          -- Confluence space (id or key as entered)
+  page_id        TEXT,                          -- 원격 페이지 id
   version        INTEGER,                       -- 원격 판 번호 (REST) 또는 null (MCP)
   snapshot_token TEXT,                          -- Rovo MCP v2 스냅샷 토큰
   output_kind    TEXT NOT NULL
                  CHECK (output_kind IN ('body','overlay-png','spec-html','qa-csv','bundle')),
   artifact       TEXT,                          -- 파일 경로 또는 해시
   status         TEXT NOT NULL CHECK (status IN ('intent','ok','failed','blocked')),
+  spec_hash      TEXT,                          -- 발행한 스펙 내용 해시 (멱등성 판단)
+  remote_url     TEXT,                          -- 원격 페이지 주소
   idem_key       TEXT NOT NULL,                 -- 재시작 중복 발행 방지
   note           TEXT,
-  at             TEXT NOT NULL
+  published_at   TEXT,
+  at             TEXT NOT NULL,
+  CHECK (doc_id IS NOT NULL OR project_id IS NOT NULL),
+  CHECK (status <> 'ok' OR project_id IS NULL
+         OR (page_id IS NOT NULL AND spec_hash IS NOT NULL AND published_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX publish_idem ON publish_record(target, idem_key);
 CREATE INDEX publish_doc ON publish_record(doc_id, at DESC);
+CREATE INDEX publish_project ON publish_record(project_id, at DESC);
 CREATE UNIQUE INDEX publish_version ON publish_record(doc_id, target, page_id, version)
   WHERE version IS NOT NULL;
 

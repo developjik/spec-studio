@@ -10,6 +10,10 @@ export const EventSchema = z.discriminatedUnion('type', [
     screen: ScreenSchema,
   }),
   z.object({
+    type: z.literal('screen.updated'),
+    screen: ScreenSchema,
+  }),
+  z.object({
     type: z.literal('pin.created'),
     pin: PinSchema,
   }),

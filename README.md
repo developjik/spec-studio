@@ -6,10 +6,10 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
-> **Status: W2.** The browser app in `apps/web` edits and moves pins and produces the three
-> handoff outputs. `packages/store` has a working SQLite adapter with round-trip tests; the web
-> build still keeps its project in `localStorage`, because the renderer may not import the store.
-> The daemon that connects the two is the next milestone.
+> **Status: W3.** A loopback daemon now owns the SQLite file and the browser talks to it over
+> HTTP. From the app you can register a Figma frame, keep pins in the database, and publish the
+> screen to Confluence Cloud once — a second publish of the same spec creates no second page,
+> even after the daemon restarts.
 
 ## Why
 
@@ -32,26 +32,21 @@ Three commitments follow from that:
   screen, or register a Figma frame URL.
 - **Numbered pins in three types** — 기능(function) · 정책(policy) · 예외(exception), each with a
   title and a description, placed at the exact point you clicked.
-- **Edit in place** — click a pin or its row to change its type, title and description. The
-  number is not a field on the form, because it cannot change.
-- **Move by dragging** — drag a marker on the screenshot and its `(x, y)` anchor follows the
-  pointer; the number stays with it.
-- **A pin panel that tells the truth** — filter by type, select, delete; deleted numbers appear
-  as **결번** (gaps) and are never reused. The next number is always visible.
-- **Three handoff outputs, built from one read of the pins**:
-  1. **Overlay PNG** — the screenshot with numbered, type-coloured markers composited at the
-     image's own resolution;
-  2. **Static HTML** — one self-contained file: inline CSS, base64 image, the three tables and
-     the gap notice. It opens from `file://` with **zero network requests**;
-  3. **QA CSV** — UTF-8 with a BOM (so Excel reads `기능` correctly), CRLF, and the nine promised
-     columns. `케이스ID` is derived from the pin number, so deleting a pin never renumbers a case.
-- **A SQLite adapter** — `openSqliteStore()` reads and writes projects, screens and pins against
-  `schema.sql`, applies every command through core in one transaction, records events and
-  `op_log` rows, and keeps deleted pins as tombstones so the number survives in the file.
-- **Local persistence in the app** — the project survives a reload in `localStorage`, and
-  exports/imports as plain JSON.
-- **Schema contract test** — 24 constraints that must reject bad data and 13 normal paths that
-  must insert, run against real SQLite.
+- **Edit in place, move by dragging** — the number stays through edits, drags and deletions;
+  deleted numbers appear as **결번** and are never reused.
+- **Three handoff outputs from one read of the pins** — overlay PNG, self-contained HTML, QA CSV
+  with a BOM and the nine promised columns.
+- **A Figma frame link per screen** — displayed in the app, clickable, and carried into the
+  published body. It is reference data: nothing is fetched from Figma.
+- **A local daemon** — `apps/daemon` binds `127.0.0.1`, serves the project API, and is the only
+  writer of `graph.db`. The top bar says **SQLite 데몬 연결됨** when it is there and
+  **브라우저 임시 모드** when it is not; without a daemon the app still runs on `localStorage`.
+- **Confluence publishing** — REST v2 pages, v1 attachments, Storage-Format body with the screen
+  summary, Figma link, the three tables, the gap notice and the attachment list. One page and
+  three files per publish.
+- **Idempotent by content** — the spec hash decides: same spec and space → nothing is sent;
+  edited spec → the recorded page is updated; never published → one page is created.
+- **Publish history in the app** — `publish_record` rows with time, result, space, page and hash.
 
 ## Quick start
 
@@ -60,45 +55,106 @@ Node 22.14+ (the store uses the runtime's own `node:sqlite`) and pnpm 9.15.4 (vi
 ```bash
 corepack enable          # pnpm 9.15.4
 pnpm install
-pnpm dev                 # http://localhost:5173
+
+# terminal 1 — the daemon, which owns .data/spec-studio.db
+pnpm daemon:build
+pnpm daemon
+
+# terminal 2 — the app
+pnpm dev                 # http://127.0.0.1:5173
 ```
+
+The app checks `http://127.0.0.1:8787/api/health` on load. If the daemon is not running it says
+so and keeps the project in the browser instead; the two modes never mix in one session.
+
+Daemon environment:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SPEC_STUDIO_DB` | `.data/spec-studio.db` | the SQLite file it owns |
+| `SPEC_STUDIO_PORT` | `8787` | loopback port |
+| `SPEC_STUDIO_ORIGINS` | `http://localhost:5173`, `http://127.0.0.1:5173`, `:4173` pairs | CORS allow-list |
+| `SPEC_STUDIO_SCHEMA_DIR` | beside the bundle (`dist/schema`) | where `schema.sql` lives |
 
 Verification, the same commands CI runs:
 
 ```bash
 pnpm typecheck           # tsc --noEmit across the workspace
-pnpm test                # vitest: pin numbering, command semantics, purity, SQLite round trip
-pnpm build               # vite production build
+pnpm test                # vitest: core, protocol, store, publish, daemon API
+pnpm build               # vite production build + the daemon bundle
 pnpm dep:check           # dependency-cruiser boundary rules
 pnpm test:contract       # python3 test/contract/test_schema.py
 pnpm check               # all of the above, in order
 ```
 
-The contract test needs only Python 3 (standard library `sqlite3`).
+End-to-end, against a real daemon, a real SQLite file and a Confluence-shaped mock:
+
+```bash
+test/e2e/run_w3.sh       # needs Playwright (Python) and a chromium binary
+```
+
+It loads the sample, registers a Figma link, creates three pins, verifies the rows in the SQLite
+file, restarts the daemon and reloads, publishes, checks the page and three attachments on the
+mock, and proves a second publish adds nothing. Screenshots land in `downloads/`.
+
+## Publishing to Confluence
+
+The modal asks for the site URL, a Space ID or key, the account email and a personal API token
+(profile → security → API tokens). The token is used for the request in front of it and is never
+written to the database, `localStorage` or a log; address, space and email are remembered for the
+next time.
+
+| Step | API |
+| --- | --- |
+| Space key → id | `GET /wiki/api/v2/spaces?keys=…` |
+| First publish | `POST /wiki/api/v2/pages` |
+| Later publish | `PUT /wiki/api/v2/pages/:id` with the next version |
+| Attachments | `POST /wiki/rest/api/content/:id/child/attachment` (new) or `…/:attachmentId/data` (update) |
+
+What the page contains: the screen summary, the Figma frame link when one is registered, the three
+tables (기능 · 정책 · 예외) with number, title, description and precondition, the gap notice, and
+the three attachments as Confluence attachment links. The first line says the page is a one-way
+copy.
+
+### Why a second publish creates nothing
+
+`spec_hash` is a SHA-256 of what a reader sees — screen, Figma link and every pin's number, type,
+title, body and anchor. Timestamps are left out on purpose.
+
+1. Same hash already recorded for this project + space → **skipped**, no request to Confluence.
+2. New hash but a page is on record → **updated** in place (`version + 1`), attachments replaced.
+3. No page on record → **created**, once.
+
+`publish_record` keeps `(project_id, target, space_key, spec_hash, page_id, remote_url,
+published_at)`, with a unique `(target, idem_key)` index behind the lookup, so the decision
+survives a restart. The tests fix all four cases: create → same spec → daemon/store reopen →
+edited pin.
 
 ## Repository layout
 
 ```
 apps/
-  web/                 React 19 + Vite shell — pins, editing, drag, the three outputs
+  web/                 React 19 + Vite shell — pins, editing, drag, outputs, publish modal
+  daemon/              node:http API over the store; the only writer of the SQLite file
 packages/
   protocol/            Zod: object kinds, pin types, screen refs, commands, events
-  core/                Pure domain: pin numbering, gap preservation, command execution,
-                       output generators (tables · QA CSV · static HTML · marker layout)
-  store/               schema.sql · the single writer · the SQLite adapter (node:sqlite)
+  core/                Pure domain: pin numbering, commands, output generators
+  store/               schema.sql (v12) · the SQLite adapter · publish records
+  publish/             Confluence client, Storage-Format body, idempotent publish flow
 test/
   contract/            the SQLite schema contract (Python, no dependencies)
+  e2e/                 the W3 browser check and its runner
 ```
 
 Dependency direction is one-way:
 
 ```
-apps/web → packages/core → packages/protocol
-                ↑
-packages/store ─┘        (holds the schema and the future write path)
+apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
+                                   ↑
+                     packages/publish ┘ (records arrive through a port)
 ```
 
-### Four boundary rules
+### Five boundary rules
 
 `.dependency-cruiser.cjs` fails the build when a rule is broken:
 
@@ -107,12 +163,27 @@ packages/store ─┘        (holds the schema and the future write path)
 | `renderer-never-touches-store` | The web shell importing the store, daemon, MCP or publisher |
 | `core-is-pure` | Node built-ins in core source — no fs, no http, no clock |
 | `mcp-knows-no-schema` | MCP code reaching into the store |
+| `publish-knows-no-schema` | The publisher reading the database; the daemon hands it records |
 | `protocol-has-no-deps` | Protocol depending on anything but `zod` |
 
 `core-is-pure` is checked twice: dependency-cruiser sees imports, and
-`packages/core/test/purity.test.ts` walks every file under `src/` (subdirectories included) for
-`Date.now()`, `Math.random()` and `fetch()` — the things no import graph can catch. Time and ids
-are arguments to every core function, `generatedAt` included.
+`packages/core/test/purity.test.ts` walks every file under `src/` for `Date.now()`,
+`Math.random()` and `fetch()`.
+
+## The daemon API
+
+| Method | Path | Does |
+| --- | --- | --- |
+| `GET` | `/api/health` | liveness, schema version, project count |
+| `GET` · `POST` | `/api/projects` | list summaries · create |
+| `GET` | `/api/projects/:id` | project + publish records |
+| `POST` | `/api/projects/:id/commands` | apply one validated command |
+| `POST` | `/api/projects/:id/publish/preview` | plan (`create`/`update`/`skip`), body, attachments |
+| `POST` | `/api/projects/:id/publish` | run the publish; receives the browser-rendered overlay |
+| `GET` | `/api/projects/:id/publishes` | history |
+
+Requests from an origin outside the allow-list are refused with 403. The API has no delete
+route, and no endpoint accepts a credential in a query string.
 
 ## Pin numbering, precisely
 
@@ -122,89 +193,67 @@ are arguments to every core function, `generatedAt` included.
 | No reuse | Deleting #3 leaves #3 empty; a new pin gets `max + 1` |
 | Sorting is separate | The panel can sort by type or recency; the displayed number stays |
 | Duplicated screens renumber | A copied screen is a new `S_`, so its pins get new numbers |
-| Publishing carries both | Once publishing lands: images show the number, static HTML shows number + object id |
 
-The implementation keeps a per-screen **high-water mark** (`pinSeq`) next to the pins. Using
-only `max(number) + 1` would recycle the top number after deleting it, which is exactly the
-reference-breaking case the rule exists to prevent. When state arrives from outside, the mark
-is raised to the largest number present, never lowered —
-see `packages/core/src/pins.ts` and `packages/core/test/pins.test.ts`.
+The implementation keeps a per-screen **high-water mark** (`pinSeq`). When state arrives from
+outside, the mark is raised to the largest number present, never lowered — see
+`packages/core/src/pins.ts` and `packages/core/test/pins.test.ts`.
 
 ## Outputs, and why each promise is testable
 
 | Output | Promise | Where it is checked |
 | --- | --- | --- |
 | Overlay PNG | Markers sit on the unchanged screenshot at its own resolution | `buildOverlayMarkers` in core, canvas painting in `apps/web/src/model/overlay.ts` |
-| Static HTML | Zero external requests; opens without the app | `renderStaticHtml` + a Playwright run that opens the downloaded file and counts requests |
+| Static HTML | Zero external requests; opens without the app | `renderStaticHtml` + a Playwright run that counts requests |
 | QA CSV | BOM, CRLF, nine columns, case id stable across deletions | `buildQaCsv` + tests |
 
-All three come from the same `buildTextOutputs` / `buildOverlayMarkers` calls, so the preview in
-the modal and the downloaded file cannot disagree.
+All three come from the same build, so the preview and the downloaded file cannot disagree — and
+the publish path uploads the same three files.
 
-## The store adapter
+## The store
 
 `openSqliteStore({ file })` implements `StorePort` against `schema.sql` with the SQLite that ships
-in Node (`node:sqlite`) — no native build, no compiler in CI.
+in Node (`node:sqlite`).
 
 - **One command, one transaction.** The command runs through `@spec-studio/core` first, so the
-  numbering rule has exactly one implementation; the resulting state is then written and
-  `COMMIT`ted with its events and `op_log` row. A rejected command writes nothing.
-- **Deletes are tombstones.** A deleted pin keeps its row with `deleted_at` set, so the number it
-  was given is still in the file. `pinSeq` lives in the screen's `props` and is only ever raised.
-- **FTS5 is optional.** Node's bundled SQLite has no FTS5, so the schema marks the search section
-  with `-- @optional-fts5`. The adapter applies everything above the marker and skips the rest on
-  builds without it (`SchemaInfo.fts5` records which happened). The contract test always applies
-  the whole file.
-- **Round trip.** `packages/store/test/sqlite.test.ts` writes a project, a screen and three pins,
-  edits one, drags one, deletes one, adds one (#4, not #3), then reopens the file and reads the
-  same state back.
+  numbering rule has exactly one implementation; the resulting state is written and `COMMIT`ted
+  with its events and `op_log` row.
+- **Deletes are tombstones**, so the number a deleted pin was given stays in the file.
+- **FTS5 is optional**; the adapter skips the marked section on builds without it.
+- **Publish records are rows**, keyed by target and idempotency key, with a project owner.
 
-`packages/store/schema/schema.sql` is the canonical DDL (SQLite, `user_version = 11`).
+`packages/store/schema/schema.sql` is the canonical DDL (SQLite, `user_version = 12`). A file from
+v11 is migrated in place by `schema/migrate-11-12.sql` the first time it is opened.
 
 ```bash
 pnpm test:contract
 # schema   2/ 2
-# reject  24/24
-# accept  13/13
+# reject  26/26
+# accept  14/14
 # plan     4/ 4
 # search   5/ 5
 # v2       1/ 1
 # PASS: schema contract holds
 ```
 
-It proves, against a real database, that:
+## Scope — what W3 does *not* do
 
-- a project row exists, and objects can name the project they belong to;
-- a pin cannot exist without its screen, and its parent must be a screen;
-- `obj.kind` cannot be updated, and objects with links cannot be physically deleted;
-- proposal, state-definition and publish records enforce their state-specific columns;
-- the promised indexes are actually used (`link_src`, `link_queue`, `block_doc`);
-- Korean search works: trigram for 3+ syllables, bigram for the 2-syllable queries trigram
-  cannot answer;
-- `schema-v2.sql` (run · run_log · checkpoint) applies additively on top of v1.
-
-The script exits non-zero on any mismatch, so a schema that quietly stops enforcing something
-cannot pass CI.
-
-## Scope — what W2 does *not* do yet
-
-- **The daemon is not here.** The adapter works and is tested, but the browser app still persists
-  to `localStorage`: `renderer-never-touches-store` forbids the other arrangement. Binding them
-  needs the daemon.
-- **No publishing.** Overlay, HTML and CSV are local files; Confluence is W3.
-- **No capture, no states, no Figma import.** Pins are the only object type the UI creates.
-- **No network calls at runtime.** A Figma URL is stored as a reference; the frame is not
-  embedded and no request is made. Everything on screen is local.
-- **One screen per project.** The numbering rule is per screen; W2 opens one at a time.
-- **Search needs a build with FTS5.** Storing pins does not; the index simply stays empty when the
-  SQLite build cannot create it.
+- **Confluence only, one direction.** Notion and Jira are named in the schema, not implemented.
+  Nothing is read back: editing the page does not change the local spec.
+- **One screen per project.** The daemon holds many projects, but the UI opens one screen.
+- **No capture, no states, no Figma import.** Pins are the only object type the UI creates, and
+  the Figma frame is a link, never an embed.
+- **The overlay must be rendered in a browser.** The daemon cannot composite a screenshot, so a
+  publish request carries the PNG the app made; a Figma-only screen has no overlay to publish.
+- **Search needs a build with FTS5.** Storing pins does not.
 
 ## Scripts
 
 | Command | Does |
 | --- | --- |
-| `pnpm dev` | Vite dev server on port 5173 |
-| `pnpm build` | Typecheck and build the web app |
+| `pnpm dev` | Vite dev server on `127.0.0.1:5173` |
+| `pnpm daemon:build` | Bundle the daemon to `apps/daemon/dist` |
+| `pnpm daemon` | Run the daemon (`dist/daemon.mjs`) |
+| `pnpm build` | Build the web app and the daemon bundle |
 | `pnpm preview` | Serve the production build |
 | `pnpm test` | Vitest across packages |
 | `pnpm typecheck` | `tsc --noEmit` per package |

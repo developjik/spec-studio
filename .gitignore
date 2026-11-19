@@ -30,3 +30,6 @@ spec-studio-*.json
 *.log
 .env
 .env.*
+
+# End-to-end scratch
+.e2e/

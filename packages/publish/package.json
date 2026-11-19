@@ -1,0 +1,25 @@
+{
+  "name": "@spec-studio/publish",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Confluence REST v2 one-way publisher \u2014 the local spec is the only source of truth",
+  "exports": {
+    "./testing": "./src/testing/index.ts",
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@spec-studio/core": "workspace:*",
+    "@spec-studio/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

@@ -14,6 +14,7 @@ const SCREEN: Screen = {
     value: 'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E',
     label: '샘플 화면',
   },
+  figmaUrl: null,
   viewport: { width: 1200, height: 800 },
   createdAt: '2026-11-19T09:00:00.000Z',
   updatedAt: '2026-11-19T09:00:00.000Z',
@@ -71,7 +72,7 @@ describe('the schema', () => {
   it('creates itself on an empty file and reports the promised version', () => {
     const store = open();
     expect(store.schema.created).toBe(true);
-    expect(store.schema.actual).toBe(11);
+    expect(store.schema.actual).toBe(12);
   });
 
   it('does not re-create tables when the file already carries them', async () => {

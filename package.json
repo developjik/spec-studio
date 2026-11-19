@@ -8,13 +8,15 @@
   },
   "scripts": {
     "dev": "pnpm --filter @spec-studio/web dev",
-    "build": "pnpm --filter @spec-studio/web build",
+    "build": "pnpm -r --if-present build",
     "preview": "pnpm --filter @spec-studio/web preview",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "dep:check": "depcruise apps packages --config .dependency-cruiser.cjs",
     "test:contract": "python3 test/contract/test_schema.py",
-    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract"
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract",
+    "daemon": "pnpm --filter @spec-studio/daemon start",
+    "daemon:build": "pnpm --filter @spec-studio/daemon build"
   },
   "devDependencies": {
     "dependency-cruiser": "^17.4.3",

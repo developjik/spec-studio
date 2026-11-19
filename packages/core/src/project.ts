@@ -1,5 +1,6 @@
 import {
   PinSchema,
+  ScreenSchema,
   type Command,
   type DomainEvent,
   type Anchor,
@@ -117,6 +118,22 @@ export function execute(
       return {
         project: { ...project, screen, updatedAt: ctx.at },
         events: [{ type: 'screen.attached', screen }],
+      };
+    }
+
+    case 'screen.update': {
+      const screen = requireScreen(project, command.screenId);
+      const title = command.title === undefined ? screen.title : command.title.trim();
+      if (title === '') throw new DomainError('invalid_input', 'a screen needs a title');
+      const next = ScreenSchema.parse({
+        ...screen,
+        title,
+        ...(command.figmaUrl === undefined ? {} : { figmaUrl: command.figmaUrl }),
+        updatedAt: ctx.at,
+      });
+      return {
+        project: { ...project, screen: next, updatedAt: ctx.at },
+        events: [{ type: 'screen.updated', screen: next }],
       };
     }
 

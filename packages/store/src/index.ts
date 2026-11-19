@@ -38,4 +38,5 @@ export interface StorePort extends StoreRead, StoreCreate, StoreWrite {
 
 export * from './mapping';
 export * from './schema';
+export * from './publish-record';
 export { SqliteStore, openSqliteStore, type SqliteStoreOptions } from './sqlite-store';

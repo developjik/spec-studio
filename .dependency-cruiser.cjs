@@ -29,6 +29,14 @@ module.exports = {
       to: { path: '^packages/store' },
     },
     {
+      name: 'publish-knows-no-schema',
+      severity: 'error',
+      comment:
+        'The publisher copies a spec; it never reads the store. The daemon passes it records through a port.',
+      from: { path: '^packages/publish' },
+      to: { path: '^packages/store' },
+    },
+    {
       name: 'protocol-has-no-deps',
       severity: 'error',
       comment: 'Protocol depends on zod and nothing else — not even on our own packages.',

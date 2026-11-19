@@ -107,7 +107,7 @@ def main() -> int:
     conn = connect()
 
     objects = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
-    record("DDL executes", "schema", objects == 80, f"{objects} objects in sqlite_master")
+    record("DDL executes", "schema", objects == 81, f"{objects} objects in sqlite_master")
 
     seed(conn)
     record("seed rows", "schema", True, "goal / specnode / screen / pin / doc / block / link")
@@ -213,6 +213,20 @@ def main() -> int:
         "INSERT INTO publish_record(id,doc_id,target,page_id,version,output_kind,status,idem_key,at) "
         "VALUES('PB_000000000002','D_aaaaaaaaaaaa','confluence','123',5,'body','ok','k1','t')",
     )
+    # W3: a project publish names its project and the hash it copied.
+    expect_reject(
+        conn,
+        "publish_record with no owner",
+        "INSERT INTO publish_record(id,target,page_id,output_kind,status,idem_key,at) "
+        "VALUES('PB_000000000003','confluence','123','bundle','ok','k3','t')",
+    )
+    expect_reject(
+        conn,
+        "project publish marked ok without a page",
+        "INSERT INTO publish_record(id,doc_id,project_id,target,space_key,output_kind,status,"
+        "idem_key,at) VALUES('PB_000000000004',NULL,'PRJ_000000000001','confluence','SPEC',"
+        "'bundle','ok','k4','t')",
+    )
     expect_reject(conn, "physical delete of a linked object",
                   "DELETE FROM obj WHERE id='S_cccccccccccc'")
 
@@ -221,6 +235,11 @@ def main() -> int:
         ("project registry",
          "INSERT INTO project(id,name,created_at,updated_at) "
          "VALUES('PRJ_000000000001','주문 상세','t','t')"),
+        ("project publish record",
+         "INSERT INTO publish_record(id,project_id,target,space_key,page_id,output_kind,status,"
+         "spec_hash,remote_url,idem_key,published_at,at) VALUES('PB_000000000005',"
+         "'PRJ_000000000001','confluence','SPEC','42','bundle','ok','abc123',"
+         "'https://example.atlassian.net/wiki/spaces/SPEC/pages/42','SPEC:42:abc123','t','t')"),
         ("object belonging to a project",
          "INSERT INTO obj(id,project_id,kind,title,props,state,rev,hash,created_at,updated_at) "
          "VALUES('G_100000000001','PRJ_000000000001','goal','프로젝트 소속','{}','active',1,'h','t','t')"),

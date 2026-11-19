@@ -26,6 +26,8 @@ export interface ObjRow {
 export interface ScreenProps {
   code: string;
   ref: ScreenRef;
+  /** Registered Figma frame, or null. Reference data, never fetched. */
+  figmaUrl?: string | null;
   viewport: { width: number; height: number } | null;
   pinSeq: number;
 }
@@ -62,6 +64,7 @@ export function screenToRow(screen: Screen, projectId: string): ObjRow {
   const props: ScreenProps = {
     code: screen.code,
     ref: screen.ref,
+    figmaUrl: screen.figmaUrl ?? null,
     viewport: screen.viewport,
     pinSeq: 0,
   };
@@ -75,7 +78,12 @@ export function screenToRow(screen: Screen, projectId: string): ObjRow {
     props: JSON.stringify(props),
     state: 'linked',
     rev: 1,
-    hash: contentHash({ title: screen.title, code: screen.code, ref: screen.ref }),
+    hash: contentHash({
+      title: screen.title,
+      code: screen.code,
+      ref: screen.ref,
+      figmaUrl: screen.figmaUrl ?? null,
+    }),
     deleted_at: null,
     created_at: screen.createdAt,
     updated_at: screen.updatedAt,
@@ -89,6 +97,7 @@ export function screenFromRow(row: ObjRow): Screen {
     title: row.title,
     code: props.code,
     ref: props.ref,
+    figmaUrl: props.figmaUrl ?? null,
     viewport: props.viewport ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
