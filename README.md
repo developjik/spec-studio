@@ -4,6 +4,8 @@
 immutable numbered pins, and handoff documents are generated as static outputs. External tools
 receive copies; they are never the source of truth.
 
+[![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
+
 > **Status: W1 prototype.** The browser app in `apps/web` is the first-week entry point. The
 > SQLite schema and its contract tests are in place; the daemon and the store adapter are the
 > next milestone. See [Scope](#scope--what-w1-does-not-do-yet).
