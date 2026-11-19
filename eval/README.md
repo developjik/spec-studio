@@ -20,7 +20,8 @@ only ever runs `pnpm test`. `pnpm test:unit` is the quick loop without the golde
 ## The set
 
 `golden/policy.json`, `golden/table.json`, `golden/exception.json` — ten cases each, the three
-families the v1.1 roadmap asks for. A case is data:
+families the v1.1 roadmap asks for: 정책 문장 (policy · governs), 표/계약 (contract · req,
+derived_from · implements), 예외 (req · qa with handles_edge · verifies). A case is data:
 
 ```json
 {
