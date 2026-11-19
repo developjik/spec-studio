@@ -553,3 +553,52 @@ describe('v1: six node types, seven links, export/import and backup', () => {
     expect(reverted.body.project!.graphProposal?.state).toBe('reverted');
   });
 });
+
+describe('daemon session token (desktop shell)', () => {
+  it('serves requests as before when no token is configured', async () => {
+    const open = await boot();
+    const response = await fetch(`${open.url}/api/health`);
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects a missing or wrong token with 401 and accepts the right one', async () => {
+    const guarded = await startDaemon({
+      dbPath: join(dir, 'guarded.db'),
+      port: 0,
+      authToken: 's3cret',
+    });
+    daemons.push(guarded);
+
+    const missing = await fetch(`${guarded.url}/api/health`);
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toMatchObject({ error: { code: 'daemon_unauthorized' } });
+
+    const wrong = await fetch(`${guarded.url}/api/health`, { headers: { 'x-daemon-token': 'nope' } });
+    expect(wrong.status).toBe(401);
+
+    const right = await fetch(`${guarded.url}/api/health`, { headers: { 'x-daemon-token': 's3cret' } });
+    expect(right.status).toBe(200);
+  });
+
+  it('answers preflight without a token so the browser can ask first', async () => {
+    const guarded = await startDaemon({
+      dbPath: join(dir, 'preflight.db'),
+      port: 0,
+      authToken: 's3cret',
+      allowedOrigins: ['app://specstudio'],
+    });
+    daemons.push(guarded);
+
+    const preflight = await fetch(`${guarded.url}/api/health`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'app://specstudio',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'content-type, x-daemon-token',
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('app://specstudio');
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-daemon-token');
+  });
+});

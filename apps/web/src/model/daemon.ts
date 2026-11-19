@@ -13,19 +13,47 @@ import type {
  * read and write in SQLite mode passes through here.
  */
 
+/** What the desktop preload injects; absent when this same build runs in a browser. */
+export interface DesktopBridge {
+  readonly daemonUrl: string;
+  readonly daemonToken: string;
+  readonly desktopVersion: string;
+}
+
+declare global {
+  interface Window {
+    specstudio?: { getDaemonInfo(): DesktopBridge };
+  }
+}
+
+const desktop = window.specstudio?.getDaemonInfo();
+
 export const DAEMON_URL: string =
-  (import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787';
+  desktop?.daemonUrl ??
+  ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787');
+
+/** The desktop shell's one-shot session token; null in every browser context. */
+const DAEMON_TOKEN: string | null = desktop?.daemonToken ?? null;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/** The headers every request to a token-gated daemon carries. */
+function daemonHeaders(json: boolean): Record<string, string> {
+  const headers: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
+  if (DAEMON_TOKEN !== null) headers['x-daemon-token'] = DAEMON_TOKEN;
+  return headers;
+}
 
 /**
  * The loopback daemon can only answer a page served from the same machine.
  * On a static public host (the GitHub Pages demo) there is none, and an https
  * page asking `http://127.0.0.1` is refused as mixed content — so the probe is
  * skipped there and the app opens straight into browser mode with no failed
- * request on the console. An explicitly configured daemon URL is always tried.
+ * request on the console. The desktop preload (app:// origin, random port) and
+ * an explicitly configured daemon URL are always tried.
  */
 export function daemonProbeAllowed(): boolean {
+  if (desktop !== undefined) return true;
   if ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) !== undefined) return true;
   return LOOPBACK_HOSTS.has(window.location.hostname);
 }
@@ -173,6 +201,7 @@ export class DaemonClient {
   async health(timeoutMs = 1600): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl}/api/health`, {
+        headers: daemonHeaders(false),
         signal: AbortSignal.timeout(timeoutMs),
       });
       return response.ok;
@@ -334,7 +363,7 @@ export class DaemonClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
-        headers: { 'content-type': 'application/json' },
+        headers: daemonHeaders(true),
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
         signal: AbortSignal.timeout(60_000),
       });

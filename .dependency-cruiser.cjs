@@ -14,6 +14,14 @@ module.exports = {
       to: { path: '^packages/(store|daemon|mcp|publish|ai)' },
     },
     {
+      name: 'desktop-main-never-imports-web-src',
+      severity: 'error',
+      comment:
+        'The desktop shell loads the web build output over its app:// protocol — it never imports renderer source.',
+      from: { path: '^apps/desktop' },
+      to: { path: '^apps/web' },
+    },
+    {
       name: 'ai-is-a-service-not-a-layer',
       severity: 'error',
       comment:

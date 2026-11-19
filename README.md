@@ -127,6 +127,21 @@ pnpm dev                 # http://127.0.0.1:5173
 The app checks `http://127.0.0.1:8787/api/health` on load. If the daemon is not running it says
 so and keeps the project in the browser instead; the two modes never mix in one session.
 
+### Desktop app (Electron, D1)
+
+The same app as a single window — no second terminal, no manual daemon:
+
+```bash
+pnpm daemon:build && pnpm --filter @spec-studio/web build
+pnpm desktop              # window + daemon sidecar (random port, session token)
+pnpm desktop:smoke        # boot/create → reboot/verify → renderer-path e2e
+pnpm desktop:package:dir  # unsigned .app for local use (release/mac/arm64)
+```
+
+The shell forks `dist/daemon.mjs` as a utility process on a random port behind a
+one-shot `x-daemon-token`; the renderer loads the web build over `app://`. See
+`apps/desktop/README.md`.
+
 Daemon environment:
 
 | Variable | Default | Meaning |
@@ -471,6 +486,9 @@ pnpm test:contract
 | Command | Does |
 | --- | --- |
 | `pnpm dev` | Vite dev server on `127.0.0.1:5173` |
+| `pnpm desktop` | Electron shell over the daemon + web build |
+| `pnpm desktop:smoke` | Three-boot desktop e2e (create/verify/window) |
+| `pnpm desktop:package:dir` | Unsigned `.app` via electron-builder `--dir` |
 | `pnpm daemon:build` | Bundle the daemon to `apps/daemon/dist` |
 | `pnpm daemon` | Run the daemon (`dist/daemon.mjs`) |
 | `pnpm build` | Build the web app and the daemon bundle |

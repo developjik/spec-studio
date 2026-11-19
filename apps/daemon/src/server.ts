@@ -58,6 +58,12 @@ export interface DaemonOptions {
   env?: Record<string, string | undefined>;
   /** Injected in tests so the AI routes never leave the machine. */
   aiFetch?: typeof fetch;
+  /**
+   * Set by the desktop shell: every /api request must then carry this value in
+   * `x-daemon-token`. A browser vouches for its Origin header; a local process
+   * does not — the token is the real gate for the sidecar daemon.
+   */
+  authToken?: string;
 }
 
 export interface Daemon {
@@ -243,6 +249,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     if (segments[0] !== 'api') throw new HttpError(404, 'not_found', '없는 경로입니다.');
+
+    // Preflight answers above carry no custom headers by design; every real
+    // request below must prove it belongs to this desktop session.
+    if (options.authToken !== undefined) {
+      const presented = req.headers['x-daemon-token'];
+      if (presented !== options.authToken) {
+        throw new HttpError(401, 'daemon_unauthorized', '데몬 세션 토큰이 없거나 일치하지 않습니다.');
+      }
+    }
 
     // GET /api/ai — which providers have a key in the daemon's environment.
     // It answers with booleans: the key itself never leaves the process.
@@ -491,7 +506,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       typeof origin === 'string' && allowed.has(origin) ? origin : 'null',
     );
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
-    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-allow-headers', 'content-type, x-daemon-token');
     res.setHeader('vary', 'origin');
 
     if (typeof origin === 'string' && !allowed.has(origin)) {

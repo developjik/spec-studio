@@ -6,6 +6,7 @@ node_modules/
 dist/
 eval/dist/
 dist-ssr/
+release/
 *.tsbuildinfo
 
 # Test / tooling caches
