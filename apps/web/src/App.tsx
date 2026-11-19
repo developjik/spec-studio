@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createProject, execute, normalizeProject, type ExecutionResult } from '@spec-studio/core';
 import type {
   Anchor,
+  BlockType,
   Command,
   DomainEvent,
   Pin,
@@ -18,7 +19,8 @@ import type { PinEditInput } from './components/PinEditor';
 import { OutputModal } from './components/OutputModal';
 import { PublishModal } from './components/PublishModal';
 import { FigmaBar } from './components/FigmaBar';
-import { newPinId, newProjectId, newScreenId } from './model/ids';
+import { DocPanel, type DocMode, type RevertableView } from './components/DocPanel';
+import { newProjectId, newScreenId, nextEntityId } from './model/ids';
 import {
   clearStoredProject,
   downloadProject,
@@ -44,7 +46,10 @@ import {
 type Notice = { tone: 'info' | 'error'; text: string };
 
 const nowIso = () => new Date().toISOString();
-const nextId = (kind: 'screen' | 'pin') => (kind === 'screen' ? newScreenId() : newPinId());
+const nextId = (kind: 'screen' | 'pin' | 'doc' | 'block' | 'proposal') => nextEntityId(kind);
+
+/** What a command application returns; `opSeq` is the store's undo handle. */
+type ApplyResult = ExecutionResult & { opSeq?: number };
 
 export default function App() {
   const client = useRef(new DaemonClient()).current;
@@ -60,6 +65,10 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [outputOpen, setOutputOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [docMode, setDocMode] = useState<DocMode>('direct');
+  const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
+  const [revertable, setRevertable] = useState<RevertableView | null>(null);
+  const [busy, setBusy] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
 
@@ -94,6 +103,7 @@ export default function App() {
         setDaemonProjectId(detail.project.id);
         setProject(normalizeProject(detail.project));
         setPublishes(detail.records);
+        setRevertable(detail.revert);
         setNotice({ tone: 'info', text: 'SQLite 데몬에 연결되어 로컬 DB를 정본으로 사용합니다.' });
       } catch (error) {
         if (!alive) return;
@@ -182,14 +192,18 @@ export default function App() {
    * in SQLite and the answer becomes the screen's state; without one it is
    * applied in the browser by the same core function.
    */
-  const applyCommand = async (command: Command): Promise<ExecutionResult | null> => {
+  const applyCommand = async (command: Command): Promise<ApplyResult | null> => {
     if (project === null) return null;
     if (sqliteMode && daemonProjectId !== null) {
       try {
         const outcome = await client.execute(daemonProjectId, command);
         const next = normalizeProject(outcome.project);
         setProject(next);
-        return { project: next, events: outcome.events as DomainEvent[] };
+        return {
+          project: next,
+          events: outcome.events as DomainEvent[],
+          opSeq: outcome.opSeq,
+        };
       } catch (error) {
         setNotice({
           tone: 'error',
@@ -258,6 +272,8 @@ export default function App() {
       setSelectedPinId(null);
       setDraftAnchor(null);
       setFilter('all');
+      setRevertable(null);
+      setFocusBlockId(null);
     }
   };
 
@@ -380,6 +396,124 @@ export default function App() {
     void applyCommand({ type: 'screen.update', screenId: screen.id, figmaUrl: url });
   };
 
+  /**
+   * Document commands share one path. The store writes them in the same
+   * transaction as the pins they read, so an adopted proposal and the
+   * `op_log.before` that reverts it are never out of step.
+   */
+  const runDoc = async (command: Command, after?: (result: ApplyResult) => void) => {
+    setBusy(true);
+    try {
+      const result = await applyCommand(command);
+      if (result !== null) after?.(result);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doc = project?.doc ?? null;
+  const proposal = project?.proposal ?? null;
+
+  const addBlock = (afterBlockId: string | null) => {
+    if (doc === null) return;
+    void runDoc({
+      type: 'doc.block.create',
+      docId: doc.id,
+      blockType: 'paragraph',
+      text: '',
+      afterBlockId,
+    });
+  };
+
+  const updateBlockText = (blockId: string, text: string) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.block.update', docId: doc.id, blockId, text });
+  };
+
+  const changeBlockType = (blockId: string, blockType: BlockType) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.block.update', docId: doc.id, blockId, blockType });
+  };
+
+  const deleteBlock = (blockId: string) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.block.delete', docId: doc.id, blockId });
+  };
+
+  const moveBlock = (blockId: string, afterBlockId: string | null) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.block.move', docId: doc.id, blockId, afterBlockId });
+  };
+
+  const linkBlockPin = (blockId: string, pinId: string) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.pin.link', docId: doc.id, blockId, pinId });
+  };
+
+  const unlinkBlockPin = (blockId: string, pinId: string) => {
+    if (doc === null) return;
+    void runDoc({ type: 'doc.pin.unlink', docId: doc.id, blockId, pinId });
+  };
+
+  /** Several badges can sit on one block; each clear is one command, in order. */
+  const clearStale = async (blockId: string, pinIds: string[]) => {
+    if (doc === null) return;
+    setBusy(true);
+    try {
+      for (const pinId of pinIds) {
+        await applyCommand({ type: 'doc.stale.clear', docId: doc.id, blockId, pinId });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createProposal = () => {
+    if (doc === null) return;
+    void runDoc({ type: 'proposal.create', docId: doc.id });
+  };
+
+  const decideProposal = (decision: 'adopt' | 'reject') => {
+    if (doc === null || proposal === null) return;
+    const proposalId = proposal.id;
+    const summary = proposal.summary;
+    const patches = proposal.patches.length;
+    if (decision === 'reject') {
+      void runDoc({ type: 'proposal.reject', docId: doc.id, proposalId });
+      return;
+    }
+    void runDoc(
+      { type: 'proposal.adopt', docId: doc.id, proposalId },
+      (result) => {
+        if (result.opSeq === undefined) return;
+        setRevertable({ seq: result.opSeq, at: nowIso(), summary, blocks: patches });
+        setNotice({ tone: 'info', text: '제안을 채택했습니다. 문단이 갱신되었습니다.' });
+      },
+    );
+  };
+
+  /** Restores `op_log.before` — the exact block state before the adoption. */
+  const revertAdopted = async () => {
+    if (daemonProjectId === null || revertable === null) return;
+    setBusy(true);
+    try {
+      const outcome = await client.revert(daemonProjectId, revertable.seq);
+      setProject(normalizeProject(outcome.project));
+      setRevertable(outcome.revert);
+      setNotice({
+        tone: 'info',
+        text: `채택 ${outcome.revertedSeq}번을 되돌렸습니다. 문단 ${outcome.blocks}개를 채택 직전 상태로 복원했습니다.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '되돌리지 못했습니다.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reset = async () => {
     if (!window.confirm('현재 화면과 핀을 모두 지우고 처음으로 돌아갑니다. 계속할까요?')) {
       return;
@@ -390,6 +524,8 @@ export default function App() {
     setGateError(null);
     setOutputOpen(false);
     setPublishOpen(false);
+    setRevertable(null);
+    setDocMode('direct');
     if (daemonStatus === 'connected') {
       try {
         const created = await client.createProject('새 화면');
@@ -521,7 +657,36 @@ export default function App() {
             </div>
           </section>
 
+          <DocPanel
+            doc={doc}
+            pins={pins}
+            proposal={proposal}
+            mode={docMode}
+            selectedPinId={selectedPinId}
+            focusBlockId={focusBlockId}
+            revertable={revertable}
+            sqliteMode={sqliteMode}
+            busy={busy}
+            onMode={setDocMode}
+            onAddBlock={addBlock}
+            onUpdateText={updateBlockText}
+            onChangeType={changeBlockType}
+            onDeleteBlock={deleteBlock}
+            onMoveBlock={moveBlock}
+            onLinkPin={linkBlockPin}
+            onUnlinkPin={unlinkBlockPin}
+            onClearStale={clearStale}
+            onSelectPin={setSelectedPinId}
+            onCreateProposal={createProposal}
+            onAdopt={() => decideProposal('adopt')}
+            onReject={() => decideProposal('reject')}
+            onRevert={() => void revertAdopted()}
+            onFocusHandled={() => setFocusBlockId(null)}
+          />
+
           <PinPanel
+            doc={doc}
+            onFocusBlock={setFocusBlockId}
             pins={pins}
             filter={filter}
             screenCode={screen.code}
@@ -552,6 +717,7 @@ export default function App() {
           screen={screen}
           pins={pins}
           pinSeq={project.pinSeq}
+          doc={project.doc}
           onClose={() => setOutputOpen(false)}
         />
       )}

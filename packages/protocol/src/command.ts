@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BlockIdSchema, BlockTypeSchema, DocIdSchema, ProposalIdSchema } from './doc';
 import { PinIdSchema, ScreenIdSchema } from './ids';
 import { AnchorSchema, PinTypeSchema, PinTypeSchema as TypeSchema } from './pin';
 import { ScreenSchema } from './screen';
@@ -47,6 +48,74 @@ export const CommandSchema = z.discriminatedUnion('type', [
     screenId: ScreenIdSchema,
     pinId: PinIdSchema,
   }),
+
+  // ── document blocks (W4) ─────────────────────────────────────────────
+  z.object({
+    type: z.literal('doc.block.create'),
+    docId: DocIdSchema,
+    blockType: BlockTypeSchema,
+    text: z.string().max(8000),
+    /** Omitted appends at the end; `null` puts it at the top of the document. */
+    afterBlockId: BlockIdSchema.nullable().optional(),
+  }),
+  z.object({
+    type: z.literal('doc.block.update'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+    text: z.string().max(8000).optional(),
+    blockType: BlockTypeSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('doc.block.delete'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+  }),
+  z.object({
+    type: z.literal('doc.block.move'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+    /** The block to follow; `null` moves it to the top. */
+    afterBlockId: BlockIdSchema.nullable(),
+  }),
+  z.object({
+    type: z.literal('doc.pin.link'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+    pinId: PinIdSchema,
+  }),
+  z.object({
+    type: z.literal('doc.pin.unlink'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+    pinId: PinIdSchema,
+  }),
+  /**
+   * A person looked at a stale badge and accepted the text as it is. The link
+   * keeps its pin and takes the pin's current spec as the new baseline; for a
+   * pin that no longer exists the link itself is what is cleared.
+   */
+  z.object({
+    type: z.literal('doc.stale.clear'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+    pinId: PinIdSchema,
+  }),
+
+  // ── proposal layer (W4) ──────────────────────────────────────────────
+  z.object({
+    type: z.literal('proposal.create'),
+    docId: DocIdSchema,
+  }),
+  z.object({
+    type: z.literal('proposal.adopt'),
+    docId: DocIdSchema,
+    proposalId: ProposalIdSchema,
+  }),
+  z.object({
+    type: z.literal('proposal.reject'),
+    docId: DocIdSchema,
+    proposalId: ProposalIdSchema,
+  }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
@@ -55,3 +124,7 @@ export type PinUpdateCommand = Extract<Command, { type: 'pin.update' }>;
 export type PinDeleteCommand = Extract<Command, { type: 'pin.delete' }>;
 export type ScreenAttachCommand = Extract<Command, { type: 'screen.attach' }>;
 export type ScreenUpdateCommand = Extract<Command, { type: 'screen.update' }>;
+export type DocBlockCreateCommand = Extract<Command, { type: 'doc.block.create' }>;
+export type DocBlockUpdateCommand = Extract<Command, { type: 'doc.block.update' }>;
+export type ProposalCreateCommand = Extract<Command, { type: 'proposal.create' }>;
+export type ProposalAdoptCommand = Extract<Command, { type: 'proposal.adopt' }>;

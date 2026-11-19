@@ -33,3 +33,4 @@ spec-studio-*.json
 
 # End-to-end scratch
 .e2e/
+.e2e*/

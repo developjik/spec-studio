@@ -1,5 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Pin, Project, Screen, ScreenRef } from '@spec-studio/protocol';
+import type {
+  Block,
+  BlockPinRef,
+  Doc,
+  Pin,
+  Project,
+  Proposal,
+  ProposalPatch,
+  Screen,
+  ScreenRef,
+} from '@spec-studio/protocol';
 
 /**
  * Row ↔ object mapping. The schema stores one shape (`obj` with a JSON
@@ -59,6 +69,10 @@ export function newSuffix(length = 12): string {
 export const newProjectId = (): string => `PRJ_${newSuffix()}`;
 export const newScreenId = (): string => `S_${newSuffix()}`;
 export const newPinId = (): string => `P_${newSuffix()}`;
+export const newDocId = (): string => `D_${newSuffix()}`;
+export const newBlockId = (): string => `B_${newSuffix()}`;
+export const newProposalId = (): string => `PR_${newSuffix()}`;
+export const newOpId = (): string => `op_${newSuffix()}`;
 
 export function screenToRow(screen: Screen, projectId: string): ObjRow {
   const props: ScreenProps = {
@@ -149,6 +163,8 @@ export function projectFromRows(input: {
   updatedAt: string;
   screen: ObjRow | null;
   pins: ObjRow[];
+  doc?: Doc | null;
+  proposal?: Proposal | null;
 }): Project {
   const screen = input.screen === null ? null : screenFromRow(input.screen);
   const pins = input.pins.map(pinFromRow).sort((a, b) => a.number - b.number);
@@ -159,7 +175,189 @@ export function projectFromRows(input: {
     screen,
     pins,
     pinSeq: input.screen === null ? 0 : screenPinSeq(input.screen),
+    doc: input.doc ?? null,
+    proposal: input.proposal ?? null,
     createdAt: input.createdAt,
     updatedAt: input.updatedAt,
+  };
+}
+
+// ── document rows ──────────────────────────────────────────────────────
+
+export interface DocRow {
+  id: string;
+  project_id: string | null;
+  screen_id: string | null;
+  title: string;
+  rev: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface BlockRow {
+  id: string;
+  doc_id: string;
+  parent_id: string | null;
+  idx: string;
+  type: string;
+  text: string;
+  attrs: string;
+  hash: string;
+  state: 'live' | 'deleted';
+  commit_seq: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * Position in the document, as text SQLite can order: six digits leave room for
+ * 999,999 paragraphs and let a renumber rewrite the whole document in one pass.
+ */
+export function blockIdx(index: number): string {
+  return String(Math.max(0, Math.trunc(index))).padStart(6, '0');
+}
+
+export function blockHash(block: Pick<Block, 'type' | 'text' | 'pinRefs'>): string {
+  return contentHash({
+    type: block.type,
+    text: block.text,
+    pins: block.pinRefs.map((ref) => [ref.pinId, ref.fingerprint]),
+  });
+}
+
+interface BlockAttrs {
+  pinRefs?: BlockPinRef[];
+}
+
+export function blockToRow(block: Block, docId: string, index: number): BlockRow {
+  const attrs: BlockAttrs = { pinRefs: block.pinRefs };
+  return {
+    id: block.id,
+    doc_id: docId,
+    parent_id: null,
+    idx: blockIdx(index),
+    type: block.type,
+    text: block.text,
+    attrs: JSON.stringify(attrs),
+    hash: blockHash(block),
+    state: 'live',
+    commit_seq: null,
+    created_at: block.createdAt,
+    updated_at: block.updatedAt,
+  };
+}
+
+export function blockFromRow(row: BlockRow): Block {
+  const attrs = parseJson<BlockAttrs>(row.attrs || '{}');
+  const at = row.created_at ?? row.updated_at ?? '';
+  return {
+    id: row.id,
+    type: row.type as Block['type'],
+    text: row.text,
+    pinRefs: attrs.pinRefs ?? [],
+    createdAt: at,
+    updatedAt: row.updated_at ?? at,
+  };
+}
+
+export function docFromRows(row: DocRow, blocks: BlockRow[]): Doc {
+  return {
+    id: row.id,
+    title: row.title,
+    rev: Number(row.rev ?? 0),
+    blocks: [...blocks]
+      .sort((a, b) => (a.idx === b.idx ? a.id.localeCompare(b.id) : a.idx.localeCompare(b.idx)))
+      .map(blockFromRow),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  };
+}
+
+// ── proposal rows ──────────────────────────────────────────────────────
+
+export interface ProposalRow {
+  id: string;
+  doc_id: string;
+  origin: string;
+  summary: string;
+  base_rev: number;
+  state: string;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface ProposalOpRow {
+  id: string;
+  proposal_id: string;
+  seq: number;
+  kind: string;
+  view: string;
+  state: string;
+}
+
+interface ProposalOpView {
+  blockId: string;
+  afterBlockId: string | null;
+  before: ProposalPatch['before'];
+  after: ProposalPatch['after'];
+}
+
+export function proposalToRow(proposal: Proposal): ProposalRow {
+  return {
+    id: proposal.id,
+    doc_id: proposal.docId,
+    origin: proposal.origin,
+    summary: proposal.summary,
+    base_rev: proposal.baseRev,
+    state: proposal.state,
+    created_at: proposal.createdAt,
+    decided_at: proposal.decidedAt,
+  };
+}
+
+export function proposalOpToRow(
+  proposal: Proposal,
+  patch: ProposalPatch,
+  seq: number,
+  opId: string,
+): ProposalOpRow {
+  const view: ProposalOpView = {
+    blockId: patch.blockId,
+    afterBlockId: patch.afterBlockId,
+    before: patch.before,
+    after: patch.after,
+  };
+  return {
+    id: opId,
+    proposal_id: proposal.id,
+    seq,
+    kind: patch.before === null ? 'insert' : 'replace',
+    view: JSON.stringify(view),
+    state: proposal.state === 'open' ? 'open' : proposal.state === 'rejected' ? 'rejected' : 'adopted',
+  };
+}
+
+export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Proposal {
+  const patches: ProposalPatch[] = [...ops]
+    .sort((a, b) => a.seq - b.seq)
+    .map((op) => {
+      const view = parseJson<ProposalOpView>(op.view);
+      return {
+        blockId: view.blockId,
+        afterBlockId: view.afterBlockId ?? null,
+        before: view.before ?? null,
+        after: view.after,
+      };
+    });
+  return {
+    id: row.id,
+    docId: row.doc_id,
+    summary: row.summary,
+    origin: row.origin as Proposal['origin'],
+    baseRev: Number(row.base_rev ?? 0),
+    state: row.state as Proposal['state'],
+    patches,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
   };
 }

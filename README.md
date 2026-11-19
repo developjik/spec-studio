@@ -6,10 +6,11 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
-> **Status: W3.** A loopback daemon now owns the SQLite file and the browser talks to it over
-> HTTP. From the app you can register a Figma frame, keep pins in the database, and publish the
-> screen to Confluence Cloud once — a second publish of the same spec creates no second page,
-> even after the daemon restarts.
+> **Status: W4.** The screen now has a document beside it. Paragraphs stand on the numbered pins
+> in both directions, a paragraph whose pin facts moved goes `stale`, and a change can arrive as
+> one proposal shown as a single decision card — adopted in one click, undone in one click from
+> the `op_log.before` snapshot the store wrote. Publishing still copies a spec once per content
+> hash.
 
 ## Why
 
@@ -47,6 +48,19 @@ Three commitments follow from that:
 - **Idempotent by content** — the spec hash decides: same spec and space → nothing is sent;
   edited spec → the recorded page is updated; never published → one page is created.
 - **Publish history in the app** — `publish_record` rows with time, result, space, page and hash.
+- **A document next to the screen (W4)** — paragraph, heading, list and caption blocks with stable
+  ids; add, edit, reorder and delete directly. Each block can carry pin chips (`#1`, `#2`).
+  Pressing a chip selects and highlights that pin on the canvas and in the panel; the panel's
+  **이 핀을 참조하는 문단** list jumps back to the block.
+- **Stale detection** — editing a linked pin's type, title or body (or deleting it) raises a
+  `stale` badge on the paragraphs that cite it. Moving a pin never does: an anchor is not part of
+  what a sentence claims. A person either confirms the sentence (`확인 · 해제`, which re-baselines
+  the link) or lets a proposal bring it up to date.
+- **One proposal, one decision card, one revert** — 시안 mode builds a single suggestion from the
+  current pins or the stale blocks, shows it as a summary line plus before/after block patches,
+  and changes nothing until **채택**. Adopting writes the patches and an `op_log.before`
+  snapshot in the same transaction; **되돌리기** restores exactly those blocks from that snapshot,
+  also as a ledger row, so the undo has an undo.
 
 ## Quick start
 
@@ -90,12 +104,22 @@ pnpm check               # all of the above, in order
 End-to-end, against a real daemon, a real SQLite file and a Confluence-shaped mock:
 
 ```bash
-test/e2e/run_w3.sh       # needs Playwright (Python) and a chromium binary
+test/e2e/run_w3.sh       # W3 · pins + Confluence publish
+test/e2e/run_w4.sh       # W4 · document ↔ pin, stale, decision card, revert
+                         # both need Playwright (Python) and a chromium binary
 ```
 
-It loads the sample, registers a Figma link, creates three pins, verifies the rows in the SQLite
-file, restarts the daemon and reloads, publishes, checks the page and three attachments on the
-mock, and proves a second publish adds nothing. Screenshots land in `downloads/`.
+`run_w3.sh` loads the sample, registers a Figma link, creates three pins, verifies the rows in the
+SQLite file, restarts the daemon and reloads, publishes, checks the page and three attachments on
+the mock, and proves a second publish adds nothing.
+
+`run_w4.sh` drives the same stack and checks, in order: a paragraph added and linked to a pin; the
+chip selecting the pin and the pin panel jumping back to the paragraph; a pin edit raising the
+`stale` badge; one proposal shown as one card; adopting it changing the text; reverting restoring
+the pre-adoption text from `op_log.before`; the stale badge returning after the revert and a
+manual `확인 · 해제` clearing it; then a reload and a daemon restart keeping the document, the
+proposal and the ledger. Screenshots land in `downloads/` (the W4 preview is
+`spec-studio-w4-preview.png`).
 
 ## Publishing to Confluence
 
@@ -134,16 +158,16 @@ edited pin.
 
 ```
 apps/
-  web/                 React 19 + Vite shell — pins, editing, drag, outputs, publish modal
+  web/                 React 19 + Vite shell — pins, document panel, outputs, publish modal
   daemon/              node:http API over the store; the only writer of the SQLite file
 packages/
-  protocol/            Zod: object kinds, pin types, screen refs, commands, events
-  core/                Pure domain: pin numbering, commands, output generators
-  store/               schema.sql (v12) · the SQLite adapter · publish records
+  protocol/            Zod: object kinds, pin types, screen refs, blocks, proposals, commands
+  core/                Pure domain: pin numbering, blocks, stale, proposals, output generators
+  store/               schema.sql (v13) · the SQLite adapter · publish records
   publish/             Confluence client, Storage-Format body, idempotent publish flow
 test/
   contract/            the SQLite schema contract (Python, no dependencies)
-  e2e/                 the W3 browser check and its runner
+  e2e/                 the W3 and W4 browser checks and their runners
 ```
 
 Dependency direction is one-way:
@@ -176,14 +200,46 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 | --- | --- | --- |
 | `GET` | `/api/health` | liveness, schema version, project count |
 | `GET` · `POST` | `/api/projects` | list summaries · create |
-| `GET` | `/api/projects/:id` | project + publish records |
-| `POST` | `/api/projects/:id/commands` | apply one validated command |
+| `GET` | `/api/projects/:id` | project (screen, pins, `doc`, `proposal`) + publish records + what a revert would undo |
+| `POST` | `/api/projects/:id/commands` | apply one validated command; answers with `seq`, `opSeq` and events |
+| `POST` | `/api/projects/:id/revert` | restore `op_log.before` of an adoption (`{ seq }`, latest by default) |
 | `POST` | `/api/projects/:id/publish/preview` | plan (`create`/`update`/`skip`), body, attachments |
 | `POST` | `/api/projects/:id/publish` | run the publish; receives the browser-rendered overlay |
 | `GET` | `/api/projects/:id/publishes` | history |
 
 Requests from an origin outside the allow-list are refused with 403. The API has no delete
 route, and no endpoint accepts a credential in a query string.
+
+## The document, the proposal and the revert
+
+A block is a paragraph-level piece of the document beside the screen. It has a stable `B_` id
+because a proposal, a citation and a revert all have to name the same block before and after an
+edit.
+
+| Object | Table | Notes |
+| --- | --- | --- |
+| Document | `doc` | belongs to a project and the screen it describes, `rev` counts committed edits |
+| Block | `block` | `idx` is the order, `attrs.pinRefs` lists the pins it stands on |
+| Link | `block.attrs.pinRefs` | `{ pinId, fingerprint, linkedAt }` — `fingerprint` is the pin's type·title·body hash |
+| Proposal | `proposal` / `proposal_op` | summary, `base_rev`, one row per patch with `before`/`after` |
+| Undo | `op_log` | `before` holds a snapshot of every touched block, with its position |
+
+**Stale** is derived, never stored: a link is `pin-changed` when the pin's current fingerprint
+differs from the recorded one, and `pin-missing` when the pin is gone (its number is never reused,
+so the sentence points at nothing). Confirming the badge writes the current fingerprint back;
+deleting the pin instead means the citation is dropped.
+
+**A proposal never touches the text.** `proposal.create` writes one `proposal` row and its
+`proposal_op` rows; `proposal.adopt` applies them and writes one `op_log` row whose `before` is
+the snapshot `snapshotForPatches` produced. `POST /revert` reads that `before`, restores the
+blocks (`restoreSnapshot`), and appends a `proposal.revert` row carrying its own `before` — so a
+revert is itself in the ledger and cannot be run twice.
+
+`op_log.kind` uses the schema's ledger vocabulary (`block.create`, `block.update`,
+`block.delete`, `block.move`, `block.pin.link`, `block.stale.clear`, `proposal.adopt`,
+`proposal.revert`) rather than the command names, which is what lets the schema's
+`before IS NOT NULL` constraint mean something for `block.update`, `block.delete` and
+`proposal.adopt`.
 
 ## Pin numbering, precisely
 
@@ -221,21 +277,23 @@ in Node (`node:sqlite`).
 - **FTS5 is optional**; the adapter skips the marked section on builds without it.
 - **Publish records are rows**, keyed by target and idempotency key, with a project owner.
 
-`packages/store/schema/schema.sql` is the canonical DDL (SQLite, `user_version = 12`). A file from
-v11 is migrated in place by `schema/migrate-11-12.sql` the first time it is opened.
+`packages/store/schema/schema.sql` is the canonical DDL (SQLite, `user_version = 13`). Older files
+are migrated in place when opened — `schema/migrate-11-12.sql` rebuilds `publish_record` so a row
+can name a project, and `schema/migrate-12-13.sql` adds `doc.project_id` / `doc.screen_id` /
+`doc.updated_at` and the block timestamps, all additive.
 
 ```bash
 pnpm test:contract
-# schema   2/ 2
-# reject  26/26
-# accept  14/14
+# schema   4/ 4
+# reject  28/28
+# accept  16/16
 # plan     4/ 4
 # search   5/ 5
 # v2       1/ 1
 # PASS: schema contract holds
 ```
 
-## Scope — what W3 does *not* do
+## Scope — what W4 does *not* do
 
 - **Confluence only, one direction.** Notion and Jira are named in the schema, not implemented.
   Nothing is read back: editing the page does not change the local spec.
@@ -245,6 +303,15 @@ pnpm test:contract
 - **The overlay must be rendered in a browser.** The daemon cannot composite a screenshot, so a
   publish request carries the PNG the app made; a Figma-only screen has no overlay to publish.
 - **Search needs a build with FTS5.** Storing pins does not.
+- **The document editor is paragraph-level.** Paragraph, heading, list and caption blocks are
+  editable; tables, figures and code blocks exist in the schema but are not rendered yet, because
+  an editor that cannot show them would delete them.
+- **One document per screen.** A new screen brings a new document; the old one stays in the file
+  with its blocks, not in the UI.
+- **One proposal at a time.** A new suggestion replaces the open one; adopted and rejected
+  proposals stay in `proposal` as history. There is no multi-proposal queue.
+- **Revert restores blocks, not pins.** Undoing an adoption returns the paragraphs to their
+  pre-adoption text and links; the pin edit that caused it is not undone.
 
 ## Scripts
 

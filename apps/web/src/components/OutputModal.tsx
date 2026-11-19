@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { OUTPUT_SPECS, buildSpecOverview, type OutputKind } from '@spec-studio/core';
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import { downloadBlob, downloadMany, formatBytes } from '../model/downloads';
 import { buildOutputSet, type BuiltOutput } from '../model/outputs';
 
@@ -8,6 +8,7 @@ interface OutputModalProps {
   screen: Screen;
   pins: readonly Pin[];
   pinSeq: number;
+  doc?: Doc | null;
   onClose: () => void;
 }
 
@@ -30,14 +31,14 @@ function localStamp(date = new Date()): string {
  * Preview and download in one place: the three outputs come from one build,
  * so what the preview shows is byte-for-byte what the download writes.
  */
-export function OutputModal({ screen, pins, pinSeq, onClose }: OutputModalProps) {
+export function OutputModal({ screen, pins, pinSeq, doc, onClose }: OutputModalProps) {
   const [files, setFiles] = useState<BuiltOutput[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<OutputKind>('overlay-png');
 
   useEffect(() => {
     let alive = true;
-    buildOutputSet({ screen, pins, pinSeq, generatedAt: GENERATED_AT() })
+    buildOutputSet({ screen, pins, pinSeq, doc: doc ?? null, generatedAt: GENERATED_AT() })
       .then((set) => {
         if (alive) setFiles(set.files);
       })

@@ -15,12 +15,32 @@ export interface ExecuteOutcome {
   project: Project;
   /** Last event sequence in this project's thread. */
   seq: number;
+  /** The `op_log` row this command wrote — what a revert names. */
+  opSeq: number;
   events: DomainEvent[];
+}
+
+export interface RevertableOp {
+  seq: number;
+  at: string;
+  summary: string;
+  proposalId: string | null;
+  blocks: number;
+}
+
+export interface RevertOutcome {
+  project: Project;
+  /** The `op_log.seq` of the adopted work that was restored. */
+  revertedSeq: number;
+  blocks: number;
+  seq: number;
 }
 
 export interface StoreRead {
   readProject(projectId: string): Promise<Project | null>;
   listProjectIds(): Promise<string[]>;
+  /** The adopted work still eligible for undo, or null. */
+  lastRevertable(projectId: string): RevertableOp | null;
 }
 
 export interface StoreCreate {
@@ -30,6 +50,8 @@ export interface StoreCreate {
 export interface StoreWrite {
   /** Applies a command in one transaction and returns the events it emitted. */
   execute(projectId: string, command: Command): Promise<ExecuteOutcome>;
+  /** Restores `op_log.before` of a proposal adoption (the latest one by default). */
+  revert(projectId: string, seq?: number): Promise<RevertOutcome>;
 }
 
 export interface StorePort extends StoreRead, StoreCreate, StoreWrite {

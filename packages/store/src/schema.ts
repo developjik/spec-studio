@@ -19,7 +19,7 @@ export const SCHEMA_DIR =
 export const SCHEMA_FILE = join(SCHEMA_DIR, 'schema.sql');
 
 /** `PRAGMA user_version` of the DDL above. */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /**
  * Additive steps applied when an older file is opened. A database is only ever
@@ -28,6 +28,7 @@ export const SCHEMA_VERSION = 12;
  */
 export const MIGRATIONS: Readonly<Record<number, string>> = {
   11: join(SCHEMA_DIR, 'migrate-11-12.sql'),
+  12: join(SCHEMA_DIR, 'migrate-12-13.sql'),
 };
 
 /**
@@ -79,11 +80,17 @@ export function applySchema(db: DatabaseSync, schemaPath: string = SCHEMA_FILE):
   }
 
   if (before !== 0 && before < SCHEMA_VERSION) {
-    const path = MIGRATIONS[before];
-    if (path === undefined) {
-      throw new Error(`no migration from user_version ${before} to ${SCHEMA_VERSION}`);
+    // A file two versions behind takes two steps: one migration per version,
+    // applied in order, so a long-lived workspace never has to be rebuilt.
+    let version = before;
+    while (version < SCHEMA_VERSION) {
+      const path = MIGRATIONS[version];
+      if (path === undefined) {
+        throw new Error(`no migration from user_version ${version} to ${SCHEMA_VERSION}`);
+      }
+      db.exec(readFileSync(path, 'utf8'));
+      version += 1;
     }
-    db.exec(readFileSync(path, 'utf8'));
   }
 
   const after = Number(

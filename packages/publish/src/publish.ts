@@ -1,4 +1,4 @@
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import { ConfluenceClient, type RemotePage } from './confluence';
 import { buildPublishPackage, type PublishPackage } from './spec';
 import type { PublishAttachmentInfo } from './body';
@@ -73,6 +73,8 @@ export interface PublishSpecInput {
   pins: readonly Pin[];
   pinSeq: number;
   figmaUrl: string | null;
+  /** W4: the document beside the screen, when the project has one. */
+  doc?: Doc | null;
   generatedAt: string;
   mode: PublishMode;
 }
@@ -154,6 +156,7 @@ export async function previewPublish(
     pins: input.pins,
     pinSeq: input.pinSeq,
     figmaUrl: input.figmaUrl,
+    doc: input.doc ?? null,
     generatedAt: input.generatedAt,
     overlayPng: new Uint8Array(0),
   });
@@ -190,6 +193,7 @@ export async function publishSpec(
     pins: input.pins,
     pinSeq: input.pinSeq,
     figmaUrl: input.figmaUrl,
+    doc: input.doc ?? null,
     generatedAt: input.generatedAt,
     overlayPng: input.overlayPng,
   });

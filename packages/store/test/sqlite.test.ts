@@ -72,7 +72,7 @@ describe('the schema', () => {
   it('creates itself on an empty file and reports the promised version', () => {
     const store = open();
     expect(store.schema.created).toBe(true);
-    expect(store.schema.actual).toBe(12);
+    expect(store.schema.actual).toBe(13);
   });
 
   it('does not re-create tables when the file already carries them', async () => {
@@ -277,13 +277,14 @@ describe('the write path', () => {
       .prepare('SELECT id, last_seq FROM thread WHERE id = ?')
       .get(`project:${projectId}`) as { id: string; last_seq: number };
     expect(thread.id).toBe(`project:${projectId}`);
-    expect(thread.last_seq).toBe(4);
+    expect(thread.last_seq).toBe(5);
 
     const events = store.database
       .prepare('SELECT type FROM event ORDER BY seq')
       .all() as Array<{ type: string }>;
     expect(events.map((event) => event.type)).toEqual([
       'screen.attached',
+      'doc.attached',
       'pin.created',
       'pin.created',
       'pin.created',
@@ -323,7 +324,7 @@ describe('the write path', () => {
       .get() as {
       n: number;
     };
-    expect(events.n).toBe(4);
+    expect(events.n).toBe(5);
   });
 
   it('refuses a command for a project the file does not hold', async () => {

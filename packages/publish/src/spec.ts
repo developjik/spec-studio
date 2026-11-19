@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { buildTextOutputs, outputFileName } from '@spec-studio/core';
-import { PIN_TYPE_LABEL, type Pin, type Screen } from '@spec-studio/protocol';
+import { PIN_TYPE_LABEL, type Doc, type Pin, type Screen } from '@spec-studio/protocol';
 import {
   publishTitle,
   renderPublishBody,
@@ -33,6 +33,8 @@ export interface PublishPackageInput {
   pins: readonly Pin[];
   pinSeq: number;
   figmaUrl: string | null;
+  /** W4: the document paragraph blocks travel with the spec. */
+  doc?: Doc | null;
   generatedAt: string;
   /** Rendered in the browser, where the screenshot and canvas live. */
   overlayPng: Uint8Array;
@@ -47,6 +49,7 @@ export function specFingerprint(input: {
   screen: Screen;
   pins: readonly Pin[];
   figmaUrl: string | null;
+  doc?: Doc | null;
 }): string {
   const pins = [...input.pins]
     .sort((a, b) => a.number - b.number)
@@ -57,7 +60,20 @@ export function specFingerprint(input: {
       body: pin.body,
       anchor: { x: pin.anchor.x, y: pin.anchor.y },
     }));
+  const doc =
+    input.doc === undefined || input.doc === null
+      ? null
+      : {
+          title: input.doc.title,
+          rev: input.doc.rev,
+          blocks: input.doc.blocks.map((block) => ({
+            type: block.type,
+            text: block.text,
+            pins: block.pinRefs.map((ref) => ref.pinId),
+          })),
+        };
   const canonical = JSON.stringify({
+    doc,
     screen: {
       id: input.screen.id,
       code: input.screen.code,
@@ -80,11 +96,13 @@ export function buildPublishPackage(input: PublishPackageInput): PublishPackage 
     screen: input.screen,
     pins: input.pins,
     figmaUrl: input.figmaUrl,
+    doc: input.doc ?? null,
   });
   const text = buildTextOutputs({
     screen: input.screen,
     pins: input.pins,
     pinSeq: input.pinSeq,
+    doc: input.doc ?? null,
     generatedAt: input.generatedAt,
   });
 
@@ -130,6 +148,7 @@ export function buildPublishPackage(input: PublishPackageInput): PublishPackage 
       pins: input.pins,
       pinSeq: input.pinSeq,
       figmaUrl: input.figmaUrl,
+      doc: input.doc ?? null,
       generatedAt: input.generatedAt,
       specHash,
       attachments,

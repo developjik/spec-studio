@@ -1,20 +1,26 @@
 import {
   PIN_TYPE_LABEL,
   V1_PIN_TYPES,
+  type Doc,
   type Pin,
   type PinType,
 } from '@spec-studio/protocol';
 import {
+  blocksForPin,
   countByType,
   filterPins,
   missingPinNumbers,
   pinLabel,
+  proseOf,
   type PinFilter,
 } from '@spec-studio/core';
 import { PinEditor, type PinEditInput } from './PinEditor';
 
 interface PinPanelProps {
   pins: Pin[];
+  /** The document, so a selected pin can list the paragraphs that cite it. */
+  doc: Doc | null;
+  onFocusBlock: (blockId: string) => void;
   filter: PinFilter;
   screenCode: string;
   nextNumber: number;
@@ -29,6 +35,8 @@ interface PinPanelProps {
 
 export function PinPanel({
   pins,
+  doc,
+  onFocusBlock,
   filter,
   screenCode,
   nextNumber,
@@ -45,6 +53,8 @@ export function PinPanel({
   const gaps = missingPinNumbers(pins, pinSeq);
   const allCount = pins.length;
   const selected = pins.find((pin) => pin.id === selectedPinId) ?? null;
+  const citingBlocks =
+    doc === null || selected === null ? [] : blocksForPin(doc, selected.id);
 
   return (
     <aside className="pin-panel" aria-label="핀 목록" data-testid="pin-panel">
@@ -66,6 +76,40 @@ export function PinPanel({
           onSave={(input) => onUpdate(selected.id, input)}
           onClose={onCloseEditor}
         />
+      )}
+
+      {selected !== null && doc !== null && (
+        <div className="pin-refs" data-testid="pin-ref-list">
+          <p className="pin-refs-head">
+            이 핀을 참조하는 문단 <span className="panel-count">{citingBlocks.length}</span>
+          </p>
+          {citingBlocks.length === 0 ? (
+            <p className="pin-refs-empty">
+              아직 없습니다. 문서의 문단에서 <b>+ 핀 연결</b>로 이 핀을 붙입니다.
+            </p>
+          ) : (
+            <ul>
+              {citingBlocks.map((block, index) => (
+                <li key={block.id}>
+                  <button
+                    type="button"
+                    className="pin-ref-row"
+                    onClick={() => onFocusBlock(block.id)}
+                    data-testid={`pin-ref-${index + 1}`}
+                    data-block-id={block.id}
+                  >
+                    <span className="pin-ref-snippet">
+                      {proseOf(block.text).trim() === ''
+                        ? '(빈 문단)'
+                        : proseOf(block.text).trim().slice(0, 70)}
+                    </span>
+                    <span className="pin-ref-jump">문단 보기 →</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <div className="filters" role="group" aria-label="핀 타입 필터">
@@ -109,12 +153,14 @@ export function PinPanel({
             <li
               key={pin.id}
               className={`pin-row${pin.id === selectedPinId ? ' is-selected' : ''}`}
+              data-selected={pin.id === selectedPinId}
             >
               <button
                 type="button"
                 className="pin-row-main"
                 onClick={() => onSelect(pin.id)}
                 data-testid={`pin-row-${pin.number}`}
+                data-selected={pin.id === selectedPinId}
               >
                 <span className={`num num--${pin.type}`}>{pin.number}</span>
                 <span className="pin-text">

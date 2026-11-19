@@ -205,6 +205,7 @@ describe('the v11 → v12 migration', () => {
       CREATE TABLE project(id TEXT PRIMARY KEY);
       CREATE TABLE obj(id TEXT PRIMARY KEY);
       CREATE TABLE doc(id TEXT PRIMARY KEY);
+      CREATE TABLE block(id TEXT PRIMARY KEY);
       CREATE TABLE publish_record (
         id             TEXT PRIMARY KEY,
         doc_id         TEXT NOT NULL,
@@ -226,7 +227,7 @@ describe('the v11 → v12 migration', () => {
     `);
 
     const info = applySchema(legacy);
-    expect(info.actual).toBe(12);
+    expect(info.actual).toBe(13);
     expect(info.created).toBe(false);
 
     const columns = legacy

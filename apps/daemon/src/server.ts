@@ -82,6 +82,9 @@ function projectSummary(project: Project): Record<string, unknown> {
     screenCode: project.screen?.code ?? null,
     pins: project.pins.length,
     figmaUrl: project.screen?.figmaUrl ?? null,
+    docTitle: project.doc?.title ?? null,
+    blocks: project.doc?.blocks.length ?? 0,
+    proposalState: project.proposal?.state ?? null,
   };
 }
 
@@ -267,6 +270,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return send(res, 200, {
         project,
         records: store.listPublishes(projectId).map(recordJson),
+        revert: store.lastRevertable(projectId),
       });
     }
 
@@ -286,7 +290,30 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         );
       }
       const outcome = await store.execute(projectId, parsed.data);
-      return send(res, 200, { project: outcome.project, seq: outcome.seq, events: outcome.events });
+      return send(res, 200, {
+        project: outcome.project,
+        seq: outcome.seq,
+        opSeq: outcome.opSeq,
+        events: outcome.events,
+      });
+    }
+
+    // POST /api/projects/:id/revert — restores op_log.before of an adoption.
+    if (action === 'revert' && segments.length === 4) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const body = asObject(await readBody(req));
+      const rawSeq = body.seq;
+      if (rawSeq !== undefined && (typeof rawSeq !== 'number' || !Number.isInteger(rawSeq) || rawSeq < 1)) {
+        throw new HttpError(400, 'invalid_seq', '되돌릴 기록 번호를 확인해 주세요.');
+      }
+      const outcome = await store.revert(projectId, rawSeq as number | undefined);
+      return send(res, 200, {
+        project: outcome.project,
+        revertedSeq: outcome.revertedSeq,
+        blocks: outcome.blocks,
+        seq: outcome.seq,
+        revert: store.lastRevertable(projectId),
+      });
     }
 
     // GET /api/projects/:id/publishes
@@ -313,6 +340,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           pins: project.pins,
           pinSeq: project.pinSeq,
           figmaUrl: figmaUrlOf(project),
+          doc: project.doc,
           generatedAt: now(),
           mode: parseMode(body.mode),
           target: { space },
@@ -337,6 +365,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           pins: project.pins,
           pinSeq: project.pinSeq,
           figmaUrl: figmaUrlOf(project),
+          doc: project.doc,
           generatedAt: now(),
           mode: parseMode(body.mode),
           overlayPng: decodeOverlay(body.overlayPng),

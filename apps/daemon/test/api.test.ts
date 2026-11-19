@@ -61,7 +61,25 @@ async function api<T>(
 }
 
 interface Envelope {
-  project?: { id: string; pins: Array<{ id: string; number: number }>; screen: { figmaUrl?: string | null } | null };
+  project?: {
+    id: string;
+    pins: Array<{ id: string; number: number; title: string }>;
+    screen: { id: string; figmaUrl?: string | null } | null;
+    doc?: {
+      id: string;
+      rev: number;
+      blocks: Array<{
+        id: string;
+        text: string;
+        pinRefs: Array<{ pinId: string }>;
+      }>;
+    } | null;
+    proposal?: { id: string; state: string; summary: string; patches: unknown[] } | null;
+  };
+  opSeq?: number;
+  revert?: { seq: number; summary: string; blocks: number } | null;
+  revertedSeq?: number;
+  blocks?: number;
   records?: Array<{ id: string; pageId: string | null; status: string; specHash: string | null }>;
   preview?: { plan: string; specHash: string; body: string; attachments: unknown[] };
   outcome?: {
@@ -104,7 +122,7 @@ describe('the daemon API', () => {
   it('reports health and names SQLite as the canonical store', async () => {
     const health = await api<{ ok: boolean; schemaVersion: number; mode: string }>(daemon, '/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ ok: true, schemaVersion: 12, mode: 'sqlite' });
+    expect(health.body).toMatchObject({ ok: true, schemaVersion: 13, mode: 'sqlite' });
   });
 
   it('serves only the app origins', async () => {
@@ -294,5 +312,108 @@ describe('W3: SQLite behind the daemon, Confluence in front of it', () => {
 
     const history = await api<Envelope>(daemon, `/api/projects/${projectId}/publishes`);
     expect(history.body.records?.[0]?.status).toBe('failed');
+  });
+});
+
+describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
+  async function project(): Promise<string> {
+    const created = await api<Envelope>(daemon, '/api/projects', { body: { name: '주문 상세 기획' } });
+    const projectId = created.body.project?.id as string;
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'screen.attach', screen: SCREEN } },
+    });
+    for (const [title, pinType, body, x, y] of [
+      ['취소 요청', 'function', '배송 준비 중일 때만 활성', 0.2, 0.3],
+      ['배송 시작 후 취소 불가', 'policy', '사전조건: 배송 시작', 0.6, 0.5],
+    ] as const) {
+      await api(daemon, `/api/projects/${projectId}/commands`, {
+        body: { command: { type: 'pin.create', screenId: SCREEN.id, pinType, title, body, anchor: { x, y } } },
+      });
+    }
+    return projectId;
+  }
+
+  it('links a paragraph to a pin, marks it stale, adopts one card and reverts it', async () => {
+    const projectId = await project();
+    const opened = await api<Envelope>(daemon, `/api/projects/${projectId}`);
+    const docId = opened.body.project?.doc?.id as string;
+    expect(opened.body.project?.doc?.blocks).toEqual([]);
+    expect(opened.body.revert).toBeNull();
+
+    const added = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: {
+          type: 'doc.block.create',
+          docId,
+          blockType: 'paragraph',
+          text: '배송이 시작되기 전까지만 취소할 수 있다.',
+        },
+      },
+    });
+    const blockId = added.body.project?.doc?.blocks[0]?.id as string;
+    const pinId = opened.body.project?.pins[0]?.id as string;
+
+    const linked = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'doc.pin.link', docId, blockId, pinId } },
+    });
+    expect(linked.body.project?.doc?.blocks[0]?.pinRefs).toHaveLength(1);
+    expect(linked.body.project?.doc?.blocks[0]?.text).toContain('[핀] #1 취소 요청');
+    const originalText = linked.body.project?.doc?.blocks[0]?.text as string;
+
+    // a pin edit makes the paragraph stale; a move does not
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, anchor: { x: 0.3, y: 0.4 } } },
+    });
+    const moved = await api<Envelope>(daemon, `/api/projects/${projectId}`);
+    expect(moved.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, title: '취소 요청 버튼' } },
+    });
+
+    // one proposal, one decision card
+    const created = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'proposal.create', docId } },
+    });
+    const proposal = created.body.project?.proposal;
+    expect(proposal?.state).toBe('open');
+    expect(proposal?.patches).toHaveLength(1);
+    expect(proposal?.summary).toContain('#1');
+
+    const adopted = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'proposal.adopt', docId, proposalId: proposal?.id } },
+    });
+    expect(adopted.body.opSeq).toBeGreaterThan(0);
+    expect(adopted.body.project?.doc?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
+    expect(adopted.body.project?.proposal?.state).toBe('adopted');
+
+    const beforeRevert = await api<Envelope>(daemon, `/api/projects/${projectId}`);
+    expect(beforeRevert.body.revert).toMatchObject({ seq: adopted.body.opSeq, blocks: 1 });
+
+    // revert through op_log.before, from the file
+    const reverted = await api<Envelope>(daemon, `/api/projects/${projectId}/revert`, {
+      body: { seq: adopted.body.opSeq },
+    });
+    expect(reverted.status).toBe(200);
+    expect(reverted.body.revertedSeq).toBe(adopted.body.opSeq);
+    expect(reverted.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(reverted.body.revert).toBeNull();
+
+    // survives a restart: same blocks, same text, nothing left to undo
+    await daemon.close();
+    const reopened = await boot();
+    const after = await api<Envelope>(reopened, `/api/projects/${projectId}`);
+    expect(after.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(after.body.project?.proposal?.state).toBe('rejected');
+    expect(after.body.revert).toBeNull();
+  });
+
+  it('refuses a revert when nothing was adopted', async () => {
+    const projectId = await project();
+    const response = await api<Envelope>(daemon, `/api/projects/${projectId}/revert`, {
+      body: {},
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error?.message).toContain('되돌릴');
   });
 });

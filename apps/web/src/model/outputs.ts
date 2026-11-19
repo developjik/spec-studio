@@ -1,5 +1,5 @@
 import { buildTextOutputs, outputFileName, type OutputKind } from '@spec-studio/core';
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import { formatBytes } from './downloads';
 import { renderOverlayPng } from './overlay';
 
@@ -28,10 +28,12 @@ export async function buildOutputSet(input: {
   screen: Screen;
   pins: readonly Pin[];
   pinSeq: number;
+  /** W4: the document is part of the handoff sheet when there is one. */
+  doc?: Doc | null;
   generatedAt: string;
 }): Promise<OutputSet> {
   const { screen, pins, pinSeq, generatedAt } = input;
-  const text = buildTextOutputs({ screen, pins, pinSeq, generatedAt });
+  const text = buildTextOutputs({ screen, pins, pinSeq, doc: input.doc ?? null, generatedAt });
 
   const files: BuiltOutput[] = [];
 

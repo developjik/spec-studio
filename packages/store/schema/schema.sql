@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 12;
+PRAGMA user_version = 13;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -91,12 +91,19 @@ BEGIN
 END;
 
 -- 2. 문서·블록 ────────────────────────────────────────────────────
+-- v13: a document belongs to a project and (when there is one) to the screen
+-- it describes. `updated_at` exists so a document can be ordered and reopened
+-- like every other object.
 CREATE TABLE doc (
   id          TEXT PRIMARY KEY,                 -- D_...
+  project_id  TEXT REFERENCES project(id) ON DELETE CASCADE,
+  screen_id   TEXT REFERENCES obj(id) ON DELETE SET NULL,
   title       TEXT NOT NULL,
   rev         INTEGER NOT NULL DEFAULT 0,       -- 커밋 단위로 증가
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT
 );
+CREATE INDEX doc_project ON doc(project_id, screen_id);
 
 CREATE TABLE block (
   id         TEXT PRIMARY KEY,                  -- B_ + nanoid(12)
@@ -107,10 +114,13 @@ CREATE TABLE block (
              CHECK (type IN ('paragraph','heading','list','table','table_row','table_cell',
                              'caption','figure','code','criteria')),
   text       TEXT NOT NULL DEFAULT '',
+  -- attrs carries what the block stands on: {"pinRefs":[{pinId,fingerprint,linkedAt}]}
   attrs      TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(attrs)),
   hash       TEXT NOT NULL CHECK (length(hash) > 0),
   state      TEXT NOT NULL DEFAULT 'live' CHECK (state IN ('live','deleted')),
   commit_seq INTEGER,                           -- 이 블록을 마지막으로 바꾼 op_log.seq
+  created_at TEXT,
+  updated_at TEXT,
   parent_key TEXT GENERATED ALWAYS AS (coalesce(parent_id, '')) VIRTUAL
 );
 CREATE INDEX block_doc ON block(doc_id, idx);

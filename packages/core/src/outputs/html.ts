@@ -1,4 +1,5 @@
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
+import { staleBadges } from '../doc';
 import { inlineImage, slug } from './base64';
 import { buildSpecOverview, type SpecTable, type SpecTableRow } from './tables';
 import { PIN_TYPE_COLOR } from './overlay';
@@ -13,6 +14,8 @@ export interface StaticHtmlInput {
   screen: Screen;
   pins: readonly Pin[];
   pinSeq?: number;
+  /** The document beside the screen (W4). Absent leaves the sheet as it was. */
+  doc?: Doc | null;
   /** Passed in: core never reads the clock. */
   generatedAt: string;
 }
@@ -73,6 +76,40 @@ ${rows}
 </section>`;
 }
 
+/**
+ * The document section (W4): paragraphs as written, each with the pins it
+ * stands on. A block whose pin facts moved is marked here too, so a printed
+ * copy does not quietly carry a sentence the screen no longer supports.
+ */
+function renderDoc(input: { doc: Doc; pins: readonly Pin[] }): string {
+  const badges = staleBadges(input.doc, input.pins);
+  const byId = new Map(input.pins.map((pin) => [pin.id, pin] as const));
+  const blocks = input.doc.blocks
+    .map((block) => {
+      const stale = badges.filter((badge) => badge.blockId === block.id).length > 0;
+      const pins = block.pinRefs.map((ref) => {
+        const pin = byId.get(ref.pinId);
+        const label = pin === undefined ? '#? 삭제된 핀' : `#${pin.number} ${pin.title}`;
+        return `<span class="doc-ref">${escapeHtml(label)}</span>`;
+      });
+      const body =
+        block.type === 'heading'
+          ? `<h3>${escapeHtml(block.text)}</h3>`
+          : block.type === 'list'
+            ? `<p class="doc-list">${escapeHtml(block.text).replace(/\r?\n/g, '<br>')}</p>`
+            : `<p>${escapeHtml(block.text).replace(/\r?\n/g, '<br>')}</p>`;
+      return `<li class="doc-block${stale ? ' is-stale' : ''}">${body}${
+        pins.length === 0 ? '' : `<p class="doc-pins">${pins.join('')}</p>`
+      }${stale ? '<p class="doc-stale">핀이 바뀜 · 확인 필요</p>' : ''}</li>`;
+    })
+    .join('\n    ');
+
+  return `<section class="doc">
+  <h2>${escapeHtml(input.doc.title)}<span class="count">문단 ${input.doc.blocks.length}</span></h2>
+  ${input.doc.blocks.length === 0 ? '<p class="empty">아직 문단이 없습니다.</p>' : `<ol class="doc-blocks">\n    ${blocks}\n  </ol>`}
+</section>`;
+}
+
 const STYLE = `
 :root{color-scheme:light;--ink:#0f1216;--ink-2:#3f4650;--ink-3:#6b7280;--line:#e5e8ed;--line-2:#d3d9e2;--bg:#fff;--bg-sub:#f7f8fa;--mono:ui-monospace,SFMono-Regular,'JetBrains Mono',Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif}
 *{box-sizing:border-box}
@@ -117,6 +154,16 @@ tbody th{width:52px;text-align:left;font-weight:400}
 .gaps h2{margin:0 0 4px;font-size:12.5px}
 .gaps p{margin:0;font-size:12px;color:var(--ink-2)}
 .gaps b{font-family:var(--mono);font-weight:600;color:var(--ink)}
+.doc{margin-top:34px}
+.doc h2{display:flex;align-items:baseline;gap:8px;margin:0 0 10px;font-size:15.5px;padding-bottom:7px;border-bottom:1px solid var(--ink)}
+.doc-blocks{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:12px}
+.doc-block{padding:2px 0 2px 12px;border-left:2px solid var(--line-2)}
+.doc-block.is-stale{border-left-color:var(--warn,#b4690e);background:#fdf9f2}
+.doc-block h3{margin:0;font-size:13.5px}
+.doc-block p{margin:0;white-space:normal;color:var(--ink-2)}
+.doc-pins{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px !important}
+.doc-ref{font-family:var(--mono);font-size:10.5px;color:var(--accent,#2453c9);background:#eef2fc;border:1px solid #c8d5f5;border-radius:999px;padding:1px 7px}
+.doc-stale{margin-top:4px !important;font-size:10.5px;color:#b4690e;font-family:var(--mono)}
 .foot{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;font-size:10.5px;color:var(--ink-3);font-family:var(--mono)}
 @media (max-width:720px){.sheet{padding:26px 18px 40px}h1{font-size:23px}.cell-pre{display:none}thead th:nth-child(4){display:none}}
 @media print{body{background:#fff}.sheet{border:0;padding:0;max-width:none}.table-block{break-inside:avoid}@page{margin:14mm}}
@@ -189,6 +236,8 @@ export function renderStaticHtml(input: StaticHtmlInput): string {
   <div class="tables">
 ${overview.tables.map(renderTable).join('\n')}
   </div>
+
+  ${input.doc === undefined || input.doc === null ? '' : renderDoc({ doc: input.doc, pins: input.pins })}
 
   <section class="gaps">
     <h2>번호 규칙</h2>

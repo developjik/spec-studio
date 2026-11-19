@@ -19,6 +19,18 @@ export interface DaemonProjectSummary {
   screenCode: string | null;
   pins: number;
   figmaUrl: string | null;
+  docTitle: string | null;
+  blocks: number;
+  proposalState: string | null;
+}
+
+/** The adopted proposal a revert button would restore (W4). */
+export interface RevertableView {
+  seq: number;
+  at: string;
+  summary: string;
+  proposalId: string | null;
+  blocks: number;
 }
 
 export interface PublishRecordView {
@@ -120,17 +132,33 @@ export class DaemonClient {
 
   async readProject(
     projectId: string,
-  ): Promise<{ project: Project; records: PublishRecordView[] }> {
+  ): Promise<{ project: Project; records: PublishRecordView[]; revert: RevertableView | null }> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}`);
   }
 
   async execute(
     projectId: string,
     command: Command,
-  ): Promise<{ project: Project; events: unknown[] }> {
+  ): Promise<{ project: Project; events: unknown[]; opSeq: number }> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/commands`, {
       method: 'POST',
       body: { command },
+    });
+  }
+
+  /** Restores `op_log.before` of an adopted proposal; the latest one by default. */
+  async revert(
+    projectId: string,
+    seq?: number,
+  ): Promise<{
+    project: Project;
+    revertedSeq: number;
+    blocks: number;
+    revert: RevertableView | null;
+  }> {
+    return this.#request(`/api/projects/${encodeURIComponent(projectId)}/revert`, {
+      method: 'POST',
+      body: seq === undefined ? {} : { seq },
     });
   }
 

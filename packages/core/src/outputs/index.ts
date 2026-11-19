@@ -1,4 +1,4 @@
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import { slug } from './base64';
 import { buildQaCsv } from './csv';
 import { renderStaticHtml } from './html';
@@ -47,6 +47,8 @@ export function buildTextOutputs(input: {
   screen: Screen;
   pins: readonly Pin[];
   pinSeq?: number;
+  /** W4: the document travels with the sheet when the project has one. */
+  doc?: Doc | null;
   generatedAt: string;
 }): { html: string; csv: string } {
   return {

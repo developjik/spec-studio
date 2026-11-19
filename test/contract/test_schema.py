@@ -107,7 +107,26 @@ def main() -> int:
     conn = connect()
 
     objects = conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
-    record("DDL executes", "schema", objects == 81, f"{objects} objects in sqlite_master")
+
+    # W4: a document names the project it is edited in and the screen it
+    # describes; a block carries what it stands on in JSON attrs.
+    doc_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(doc)").fetchall()
+    }
+    record(
+        "doc belongs to a project and a screen",
+        "schema",
+        {"project_id", "screen_id", "updated_at"} <= doc_columns,
+        ", ".join(sorted(doc_columns)),
+    )
+    block_columns = {row[1] for row in conn.execute("PRAGMA table_info(block)").fetchall()}
+    record(
+        "block keeps its timestamps",
+        "schema",
+        {"created_at", "updated_at"} <= block_columns,
+        ", ".join(sorted(block_columns)),
+    )
+    record("DDL executes", "schema", objects == 82, f"{objects} objects in sqlite_master")
 
     seed(conn)
     record("seed rows", "schema", True, "goal / specnode / screen / pin / doc / block / link")
@@ -150,6 +169,18 @@ def main() -> int:
         "sibling idx collision",
         "INSERT INTO block(id,doc_id,parent_id,idx,type,text,hash) "
         "VALUES('B_100000000001','D_aaaaaaaaaaaa',NULL,'a0','paragraph','x','hx')",
+    )
+    expect_reject(
+        conn,
+        "block attrs is not JSON",
+        "INSERT INTO block(id,doc_id,parent_id,idx,type,text,attrs,hash) "
+        "VALUES('B_100000000004','D_aaaaaaaaaaaa',NULL,'a4','paragraph','x','not json','hx')",
+    )
+    expect_reject(
+        conn,
+        "block without a document",
+        "INSERT INTO block(id,doc_id,parent_id,idx,type,text,hash) "
+        "VALUES('B_100000000005','D_missing',NULL,'a5','paragraph','x','hx')",
     )
     expect_reject(
         conn,
@@ -254,6 +285,14 @@ def main() -> int:
         ("proposal adopted",
          "INSERT INTO proposal(id,doc_id,origin,summary,base_rev,author_kind,risk,state,created_at,decided_at) "
          "VALUES('PR_000000000010','D_aaaaaaaaaaaa','pin','취소 문장을 좁힌다',3,'ai','low','adopted','t','t')"),
+        ("document of a screen",
+         "INSERT INTO doc(id,project_id,screen_id,title,rev,created_at,updated_at) "
+         "VALUES('D_100000000001','PRJ_000000000001','S_cccccccccccc','주문 상세 문서',2,'t','t')"),
+        ("block with pin references",
+         "INSERT INTO block(id,doc_id,parent_id,idx,type,text,attrs,hash,created_at) "
+         "VALUES('B_100000000010','D_aaaaaaaaaaaa',NULL,'a9','paragraph','배송 전 취소',"
+         "'{\"pinRefs\":[{\"pinId\":\"P_dddddddddddd\",\"fingerprint\":\"1a2b3c4d\","
+         "\"linkedAt\":\"t\"}]}','hx10','t')"),
         ("proposal_op replaces a block",
          "INSERT INTO proposal_op(id,proposal_id,seq,kind,target_block,base_hash,base_text,new_text,view,state,decision) "
          "VALUES('op_10','PR_000000000010',1,'replace','B_eeeeeeeeeeee','hb1',"

@@ -17,12 +17,14 @@ import {
 const AT = '2026-11-19T09:00:00.000Z';
 
 let pinCounter = 0;
+let counter = 0;
 
 function context(at = AT): ExecuteContext {
   return {
     at,
-    nextId: (kind: 'screen' | 'pin'): string => {
+    nextId: (kind): string => {
       if (kind === 'screen') return `S_${'a'.repeat(12)}`;
+      if (kind !== 'pin') return `${kind === 'doc' ? 'D' : kind === 'block' ? 'B' : 'PR'}_${String(++counter).padStart(12, '0')}`;
       pinCounter += 1;
       return `P_${String(pinCounter).padStart(12, '0')}`;
     },

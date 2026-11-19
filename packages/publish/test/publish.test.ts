@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import {
   buildPublishPackage,
   previewPublish,
@@ -361,5 +361,63 @@ describe('preview', () => {
     );
     expect(same.plan).toBe('skip');
     expect(mock.pageCreates).toBe(1);
+  });
+});
+
+describe('W4: the document travels with the spec', () => {
+  const doc: Doc = {
+    id: `D_${'d'.repeat(12)}`,
+    title: '주문 상세 문서',
+    rev: 4,
+    blocks: [
+      {
+        id: `B_${'b'.repeat(12)}`,
+        type: 'paragraph',
+        text: '배송이 시작되기 전까지만 취소할 수 있다.\n\n[핀] #1 취소 요청',
+        pinRefs: [{ pinId: PINS[0]!.id, fingerprint: 'ffffffff', linkedAt: '2026-11-19T09:00:00.000Z' }],
+        createdAt: '2026-11-19T09:00:00.000Z',
+        updatedAt: '2026-11-19T09:00:00.000Z',
+      },
+    ],
+    createdAt: '2026-11-19T09:00:00.000Z',
+    updatedAt: '2026-11-19T09:00:00.000Z',
+  };
+
+  it('puts the paragraphs and their pins into the Confluence body', () => {
+    const pkg = buildPublishPackage({
+      projectName: '주문 상세 기획',
+      screen: SCREEN,
+      pins: PINS,
+      pinSeq: 3,
+      figmaUrl: SCREEN.figmaUrl ?? null,
+      doc,
+      generatedAt: '2026-11-19T09:00:00.000Z',
+      overlayPng: PNG,
+    });
+    expect(pkg.body).toContain('<h2>주문 상세 문서</h2>');
+    expect(pkg.body).toContain('배송이 시작되기 전까지만 취소할 수 있다.');
+    // the fingerprint recorded in the fixture no longer matches the pin, so the
+    // copied page says the sentence needs a look
+    expect(pkg.body).toContain('핀 변경 · 확인 필요');
+  });
+
+  it('fingerprints the document, so an edited paragraph is a new spec', () => {
+    const base = {
+      projectName: '주문 상세 기획',
+      screen: SCREEN,
+      pins: PINS,
+      pinSeq: 3,
+      figmaUrl: SCREEN.figmaUrl ?? null,
+      generatedAt: '2026-11-19T09:00:00.000Z',
+      overlayPng: PNG,
+    };
+    const before = buildPublishPackage({ ...base, doc }).specHash;
+    const after = buildPublishPackage({
+      ...base,
+      doc: { ...doc, blocks: [{ ...doc.blocks[0]!, text: '고친 문단' }] },
+    }).specHash;
+    const without = buildPublishPackage(base).specHash;
+    expect(before).not.toBe(after);
+    expect(before).not.toBe(without);
   });
 });

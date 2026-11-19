@@ -1,8 +1,10 @@
 import {
   PIN_TYPE_LABEL,
+  type Doc,
   type Pin,
   type Screen,
 } from '@spec-studio/protocol';
+import { staleBadges } from '@spec-studio/core';
 import { buildSpecOverview, extractPrecondition, type SpecTable } from '@spec-studio/core';
 
 /**
@@ -31,6 +33,8 @@ export interface PublishBodyInput {
   pins: readonly Pin[];
   pinSeq: number;
   figmaUrl: string | null;
+  /** W4: the document beside the screen, when the project has one. */
+  doc?: Doc | null;
   generatedAt: string;
   specHash: string;
   attachments: readonly PublishAttachmentInfo[];
@@ -107,6 +111,34 @@ function renderTable(table: SpecTable): string {
   );
 }
 
+/**
+ * The document as a Confluence section: each block keeps its wording, and the
+ * pins it stands on are named the way the screen numbers them. A block whose
+ * pin facts moved is marked, so a reader knows the sentence needs a look.
+ */
+function renderDocSection(doc: Doc, pins: readonly Pin[]): string {
+  if (doc.blocks.length === 0) return '';
+  const badges = staleBadges(doc, pins);
+  const byId = new Map(pins.map((pin) => [pin.id, pin] as const));
+  const blocks = doc.blocks
+    .map((block) => {
+      const stale = badges.some((badge) => badge.blockId === block.id);
+      const refs = block.pinRefs
+        .map((ref) => {
+          const pin = byId.get(ref.pinId);
+          return pin === undefined ? '#? 삭제된 핀' : `#${pin.number} ${pin.title}`;
+        })
+        .join(' · ');
+      const meta = refs === '' ? '' : `<br /><small>${escapeXml(refs)}</small>`;
+      const mark = stale ? ' <strong>(핀 변경 · 확인 필요)</strong>' : '';
+      return block.type === 'heading'
+        ? `<h3>${escapeXml(block.text)}${mark}</h3>`
+        : `<p>${multiline(block.text)}${mark}${meta}</p>`;
+    })
+    .join('\n');
+  return `<h2>${escapeXml(doc.title)}</h2>\n${blocks}`;
+}
+
 export function renderPublishBody(input: PublishBodyInput): string {
   const overview = buildSpecOverview({
     screen: input.screen,
@@ -173,6 +205,7 @@ export function renderPublishBody(input: PublishBodyInput): string {
     renderTable(overview.tables[0] as SpecTable),
     renderTable(overview.tables[1] as SpecTable),
     renderTable(overview.tables[2] as SpecTable),
+    input.doc === undefined || input.doc === null ? '' : renderDocSection(input.doc, input.pins),
     '<h2>결번</h2>',
     `<p>${escapeXml(gapText)}</p>`,
     '<h2>첨부 파일</h2>',
