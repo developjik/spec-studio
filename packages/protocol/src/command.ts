@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AiDocDraftSchema, AiGraphDraftSchema, AiProposalSourceSchema } from './ai';
 import { BlockIdSchema, BlockTypeSchema, DocIdSchema, ProposalIdSchema } from './doc';
 import {
   EditableNodeTypeSchema,
@@ -109,6 +110,16 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('proposal.create'),
     docId: DocIdSchema,
+    /**
+     * A draft produced outside core — by a model — already validated against
+     * `AiDocDraftSchema`. Absent, the rule-based builder runs as before. The
+     * daemon never passes a model's prose through: only this shape reaches the
+     * store, and the store still writes `op_log.before` when it is adopted.
+     */
+    draft: AiDocDraftSchema.optional(),
+    source: AiProposalSourceSchema.optional(),
+    provider: z.string().max(40).nullable().optional(),
+    model: z.string().max(80).nullable().optional(),
   }),
   z.object({
     type: z.literal('proposal.adopt'),
@@ -157,6 +168,11 @@ export const CommandSchema = z.discriminatedUnion('type', [
   /** Reads the screen's pins and drafts policy / req / qa nodes plus their links. */
   z.object({
     type: z.literal('graph.proposal.create'),
+    /** A model-built draft; absent means the rule extractor builds the card. */
+    draft: AiGraphDraftSchema.optional(),
+    source: AiProposalSourceSchema.optional(),
+    provider: z.string().max(40).nullable().optional(),
+    model: z.string().max(80).nullable().optional(),
   }),
   z.object({
     type: z.literal('graph.proposal.adopt'),

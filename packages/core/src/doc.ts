@@ -1,5 +1,6 @@
 import {
   BlockSchema,
+  type AiDocDraft,
   type Block,
   type BlockPinRef,
   type BlockSnapshotEntry,
@@ -266,6 +267,81 @@ export function buildProposal(input: {
     docId: doc.id,
     summary: summaryParts.join(', ') || '문서를 핀과 맞춥니다',
     origin: 'pin',
+    baseRev: doc.rev,
+    state: 'open',
+    patches,
+    createdAt: input.at,
+    decidedAt: null,
+  };
+}
+
+/**
+ * Turns a model's paragraph draft into the same proposal card a person
+ * already decides on: `before` is read from the document as it is now, so the
+ * store keeps exactly the text a `되돌리기` would put back. A block id the
+ * document does not have is an error, not a quietly skipped patch — an answer
+ * that names the wrong paragraph is not a proposal, it is a mistake.
+ */
+export function buildProposalFromDraft(input: {
+  id: string;
+  doc: Doc;
+  pins: readonly Pin[];
+  draft: AiDocDraft;
+  at: string;
+}): Proposal {
+  const { doc, pins, draft } = input;
+  const byNumber = new Map(pins.map((pin) => [pin.number, pin] as const));
+  const byId = new Map(pins.map((pin) => [pin.id, pin] as const));
+  const patches: ProposalPatch[] = [];
+
+  for (const draftPatch of draft.patches) {
+    const block = findBlock(doc, draftPatch.blockId);
+    if (block === undefined) {
+      throw new DomainError(
+        'block_not_found',
+        '제안이 이 문서에 없는 문단을 가리킵니다. 다시 추출해 주세요.',
+      );
+    }
+    const kept = block.pinRefs.filter((ref) => byId.has(ref.pinId));
+    const cited = draftPatch.pins
+      .map((number) => byNumber.get(number))
+      .filter((pin): pin is Pin => pin !== undefined);
+    // A patch that cites nothing keeps what the paragraph already stood on.
+    const target = cited.length === 0 ? kept.map((ref) => byId.get(ref.pinId) as Pin) : cited;
+    const refs: BlockPinRef[] = [];
+    for (const pin of target) {
+      if (refs.some((ref) => ref.pinId === pin.id)) continue;
+      refs.push(newRef(pin, input.at));
+    }
+    const after = {
+      type: block.type,
+      text: syncBlockText(draftPatch.text, refs, pins),
+      pinRefs: refs,
+    };
+    const unchanged =
+      after.text === block.text &&
+      after.pinRefs.length === block.pinRefs.length &&
+      after.pinRefs.every((ref, index) => ref.pinId === block.pinRefs[index]?.pinId);
+    if (unchanged) continue;
+    patches.push({
+      blockId: block.id,
+      afterBlockId: null,
+      before: { type: block.type, text: block.text, pinRefs: block.pinRefs },
+      after,
+    });
+  }
+
+  if (patches.length === 0) {
+    throw new DomainError('invalid_input', '제안된 문단이 지금 문서와 같습니다. 바뀐 것이 없습니다.');
+  }
+
+  return {
+    id: input.id,
+    docId: doc.id,
+    summary: draft.summary.trim().slice(0, 300),
+    // `doc-chat` is the origin that already means "a sentence proposed outside
+    // the pin extractor"; the card reads it as an LLM 제안.
+    origin: 'doc-chat',
     baseRev: doc.rev,
     state: 'open',
     patches,

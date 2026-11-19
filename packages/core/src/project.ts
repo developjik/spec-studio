@@ -17,6 +17,7 @@ import {
 import {
   applyPatches,
   buildProposal,
+  buildProposalFromDraft,
   confirmRef,
   createDoc,
   findBlock,
@@ -29,6 +30,7 @@ import {
 } from './doc';
 import { DomainError } from './errors';
 import {
+  buildGraphProposalFromDraft,
   extractGraphProposal,
   makeGraphNode,
   markLinksSuspect,
@@ -503,12 +505,21 @@ export function execute(
     // ── proposal layer ─────────────────────────────────────────────────
     case 'proposal.create': {
       const doc = requireDoc(project, command.docId);
-      const proposal = buildProposal({
-        id: ctx.nextId('proposal'),
-        doc,
-        pins: project.pins,
-        at: ctx.at,
-      });
+      const proposal =
+        command.draft === undefined
+          ? buildProposal({
+              id: ctx.nextId('proposal'),
+              doc,
+              pins: project.pins,
+              at: ctx.at,
+            })
+          : buildProposalFromDraft({
+              id: ctx.nextId('proposal'),
+              doc,
+              pins: project.pins,
+              draft: command.draft,
+              at: ctx.at,
+            });
       return {
         project: { ...project, proposal, updatedAt: ctx.at },
         events: [{ type: 'proposal.created', proposal }],
@@ -702,10 +713,19 @@ export function execute(
     }
 
     case 'graph.proposal.create': {
-      const proposal = extractGraphProposal(project, {
-        id: ctx.nextId('graphProposal'),
-        at: ctx.at,
-      });
+      const proposal =
+        command.draft === undefined
+          ? extractGraphProposal(project, {
+              id: ctx.nextId('graphProposal'),
+              at: ctx.at,
+            })
+          : buildGraphProposalFromDraft(project, command.draft, {
+              id: ctx.nextId('graphProposal'),
+              at: ctx.at,
+              source: command.source ?? 'llm',
+              provider: command.provider ?? null,
+              model: command.model ?? null,
+            });
       return {
         project: { ...project, graphProposal: proposal, updatedAt: ctx.at },
         events: [{ type: 'graph.proposal.created', proposal }],

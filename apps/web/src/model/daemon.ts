@@ -1,4 +1,11 @@
-import type { Command, Project, ProjectBundle } from '@spec-studio/protocol';
+import type {
+  AiProvider,
+  AiProposalMode,
+  AiProposalSource,
+  Command,
+  Project,
+  ProjectBundle,
+} from '@spec-studio/protocol';
 
 /**
  * The browser's only door to the project: HTTP on the loopback daemon.
@@ -88,6 +95,44 @@ export interface ConfluenceTargetView {
 }
 
 export type PublishModeView = 'auto' | 'create' | 'update';
+
+/** What the AI settings panel sends; the key lives in this object and nowhere else. */
+export interface AiRequestView {
+  provider: AiProvider;
+  model: string;
+  endpoint: string | null;
+  apiKey: string;
+}
+
+export interface AiProviderStatusView {
+  provider: AiProvider;
+  hasEnvKey: boolean;
+  defaultModel: string;
+  defaultEndpoint: string | null;
+}
+
+export interface AiStatusView {
+  providers: AiProviderStatusView[];
+  localAvailable: boolean;
+}
+
+export interface AiTestResultView {
+  ok: boolean;
+  provider: AiProvider;
+  model: string;
+  latencyMs: number;
+  message: string;
+}
+
+export interface AiProposalOutcomeView {
+  project: Project;
+  opSeq: number;
+  events: unknown[];
+  source: AiProposalSource;
+  provider: AiProvider;
+  model: string;
+  note: string;
+}
 
 export class DaemonError extends Error {
   readonly code: string;
@@ -192,6 +237,46 @@ export class DaemonClient {
       { method: 'POST', body: {} },
     );
     return body.backup;
+  }
+
+  /** Which providers have a key in the daemon's environment (booleans only). */
+  async aiStatus(): Promise<AiStatusView> {
+    const body = await this.#request<{ status: AiStatusView }>('/api/ai');
+    return body.status;
+  }
+
+  async aiTest(input: AiRequestView): Promise<AiTestResultView> {
+    const body = await this.#request<{ result: AiTestResultView }>('/api/ai/test', {
+      method: 'POST',
+      body: {
+        provider: input.provider,
+        model: input.model,
+        endpoint: input.endpoint,
+        apiKey: input.apiKey,
+      },
+    });
+    return body.result;
+  }
+
+  /**
+   * Asks the daemon for a proposal. The answer is the project *after* the card
+   * was filed, so the screen and the card can never disagree about what is on
+   * the table.
+   */
+  async aiProposal(
+    projectId: string,
+    input: AiRequestView & { mode: AiProposalMode },
+  ): Promise<AiProposalOutcomeView> {
+    return this.#request(`/api/projects/${encodeURIComponent(projectId)}/ai/proposal`, {
+      method: 'POST',
+      body: {
+        mode: input.mode,
+        provider: input.provider,
+        model: input.model,
+        endpoint: input.endpoint,
+        apiKey: input.apiKey,
+      },
+    });
   }
 
   async publishes(projectId: string): Promise<PublishRecordView[]> {

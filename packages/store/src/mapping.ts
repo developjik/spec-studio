@@ -299,6 +299,10 @@ export function graphProposalFromRow(row: GraphProposalRow): GraphProposal {
     ...parsed,
     id: row.id,
     state: row.state as GraphProposal['state'],
+    // Rows written before the AI layer carry no provenance; they were rules.
+    source: parsed.source ?? 'rule',
+    provider: parsed.provider ?? null,
+    model: parsed.model ?? null,
     createdAt: row.created_at,
     decidedAt: row.decided_at,
   };

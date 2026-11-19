@@ -1,0 +1,23 @@
+{
+  "name": "@spec-studio/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Model-facing half of the AI proposal layer: prompts, provider calls, strict draft parsing",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@spec-studio/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

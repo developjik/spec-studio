@@ -11,15 +11,24 @@
     "build": "pnpm -r --if-present build",
     "preview": "pnpm --filter @spec-studio/web preview",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm test:unit && pnpm eval",
     "dep:check": "depcruise apps packages --config .dependency-cruiser.cjs",
     "test:contract": "python3 test/contract/test_schema.py",
-    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract",
+    "check": "pnpm typecheck && pnpm typecheck:eval && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract",
     "daemon": "pnpm --filter @spec-studio/daemon start",
-    "daemon:build": "pnpm --filter @spec-studio/daemon build"
+    "daemon:build": "pnpm --filter @spec-studio/daemon build",
+    "eval": "node eval/build.mjs && node eval/dist/eval.mjs",
+    "eval:live": "node eval/build.mjs && node eval/dist/eval.mjs --live",
+    "typecheck:eval": "tsc --noEmit -p eval/tsconfig.json",
+    "test:unit": "pnpm -r --if-present test"
   },
   "devDependencies": {
+    "@spec-studio/ai": "workspace:*",
+    "@spec-studio/core": "workspace:*",
+    "@spec-studio/protocol": "workspace:*",
+    "@types/node": "^22.15.0",
     "dependency-cruiser": "^17.4.3",
+    "esbuild": "^0.28.2",
     "typescript": "~5.9.3",
     "vitest": "^4.1.12"
   }

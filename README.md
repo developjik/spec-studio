@@ -6,7 +6,12 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
-> **Status: v1 phase 1.** The project is now a graph as well as a screen. Six object types
+> **Status: v1 phase 2.** A model can now propose, and the same decision card still decides.
+> `AI 설정` puts a provider, a model and a key in the window — never in the database — and
+> `제안 추출` files the answer as one card whose badge says **LLM 제안** (with provider and model)
+> or **로컬 규칙 폴백**. Thirty Korean golden cases score both engines with `pnpm eval`.
+>
+> **v1 phase 1.** The project is now a graph as well as a screen. Six object types
 > (화면 · 핀 · 요구사항 · 정책 · 계약 · QA) are joined by seven named links, the traceability view
 > marks orphan pins and links that need a re-read, and the header walks **L0 → L1 → L2** as the
 > spec becomes publish-ready. A pin-derived proposal drafts requirements, policies and QA cases
@@ -78,6 +83,20 @@ Three commitments follow from that:
   would prove it, an edge handler or a contract where the pin is one. The card lists every draft and
   the links it will make; adopting creates all of them in one transaction and the revert removes the
   nodes and every link that touched them, both recorded in `op_log`.
+- **AI 제안, two engines, one card** — the daemon calls an Anthropic Messages API or any
+  OpenAI-compatible Chat Completions endpoint by `fetch` (a custom base URL is a first-class field,
+  so a local model server or a test double is the same path). The answer is peeled out of its
+  prose, validated against the protocol's draft schema, checked against the project's own pins and
+  link ends, and filed as the same decision card: nothing is written until **채택**, and the same
+  `op_log.before` **되돌리기** takes it back. No key anywhere → the rule extractor answers and the
+  badge says so.
+- **The key is a request, not a setting** — it travels in one body to the provider and is dropped;
+  `AI 설정` keeps it in the window's memory, and `GET /api/ai` answers only whether the daemon's
+  environment has one. A test reads the SQLite file afterwards and finds no trace.
+- **`pnpm eval` · 30 Korean golden cases** — 정책 10 · 표/계약 10 · 예외 10, scored on schema
+  validity, expected node types, expected link types, pin grounding, and how many drafts stand on a
+  pin at all. `--mock` measures the fallback deterministically (what CI runs); `--live` measures a
+  real model on the same cases.
 - **Export, import, backup** — the daemon serves the whole project as a `spec-studio.bundle` JSON
   (`GET /api/projects/:id/export`); import remaps every id so a bundle can be opened beside the
   project it came from; `POST /api/projects/:id/backup` writes a consistent SQLite copy with
@@ -115,12 +134,19 @@ Verification, the same commands CI runs:
 
 ```bash
 pnpm typecheck           # tsc --noEmit across the workspace
-pnpm test                # vitest: core, protocol, store, publish, daemon API
+pnpm test:unit           # vitest: core, protocol, store, publish, daemon API, ai client
+pnpm test                # the unit tests plus `pnpm eval` — the gate CI runs
 pnpm build               # vite production build + the daemon bundle
 pnpm dep:check           # dependency-cruiser boundary rules
 pnpm test:contract       # python3 test/contract/test_schema.py
+pnpm eval                # the 30-case golden set, mock (rule) mode — no key, no network
+pnpm eval:live           # the same cases against a real model (ANTHROPIC_API_KEY / OPENAI_API_KEY)
 pnpm check               # all of the above, in order
 ```
+
+`pnpm eval` rides the unit-test step on purpose: the workflow file is edited by a person, and the
+golden set has to be a gate even before someone adds a line to `ci.yml`. Once the step exists,
+`test` can drop back to `pnpm test:unit && pnpm eval` only if it stops being the only caller.
 
 End-to-end, against a real daemon, a real SQLite file and a Confluence-shaped mock:
 
@@ -128,6 +154,7 @@ End-to-end, against a real daemon, a real SQLite file and a Confluence-shaped mo
 test/e2e/run_w3.sh       # W3 · pins + Confluence publish
 test/e2e/run_w4.sh       # W4 · document ↔ pin, stale, decision card, revert
 test/e2e/run_v1.sh       # v1 · six types, seven links, L0–L2, export/import, backup
+test/e2e/run_p2.sh       # AI 제안 · mock model server, LLM badge, adopt, revert, key hygiene
                          # all need Playwright (Python) and a chromium binary
 ```
 
@@ -179,6 +206,55 @@ published_at)`, with a unique `(target, idem_key)` index behind the lookup, so t
 survives a restart. The tests fix all four cases: create → same spec → daemon/store reopen →
 edited pin.
 
+## AI 제안 — and why it still asks
+
+The model never edits a document. It answers with a draft, and the daemon turns that draft into
+the card a person already decides on:
+
+| | |
+| --- | --- |
+| Providers | `Anthropic` · `OpenAI 호환` (any base URL) · `로컬 규칙` |
+| Wire | `fetch` only — no SDK, no dependency on a vendor library |
+| Trust boundary | `AiGraphDraftSchema` / `AiDocDraftSchema` in `packages/protocol/src/ai.ts` |
+| Evidence | a draft cites pin **numbers**; a number the screen does not have is dropped, not shown |
+| Decision | one card, **채택** writes in one transaction, **되돌리기** restores `op_log.before` |
+| Badge | `LLM 제안 · openai · gpt-4o-mini` or `로컬 규칙 폴백` |
+
+`AI 설정` takes a provider, a model, an optional endpoint and a key, and keeps them in the
+window's memory for the session. The key is sent in one request body, forwarded to the provider,
+and never written to SQLite, `localStorage` or a log. When the field is empty the daemon falls back
+to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from its own environment; when neither exists the rule
+extractor builds the card and the badge says **로컬 규칙 폴백**, so a silent downgrade cannot be
+mistaken for a model answer.
+
+Two shapes, one card:
+
+- **graph** — `req` · `policy` · `contract` · `qa` drafts with the seven named link types. The same
+  `graph.proposal.create` command the rule extractor uses carries an optional `draft`; the store
+  still validates link ends and writes the adoption and its undo as ledger rows.
+- **doc** — paragraph patches. The `before` side is read from the document at the moment the card
+  is filed, so a `되돌리기` puts back exactly the text that was there; the citation line is
+  regenerated from the document's own pins, never from the model's prose.
+
+### The golden set and its bar
+
+`pnpm eval` scores 30 Korean cases — 정책 10, 표/계약 10, 예외 10 — and prints one row each plus
+the totals:
+
+| Column | Question |
+| --- | --- |
+| 스키마 | does the proposal still parse, with at least one draft? |
+| 타입 | of the node types a good answer must carry, how many are there? |
+| 링크 | of the link types it must carry, how many are there? |
+| 핀근거 | of the pin numbers the sentence stands on, how many are cited? |
+| 근거비율 | share of drafts that cite an existing pin at all — a hallucination shows up here |
+
+Thresholds: schema 100%, types ≥85%, links ≥85%, pin grounding ≥90%, grounded drafts ≥90%.
+`--mock` (the default without a key) measures the rule fallback and is what CI runs; `--live`
+measures a real model on the same cases. Three cases are deliberately hard for the rules — a policy
+written inside a `function` pin, a table inside a `function` pin, an exception inside a `function`
+pin — and show up as 0% rows in mock mode, which is the gap a model is supposed to close.
+
 ## Repository layout
 
 ```
@@ -190,6 +266,10 @@ packages/
   core/                Pure domain: pin numbering, blocks, stale, proposals, output generators
   store/               schema.sql (v14) · the SQLite adapter · publish records
   publish/             Confluence client, Storage-Format body, idempotent publish flow
+  ai/                  provider calls by fetch, prompts, strict draft parsing — no store, no core
+eval/
+  golden/              30 Korean cases: policy 10 · table/contract 10 · exception 10
+  src/                 the scorer (`pnpm eval`), mock and live modes
 test/
   contract/            the SQLite schema contract (Python, no dependencies)
   e2e/                 the W3, W4 and v1 browser checks and their runners
@@ -209,11 +289,12 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 
 | Rule | What it prevents |
 | --- | --- |
-| `renderer-never-touches-store` | The web shell importing the store, daemon, MCP or publisher |
+| `renderer-never-touches-store` | The web shell importing the store, daemon, MCP, publisher or AI client |
 | `core-is-pure` | Node built-ins in core source — no fs, no http, no clock |
 | `mcp-knows-no-schema` | MCP code reaching into the store |
 | `publish-knows-no-schema` | The publisher reading the database; the daemon hands it records |
 | `protocol-has-no-deps` | Protocol depending on anything but `zod` |
+| `ai-is-a-service-not-a-layer` | The model client reading the store, running a command, or reaching into core |
 
 `core-is-pure` is checked twice: dependency-cruiser sees imports, and
 `packages/core/test/purity.test.ts` walks every file under `src/` for `Date.now()`,
@@ -234,6 +315,9 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 | `POST` | `/api/projects/:id/publish/preview` | plan (`create`/`update`/`skip`), body, attachments |
 | `POST` | `/api/projects/:id/publish` | run the publish; receives the browser-rendered overlay |
 | `GET` | `/api/projects/:id/publishes` | history |
+| `GET` | `/api/ai` | which providers have an environment key (booleans only) |
+| `POST` | `/api/ai/test` | one small call, for the settings panel's connection badge |
+| `POST` | `/api/projects/:id/ai/proposal` | model draft → validated card; falls back to the rules |
 
 Requests from an origin outside the allow-list are refused with 403. The API has no delete
 route, and no endpoint accepts a credential in a query string.

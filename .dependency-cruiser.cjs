@@ -11,7 +11,15 @@ module.exports = {
       comment:
         'The renderer sends commands to the daemon. It never opens the schema, the MCP client or the publisher.',
       from: { path: '^apps/web' },
-      to: { path: '^packages/(store|daemon|mcp|publish)' },
+      to: { path: '^packages/(store|daemon|mcp|publish|ai)' },
+    },
+    {
+      name: 'ai-is-a-service-not-a-layer',
+      severity: 'error',
+      comment:
+        'The model side talks to HTTP APIs and the protocol. It reads no database, runs no domain command, and is called only by the daemon (or the eval runner).',
+      from: { path: '^packages/ai' },
+      to: { path: '^packages/(store|publish|core|mcp)' },
     },
     {
       name: 'core-is-pure',

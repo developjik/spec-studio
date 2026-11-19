@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@spec-studio/ai": "workspace:*",
     "@spec-studio/core": "workspace:*",
     "@spec-studio/protocol": "workspace:*",
     "@spec-studio/publish": "workspace:*",

@@ -1,6 +1,8 @@
 import {
   GRAPH_LINK_LABEL,
   NODE_TYPE_INITIAL_STATE,
+  linkEndsAllow,
+  type AiGraphDraft,
   type Doc,
   type EditableNodeType,
   type Graph,
@@ -13,6 +15,7 @@ import {
   type Project,
   type Screen,
 } from '@spec-studio/protocol';
+import { DomainError } from './errors';
 import { staleBadges } from './doc';
 
 /**
@@ -436,6 +439,9 @@ export function extractGraphProposal(project: Project, options: ProposalDraftOpt
     id: options.id,
     summary,
     state: 'open',
+    source: 'rule',
+    provider: null,
+    model: null,
     nodes: nodes.map((node) => ({
       key: node.key,
       type: node.type,
@@ -454,6 +460,9 @@ function emptyProposal(options: ProposalDraftOptions, summary: string): GraphPro
     id: options.id,
     summary,
     state: 'open',
+    source: 'rule',
+    provider: null,
+    model: null,
     nodes: [],
     links: [],
     createdAt: options.at,
@@ -463,6 +472,115 @@ function emptyProposal(options: ProposalDraftOptions, summary: string): GraphPro
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Provenance of a card: who drafted it, with which model. */
+export interface GraphDraftOptions {
+  id: string;
+  at: string;
+  source: 'rule' | 'llm';
+  provider: string | null;
+  model: string | null;
+}
+
+/**
+ * Turns a model's draft into the one card the app shows.
+ *
+ * The draft is already schema-valid; what is left is everything the schema
+ * cannot know: that `pin:3` names a pin this screen actually has, that
+ * `governs` may indeed join a policy to a pin, that a title already in the
+ * graph should not be drafted twice. Anything the project cannot back is
+ * dropped rather than carried into the card, so a hallucinated citation can
+ * never reach `채택`.
+ */
+export function buildGraphProposalFromDraft(
+  project: Project,
+  draft: AiGraphDraft,
+  options: GraphDraftOptions,
+): GraphProposal {
+  if (project.screen === null) {
+    throw new DomainError('invalid_input', '화면이 없어 제안을 붙일 곳이 없습니다');
+  }
+  const pinsByNumber = new Map(project.pins.map((pin) => [pin.number, pin] as const));
+  const existingTitles = new Set(
+    project.graph.nodes.map((node) => `${node.type}:${normalizeText(node.title)}`),
+  );
+
+  const keyTypes = new Map<string, EditableNodeType>();
+  const nodes: GraphProposal['nodes'] = [];
+  for (const draftNode of draft.nodes) {
+    if (keyTypes.has(draftNode.key)) continue;
+    const signature = `${draftNode.type}:${normalizeText(draftNode.title)}`;
+    if (existingTitles.has(signature)) continue;
+    existingTitles.add(signature);
+    keyTypes.set(draftNode.key, draftNode.type);
+    // A citation the screen cannot produce is dropped, not invented.
+    const cited = draftNode.pins.map((number) => pinsByNumber.get(number)).find((pin) => pin !== undefined);
+    nodes.push({
+      key: draftNode.key,
+      type: draftNode.type,
+      title: draftNode.title.trim(),
+      body: draftNode.body.trim(),
+      pinId: cited?.id ?? null,
+    });
+  }
+
+  if (nodes.length === 0) {
+    throw new DomainError(
+      'invalid_input',
+      '새로 만들 초안이 없습니다. 제안된 항목이 이미 그래프에 있거나 화면의 핀과 맞지 않습니다.',
+    );
+  }
+
+  const resolveEnd = (ref: string): { ref: string; type: GraphNodeType } | null => {
+    const at = ref.indexOf(':');
+    const scheme = ref.slice(0, at);
+    const value = ref.slice(at + 1);
+    if (scheme === 'item') {
+      const type = keyTypes.get(value);
+      return type === undefined ? null : { ref: `item:${value}`, type };
+    }
+    if (scheme === 'pin') {
+      const pin = pinsByNumber.get(Number(value));
+      return pin === undefined ? null : { ref: `pin:${pin.id}`, type: 'pin' };
+    }
+    return null;
+  };
+
+  const links: GraphProposal['links'] = [];
+  const seen = new Set<string>();
+  for (const draftLink of draft.links) {
+    const src = resolveEnd(draftLink.src);
+    const dst = resolveEnd(draftLink.dst);
+    if (src === null || dst === null) continue;
+    if (src.ref === dst.ref) continue;
+    if (!linkEndsAllow(draftLink.type, src.type, dst.type)) continue;
+    const key = `${draftLink.type}:${src.ref}:${dst.ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push({ type: draftLink.type, src: src.ref, dst: dst.ref });
+  }
+
+  const counts = countByType(
+    nodes.map((node) => ({ key: node.key, type: node.type, title: node.title, body: node.body, pinId: node.pinId })),
+  );
+  const summary =
+    draft.summary.trim() === ''
+      ? `초안 ${nodes.length}개와 링크 ${links.length}개를 제안합니다.`
+      : draft.summary.trim().slice(0, 300);
+
+  return {
+    id: options.id,
+    summary: `${summary} (${describeCounts(counts)})`.slice(0, 300),
+    state: 'open',
+    source: options.source,
+    provider: options.provider,
+    model: options.model,
+    nodes,
+    links,
+    createdAt: options.at,
+    decidedAt: null,
+  };
 }
 
 function policySentence(pin: Pin): string {

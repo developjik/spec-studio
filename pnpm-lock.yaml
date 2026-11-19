@@ -8,9 +8,24 @@ importers:
 
   .:
     devDependencies:
+      '@spec-studio/ai':
+        specifier: workspace:*
+        version: link:packages/ai
+      '@spec-studio/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@spec-studio/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.5
       dependency-cruiser:
         specifier: ^17.4.3
         version: 17.4.3
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -20,6 +35,9 @@ importers:
 
   apps/daemon:
     dependencies:
+      '@spec-studio/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@spec-studio/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -76,6 +94,22 @@ importers:
       vite:
         specifier: ^7.3.8
         version: 7.3.8(@types/node@22.20.5)
+
+  packages/ai:
+    dependencies:
+      '@spec-studio/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@types/node@22.20.5)(vite@7.3.8(@types/node@22.20.5))
 
   packages/core:
     dependencies:

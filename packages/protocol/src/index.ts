@@ -3,6 +3,7 @@ export * from './pin';
 export * from './screen';
 export * from './doc';
 export * from './graph';
+export * from './ai';
 export * from './proposal';
 export * from './object';
 export * from './command';

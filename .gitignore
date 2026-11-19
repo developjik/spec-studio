@@ -4,6 +4,7 @@ node_modules/
 
 # Build output
 dist/
+eval/dist/
 dist-ssr/
 *.tsbuildinfo
 

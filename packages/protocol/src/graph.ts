@@ -206,6 +206,14 @@ export const GraphProposalSchema = z.object({
   }),
   summary: z.string().min(1).max(300),
   state: GraphProposalStateSchema,
+  /**
+   * Where the card came from. The rule extractor and a model produce the same
+   * shape, and the card says which one so a person can weigh the drafts — the
+   * badge is part of the decision, not decoration.
+   */
+  source: z.enum(['rule', 'llm']).default('rule'),
+  provider: z.string().max(40).nullable().default(null),
+  model: z.string().max(80).nullable().default(null),
   nodes: z.array(GraphProposalNodeSchema).max(60),
   links: z.array(GraphProposalLinkSchema).max(200),
   createdAt: z.string().min(1),

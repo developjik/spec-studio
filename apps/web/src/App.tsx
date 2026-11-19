@@ -10,6 +10,8 @@ import {
   type Maturity,
 } from '@spec-studio/core';
 import type {
+  AiProposalMode,
+  AiProposalSource,
   Anchor,
   BlockType,
   Command,
@@ -29,6 +31,7 @@ import type { PinEditInput } from './components/PinEditor';
 import { OutputModal } from './components/OutputModal';
 import { PublishModal } from './components/PublishModal';
 import { FigmaBar } from './components/FigmaBar';
+import { AiSettingsModal, type AiPanelResult, type AiSettingsValue } from './components/AiSettingsModal';
 import { DocPanel, type DocMode } from './components/DocPanel';
 import { newProjectId, newScreenId, nextEntityId } from './model/ids';
 import {
@@ -43,6 +46,7 @@ import { imageFromFile } from './model/image';
 import {
   DaemonClient,
   DaemonError,
+  type AiStatusView,
   type DaemonStatus,
   type PublishRecordView,
   type RevertableView,
@@ -98,6 +102,21 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<StudioView>('studio');
   const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AiStatusView | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<AiPanelResult | null>(null);
+  const [aiSource, setAiSource] = useState<AiProposalSource | null>(null);
+  /**
+   * Session memory only. The key is never written to localStorage, the project
+   * or the daemon — closing the tab forgets it, which is the point.
+   */
+  const [aiSettings, setAiSettings] = useState<AiSettingsValue>({
+    provider: 'anthropic',
+    model: '',
+    endpoint: '',
+    apiKey: '',
+  });
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
 
@@ -706,6 +725,86 @@ export default function App() {
     void runDoc({ type: 'graph.proposal.reject', proposalId: proposal.id });
   };
 
+  /** The panel opens with the daemon's answer about which keys it already has. */
+  const openAiPanel = () => {
+    setAiOpen(true);
+    setAiResult(null);
+    if (daemonStatus === 'connected') {
+      void client
+        .aiStatus()
+        .then((status) => setAiStatus(status))
+        .catch(() => setAiStatus(null));
+    }
+  };
+
+  const updateAiSettings = (patch: Partial<AiSettingsValue>) => {
+    setAiSettings((current) => ({ ...current, ...patch }));
+  };
+
+  const aiRequest = () => ({
+    provider: aiSettings.provider,
+    model: aiSettings.model,
+    endpoint: aiSettings.endpoint.trim() === '' ? null : aiSettings.endpoint.trim(),
+    apiKey: aiSettings.apiKey,
+  });
+
+  const runAiTest = async () => {
+    setAiBusy(true);
+    setAiResult(null);
+    try {
+      const result = await client.aiTest(aiRequest());
+      setAiResult({
+        tone: result.ok ? 'info' : 'error',
+        text: result.ok ? `연결 정상 · ${result.latencyMs}ms` : result.message,
+      });
+    } catch (error) {
+      setAiResult({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '연결을 확인하지 못했습니다.',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  /**
+   * The model proposes; the card appears; nothing is written yet. `채택` is
+   * still the only thing that changes the document or the graph, and the same
+   * `되돌리기` takes it back.
+   */
+  const runAiProposal = async (mode: AiProposalMode) => {
+    if (!sqliteMode || daemonProjectId === null) {
+      setAiResult({ tone: 'error', text: 'SQLite 데몬 모드에서만 제안을 추출할 수 있습니다.' });
+      return;
+    }
+    setAiBusy(true);
+    setAiResult(null);
+    try {
+      const outcome = await client.aiProposal(daemonProjectId, { ...aiRequest(), mode });
+      setProject(normalizeProject(outcome.project));
+      setAiSource(outcome.source);
+      setAiResult({
+        tone: outcome.source === 'llm' ? 'info' : 'error',
+        text: outcome.note,
+      });
+      setNotice({ tone: 'info', text: outcome.note });
+      setAiOpen(false);
+      if (mode === 'graph') {
+        setSelectedGraphId(null);
+        setView('graph');
+      } else {
+        setDocMode('proposal');
+      }
+    } catch (error) {
+      setAiResult({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '제안을 받지 못했습니다.',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const createGraphNode = (
     nodeType: 'req' | 'policy' | 'contract' | 'qa',
     title: string,
@@ -767,7 +866,24 @@ export default function App() {
         onReset={() => void reset()}
         onOpenOutputs={() => setOutputOpen(true)}
         onOpenPublish={() => setPublishOpen(true)}
+        onOpenAi={openAiPanel}
+        aiSource={aiSource}
       />
+
+      {aiOpen && (
+        <AiSettingsModal
+          value={aiSettings}
+          status={aiStatus}
+          busy={aiBusy}
+          result={aiResult}
+          hasDoc={doc !== null}
+          sqliteMode={sqliteMode}
+          onChange={updateAiSettings}
+          onTest={() => void runAiTest()}
+          onPropose={(mode) => void runAiProposal(mode)}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
 
       <input
         ref={importInput}

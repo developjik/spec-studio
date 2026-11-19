@@ -22,6 +22,7 @@ import {
   type PublishMode,
   type PublishRecordPort,
 } from '@spec-studio/publish';
+import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
 
 /**
  * The local daemon: a loopback-only HTTP API in front of the SQLite store.
@@ -53,6 +54,10 @@ export interface DaemonOptions {
   store?: SqliteStore;
   /** Where `POST /api/projects/:id/backup` writes; defaults beside the db file. */
   backupDir?: string;
+  /** Defaults to `process.env`; tests pass their own map. */
+  env?: Record<string, string | undefined>;
+  /** Injected in tests so the AI routes never leave the machine. */
+  aiFetch?: typeof fetch;
 }
 
 export interface Daemon {
@@ -214,6 +219,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
   const store = options.store ?? openSqliteStore({ file: options.dbPath });
+  const env = options.env ?? process.env;
   const backupDir =
     options.backupDir ??
     (options.dbPath === ':memory:' ? `${process.cwd()}/backups` : `${dirname(options.dbPath)}/backups`);
@@ -237,6 +243,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     if (segments[0] !== 'api') throw new HttpError(404, 'not_found', '없는 경로입니다.');
+
+    // GET /api/ai — which providers have a key in the daemon's environment.
+    // It answers with booleans: the key itself never leaves the process.
+    if (segments[1] === 'ai' && segments.length === 2) {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      return send(res, 200, { status: aiStatus(env) });
+    }
+
+    // POST /api/ai/test — one small call, for the settings panel's badge.
+    if (segments[1] === 'ai' && segments[2] === 'test' && segments.length === 3) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const body = asObject(await readBody(req));
+      const result = await testAiConnection(body, {
+        env,
+        ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
+      });
+      return send(res, 200, { result });
+    }
 
     // GET /api/health
     if (segments[1] === 'health' && segments.length === 2) {
@@ -308,6 +332,27 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     const action = segments[3];
+
+    // POST /api/projects/:id/ai/proposal — the model drafts, the store decides.
+    if (action === 'ai' && segments[4] === 'proposal' && segments.length === 5) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const body = await readBody(req);
+      const plan = await planAiProposal(project, body, {
+        env,
+        ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
+      });
+      const outcome = await store.execute(projectId, plan.command);
+      return send(res, 200, {
+        project: outcome.project,
+        seq: outcome.seq,
+        opSeq: outcome.opSeq,
+        events: outcome.events,
+        source: plan.source,
+        provider: plan.provider,
+        model: plan.model,
+        note: plan.note,
+      });
+    }
 
     // POST /api/projects/:id/commands
     if (action === 'commands' && segments.length === 4) {
@@ -493,6 +538,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
 function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
+  if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
   if (error instanceof DomainError) return new HttpError(400, error.code, error.message);
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {

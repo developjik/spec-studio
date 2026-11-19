@@ -188,7 +188,21 @@ export function DocPanel(props: DocPanelProps) {
 
         {proposalOpen && (
           <section className="proposal-card" data-testid="proposal-card">
-            <p className="proposal-eyebrow">제안 1건 · 결정 카드 1개</p>
+            <p className="proposal-eyebrow">
+              제안 1건 · 결정 카드 1개
+              <span
+                className={`decision-source decision-source--${proposal.origin === 'doc-chat' ? 'llm' : 'rule'}`}
+                data-testid="proposal-source"
+                data-source={proposal.origin === 'doc-chat' ? 'llm' : 'rule'}
+                title={
+                  proposal.origin === 'doc-chat'
+                    ? '모델이 쓴 문단 patch입니다. 채택 전까지 본문은 그대로입니다.'
+                    : '로컬 규칙이 만든 문단 patch입니다.'
+                }
+              >
+                {proposal.origin === 'doc-chat' ? 'LLM 제안' : '로컬 규칙'}
+              </span>
+            </p>
             <p className="proposal-summary" data-testid="proposal-summary">
               {proposal.summary}
             </p>

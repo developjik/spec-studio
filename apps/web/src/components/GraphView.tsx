@@ -240,6 +240,24 @@ export function GraphView(props: GraphViewProps) {
           <section className="decision-card" data-testid="graph-proposal-card">
             <header className="decision-head">
               <span className="decision-kicker">AI 제안 · 결정 카드</span>
+              <span
+                className={`decision-source decision-source--${proposal.source ?? 'rule'}`}
+                data-testid="graph-proposal-source"
+                data-source={proposal.source ?? 'rule'}
+                title={
+                  proposal.source === 'llm'
+                    ? `${proposal.provider ?? ''}${proposal.model === null || proposal.model === undefined ? '' : ` · ${proposal.model}`} 가 만든 초안입니다. 본문은 채택 전까지 그대로입니다.`
+                    : 'API 키 없이 로컬 규칙으로 만든 초안입니다. 키를 넣으면 LLM 제안을 씁니다.'
+                }
+              >
+                {proposal.source === 'llm' ? 'LLM 제안' : '로컬 규칙 폴백'}
+                {proposal.source === 'llm' && proposal.provider !== null && (
+                  <span className="decision-source-model">
+                    {proposal.provider}
+                    {proposal.model === null || proposal.model === undefined ? '' : ` · ${proposal.model}`}
+                  </span>
+                )}
+              </span>
               <span className={`decision-state decision-state--${proposal.state}`}>
                 {proposal.state === 'open' ? '결정 대기' : proposal.state === 'adopted' ? '채택됨' : proposal.state}
               </span>

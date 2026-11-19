@@ -1,0 +1,146 @@
+[
+  {
+    "id": "EXC-01",
+    "note": "재고 0 안내",
+    "screen": { "title": "상품 상세", "code": "SCR-130" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "재고 없음 안내",
+        "body": "재고가 0이면 구매 버튼을 비활성하고 재입고 알림을 제안한다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-02",
+    "note": "결제 실패",
+    "screen": { "title": "결제", "code": "SCR-330" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "결제 실패",
+        "body": "승인 실패 시 실패 사유와 다시 시도 버튼을 보여주고 장바구니는 유지한다."
+      },
+      { "number": 2, "type": "function", "title": "결제 요청", "body": "선택한 카드로 결제를 요청한다." }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1, 2] }
+  },
+  {
+    "id": "EXC-03",
+    "note": "네트워크 오류",
+    "screen": { "title": "주문 내역", "code": "SCR-310" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "네트워크 오류",
+        "body": "목록을 불러오지 못하면 재시도 버튼과 마지막으로 본 시각을 보여준다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-04",
+    "note": "중복 주문",
+    "screen": { "title": "장바구니", "code": "SCR-300" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "중복 주문 감지",
+        "body": "10분 안에 같은 상품을 또 주문하면 확인 창을 한 번 더 띄운다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-05",
+    "note": "권한 없음",
+    "screen": { "title": "주문 관리", "code": "SCR-402" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "권한 없음",
+        "body": "권한이 없는 사용자가 주소로 직접 들어오면 403 안내와 홈 이동 버튼을 보여준다."
+      },
+      { "number": 2, "type": "permission", "title": "환불은 관리자만", "body": "환불 버튼은 관리자 역할에게만 보인다." }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1, 2] }
+  },
+  {
+    "id": "EXC-06",
+    "note": "세션 만료",
+    "screen": { "title": "마이페이지", "code": "SCR-610" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "세션 만료",
+        "body": "저장 중 세션이 만료되면 입력값을 보관하고 로그인 후 이어서 저장한다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-07",
+    "note": "배송지 미입력",
+    "screen": { "title": "배송지 입력", "code": "SCR-230" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "배송지 미입력",
+        "body": "필수 항목이 비어 있으면 다음 단계로 넘어가지 않고 해당 칸에 오류를 표시한다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-08",
+    "note": "파일 용량 초과",
+    "screen": { "title": "리뷰 작성", "code": "SCR-520" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "사진 용량 초과",
+        "body": "10MB를 넘는 사진은 업로드를 막고 줄이는 방법을 안내한다."
+      },
+      { "number": 2, "type": "function", "title": "사진 첨부", "body": "최대 5장까지 첨부할 수 있다." }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1, 2] }
+  },
+  {
+    "id": "EXC-09",
+    "note": "기능 핀에 적힌 예외 — 규칙 생성기는 예외 처리로 읽지 못한다",
+    "screen": { "title": "결제 수단", "code": "SCR-331" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "function",
+        "title": "결제 실패 후 재시도",
+        "body": "한도 초과로 실패하면 다른 카드로 다시 시도할 수 있게 하고, 실패 사유를 남긴다."
+      }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1] }
+  },
+  {
+    "id": "EXC-10",
+    "note": "취소 불가 상태",
+    "screen": { "title": "주문 취소", "code": "SCR-210" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "exception",
+        "title": "취소 불가 상태",
+        "body": "이미 배송이 시작된 주문에서 취소를 누르면 사유와 반품 접수 경로를 보여준다."
+      },
+      { "number": 2, "type": "policy", "title": "배송 시작 후 취소 불가", "body": "배송중 주문은 취소할 수 없다." }
+    ],
+    "expect": { "types": ["req", "qa"], "links": ["handles_edge", "verifies"], "pins": [1, 2] }
+  }
+]

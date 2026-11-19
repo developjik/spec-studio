@@ -1,0 +1,126 @@
+[
+  {
+    "id": "POL-01",
+    "note": "배송 단계에 걸린 취소 정책 한 문장",
+    "screen": { "title": "주문 취소", "code": "SCR-210" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "policy",
+        "title": "배송 시작 후 취소 불가",
+        "body": "사전조건: 배송 상태가 배송중이다. 취소 버튼은 비활성이고 사유와 반품 안내를 보여준다."
+      }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  },
+  {
+    "id": "POL-02",
+    "note": "쿠폰 중복 사용 금지 + 관련 동작 핀",
+    "screen": { "title": "쿠폰 적용", "code": "SCR-311" },
+    "pins": [
+      { "number": 1, "type": "policy", "title": "1인 1회 쿠폰", "body": "같은 쿠폰은 계정당 한 번만 사용할 수 있다." },
+      { "number": 2, "type": "function", "title": "쿠폰 코드 입력", "body": "코드를 입력하면 사용 가능 여부를 확인한다." }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1, 2] }
+  },
+  {
+    "id": "POL-03",
+    "note": "비밀번호 규칙",
+    "screen": { "title": "회원가입", "code": "SCR-101" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "policy",
+        "title": "비밀번호 조합 규칙",
+        "body": "8자 이상, 영문과 숫자를 모두 포함해야 가입할 수 있다."
+      }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  },
+  {
+    "id": "POL-04",
+    "note": "권한 핀은 정책으로 읽힌다",
+    "screen": { "title": "주문 관리", "code": "SCR-402" },
+    "pins": [
+      { "number": 1, "type": "permission", "title": "환불은 관리자만", "body": "환불 버튼은 관리자 역할에게만 보인다." },
+      { "number": 2, "type": "function", "title": "환불 요청", "body": "관리자가 환불을 요청하면 처리 이력이 남는다." }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1, 2] }
+  },
+  {
+    "id": "POL-05",
+    "note": "리뷰 작성 기한",
+    "screen": { "title": "리뷰 작성", "code": "SCR-520" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "policy",
+        "title": "구매 확정 후 30일",
+        "body": "구매 확정일로부터 30일이 지나면 리뷰 작성 버튼이 사라진다."
+      }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  },
+  {
+    "id": "POL-06",
+    "note": "도서산간 배송비",
+    "screen": { "title": "배송지 입력", "code": "SCR-230" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "policy",
+        "title": "도서산간 추가 배송비",
+        "body": "제주·도서산간 주소를 선택하면 배송비 3,000원이 더해진다."
+      },
+      { "number": 2, "type": "function", "title": "주소 검색", "body": "우편번호로 주소를 찾아 선택한다." }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1, 2] }
+  },
+  {
+    "id": "POL-07",
+    "note": "기능 핀에 숨어 있는 정책 — 규칙 생성기는 요구사항으로만 읽는다",
+    "screen": { "title": "취소 버튼", "code": "SCR-211" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "function",
+        "title": "취소 버튼",
+        "body": "배송이 시작된 주문에서는 이 버튼을 비활성화하고 사유를 표시한다. 배송 전에는 항상 활성이다."
+      }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  },
+  {
+    "id": "POL-08",
+    "note": "노쇼 누적 제한",
+    "screen": { "title": "매장 예약", "code": "SCR-640" },
+    "pins": [
+      {
+        "number": 1,
+        "type": "policy",
+        "title": "노쇼 2회 누적 시 제한",
+        "body": "노쇼가 2회 쌓이면 30일 동안 새 예약을 만들 수 없다."
+      }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  },
+  {
+    "id": "POL-09",
+    "note": "포인트 사용 단위",
+    "screen": { "title": "결제", "code": "SCR-330" },
+    "pins": [
+      { "number": 1, "type": "policy", "title": "포인트 1,000원 단위", "body": "포인트는 1,000원 단위로만 사용할 수 있다." },
+      { "number": 2, "type": "policy", "title": "보유 포인트 한도", "body": "주문 금액의 30%까지만 포인트로 낼 수 있다." }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1, 2] }
+  },
+  {
+    "id": "POL-10",
+    "note": "본인 문의만 열람",
+    "screen": { "title": "1:1 문의", "code": "SCR-710" },
+    "pins": [
+      { "number": 1, "type": "permission", "title": "본인 문의만 열람", "body": "다른 사람의 문의는 목록에도 보이지 않는다." }
+    ],
+    "expect": { "types": ["policy"], "links": ["governs"], "pins": [1] }
+  }
+]

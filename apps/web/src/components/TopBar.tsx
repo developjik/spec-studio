@@ -17,6 +17,9 @@ interface TopBarProps {
   onReset: () => void;
   onOpenOutputs: () => void;
   onOpenPublish: () => void;
+  onOpenAi: () => void;
+  /** The last card's origin, shown as a dot: the header has no room for words. */
+  aiSource: 'llm' | 'rule' | null;
 }
 
 function sourceLabel(screen: Screen): string {
@@ -150,6 +153,8 @@ export function TopBar({
   onReset,
   onOpenOutputs,
   onOpenPublish,
+  onOpenAi,
+  aiSource,
 }: TopBarProps) {
   return (
     <header className="topbar">
@@ -199,6 +204,31 @@ export function TopBar({
       )}
 
       <div className="topbar-actions">
+        <button
+          type="button"
+          className="btn btn--ai"
+          onClick={onOpenAi}
+          data-testid="ai-settings-open"
+          data-ai-source={aiSource ?? 'none'}
+          title={
+            aiSource === 'llm'
+              ? '마지막 제안은 LLM이 만들었습니다. 프로바이더 · 모델 · 키는 이 창의 메모리에만 있습니다.'
+              : aiSource === 'rule'
+                ? '마지막 제안은 로컬 규칙이 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.'
+                : 'LLM 프로바이더 · 모델 · 키를 이 창에만 두고 제안을 추출합니다'
+          }
+        >
+          <span className="ai-spark" aria-hidden="true">
+            ✦
+          </span>
+          AI 설정
+          {aiSource !== null && (
+            <span
+              className={`ai-origin-dot${aiSource === 'llm' ? ' ai-origin-dot--llm' : ''}`}
+              aria-hidden="true"
+            />
+          )}
+        </button>
         {screen === null ? (
           <span className="topbar-note">
             {daemonStatus === 'offline'
