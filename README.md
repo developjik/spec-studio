@@ -6,6 +6,12 @@ receive copies; they are never the source of truth.
 
 [![CI](https://github.com/developjik/spec-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/developjik/spec-studio/actions/workflows/ci.yml)
 
+**[라이브 데모 → https://developjik.github.io/spec-studio/](https://developjik.github.io/spec-studio/)**
+— 설치도, 데몬도, 계정도 없이 브라우저에서 바로. 샘플 화면에 핀을 찍고, 문서 문단을 쓰고,
+`그래프 · RTM`에서 추적 그래프를 보고, 출력 3종을 미리보기까지 해볼 수 있습니다. 정적
+배포본이므로 프로젝트는 그 브라우저의 localStorage에만 남고, 제안은 로컬 규칙 폴백으로
+동작합니다(LLM 제안·Confluence 발행·SQLite 저장은 데몬을 띄운 로컬 실행에서만).
+
 > **Status: v1 phase 2.** A model can now propose, and the same decision card still decides.
 > `AI 설정` puts a provider, a model and a key in the window — never in the database — and
 > `제안 추출` files the answer as one card whose badge says **LLM 제안** (with provider and model)

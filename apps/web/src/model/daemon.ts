@@ -16,6 +16,20 @@ import type {
 export const DAEMON_URL: string =
   (import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787';
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * The loopback daemon can only answer a page served from the same machine.
+ * On a static public host (the GitHub Pages demo) there is none, and an https
+ * page asking `http://127.0.0.1` is refused as mixed content — so the probe is
+ * skipped there and the app opens straight into browser mode with no failed
+ * request on the console. An explicitly configured daemon URL is always tried.
+ */
+export function daemonProbeAllowed(): boolean {
+  if ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) !== undefined) return true;
+  return LOOPBACK_HOSTS.has(window.location.hostname);
+}
+
 export type DaemonStatus = 'checking' | 'connected' | 'offline';
 
 export interface DaemonProjectSummary {

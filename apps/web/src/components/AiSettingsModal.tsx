@@ -193,7 +193,9 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
 
         {!props.sqliteMode && (
           <p className="ai-note ai-note--warn">
-            제안 추출은 SQLite 데몬 모드에서만 동작합니다. 데몬을 실행한 뒤 다시 열어 주세요.
+            LLM 제안 추출은 로컬 SQLite 데몬 모드에서만 동작합니다. 브라우저 임시 모드에서는
+            <strong> 그래프 · RTM</strong> 탭의 <strong>핀에서 정책 · 요구사항 · QA 추출</strong>
+            (로컬 규칙 폴백)을 쓰세요.
           </p>
         )}
       </section>

@@ -46,6 +46,7 @@ import { imageFromFile } from './model/image';
 import {
   DaemonClient,
   DaemonError,
+  daemonProbeAllowed,
   type AiStatusView,
   type DaemonStatus,
   type PublishRecordView,
@@ -123,6 +124,12 @@ export default function App() {
   /** On boot: if the loopback daemon answers, SQLite becomes the source of truth. */
   useEffect(() => {
     let alive = true;
+    if (!daemonProbeAllowed()) {
+      setDaemonStatus('offline');
+      return () => {
+        alive = false;
+      };
+    }
     void (async () => {
       const ok = await client.health();
       if (!alive) return;
