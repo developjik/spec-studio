@@ -62,7 +62,7 @@ export function TopBar({
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">spec-studio</span>
-        <span className="chip">W3</span>
+        <span className="chip">W4</span>
       </div>
 
       <DaemonBadge status={daemonStatus} />
