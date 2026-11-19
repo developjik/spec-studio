@@ -159,6 +159,7 @@ def main() -> int:
             page.wait_for_selector("[data-testid=ai-status][data-state=ok]", timeout=20000)
             connection = page.locator("[data-testid=ai-status]").inner_text()
             check("AI 설정 연결 확인", "연결 정상" in connection, connection)
+            page.screenshot(path=str(OUT_DIR / "spec-studio-v1-p2-settings.png"))
 
             # ── 3. 제안 추출 → LLM 제안 배지가 붙은 결정 카드 1장 ──────
             page.locator("[data-testid=ai-extract-graph]").click()
