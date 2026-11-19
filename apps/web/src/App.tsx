@@ -77,7 +77,8 @@ export default function App() {
       try {
         const projects = await client.listProjects();
         if (!alive) return;
-        const first = projects[0];
+        // The most recently touched project is the one to reopen.
+        const first = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
         if (first === undefined) {
           setDaemonProjectId(null);
           setProject(null);
