@@ -3,6 +3,7 @@ import type {
   AiProposalMode,
   AiProposalSource,
   Command,
+  CredentialSource,
   Project,
   ProjectBundle,
 } from '@spec-studio/protocol';
@@ -141,6 +142,8 @@ export type PublishModeView = 'auto' | 'create' | 'update';
 /** What the AI settings panel sends; the key lives in this object and nowhere else. */
 export interface AiRequestView {
   provider: AiProvider;
+  /** Which gateway preset the request is aimed at ('local' when rule mode). */
+  presetId: string;
   model: string;
   endpoint: string | null;
   apiKey: string;
@@ -156,6 +159,10 @@ export interface AiProviderStatusView {
 export interface AiStatusView {
   providers: AiProviderStatusView[];
   localAvailable: boolean;
+  /** Whether this daemon can reach an OS keychain (desktop app only). */
+  keychainAvailable: boolean;
+  /** Per preset: a key sits in the keychain — booleans only, like hasEnvKey. */
+  presets: Array<{ id: string; hasKeychainKey: boolean }>;
 }
 
 export interface AiTestResultView {
@@ -164,6 +171,8 @@ export interface AiTestResultView {
   model: string;
   latencyMs: number;
   message: string;
+  /** Which chain step supplied the key; null for local rules. */
+  source?: CredentialSource | null;
 }
 
 export interface AiProposalOutcomeView {
@@ -293,12 +302,31 @@ export class DaemonClient {
       method: 'POST',
       body: {
         provider: input.provider,
+        presetId: input.presetId,
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,
       },
     });
     return body.result;
+  }
+
+  /**
+   * Moves a key into the OS keychain via the daemon (desktop only). The answer
+   * is a boolean — a stored key is write-only and never comes back over HTTP.
+   */
+  async aiKeychainStore(input: { presetId: string; apiKey: string }): Promise<void> {
+    await this.#request<{ saved: boolean }>('/api/ai/keychain/store', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  async aiKeychainErase(input: { presetId: string }): Promise<void> {
+    await this.#request<{ erased: boolean }>('/api/ai/keychain/erase', {
+      method: 'POST',
+      body: input,
+    });
   }
 
   /**
@@ -315,6 +343,7 @@ export class DaemonClient {
       body: {
         mode: input.mode,
         provider: input.provider,
+        presetId: input.presetId,
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,

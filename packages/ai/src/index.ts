@@ -1,7 +1,17 @@
-import { AI_ENV_KEYS, type AiProvider, type AiRemoteProvider } from '@spec-studio/protocol';
+import {
+  type AiProvider,
+  type AiRemoteProvider,
+  type CredentialPort,
+  type CredentialSource,
+} from '@spec-studio/protocol';
 import { AiProviderError, callModel, redact } from './providers.js';
 import { buildDocPrompt, buildGraphPrompt, buildProbePrompt, buildSystemPrompt } from './prompt.js';
 import { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+import {
+  EnvCredentialPort,
+  RequestCredentialPort,
+  resolveCredentials,
+} from './credentials.js';
 
 export {
   AiProviderError,
@@ -18,23 +28,33 @@ export {
   buildSystemPrompt,
 } from './prompt.js';
 export { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+export { EnvCredentialPort, RequestCredentialPort, resolveCredentials } from './credentials.js';
+export type { CredentialPort, CredentialSource } from '@spec-studio/protocol';
 
 /**
- * The key a request will use: the one in the body first, then the daemon's
- * environment. Nothing else — no file, no database row, no settings screen that
- * survives a reload. `null` means "no key anywhere", which is the honest
- * answer the UI needs to offer the local rule extractor instead.
+ * The key a request will use: the one in the body first, then the OS keychain
+ * (when the daemon has one), then the daemon's environment. Nothing else — no
+ * file, no database row, no settings screen that survives a reload. `null`
+ * means "no key anywhere", which is the honest answer the UI needs to offer
+ * the local rule extractor instead. `local` never has a key.
  */
-export function resolveApiKey(
+export async function resolveApiKey(
   provider: AiProvider,
+  presetId: string | undefined,
   requestKey: string | null | undefined,
   env: Record<string, string | undefined>,
-): string | null {
-  if (provider === 'local') return null;
-  const trimmed = (requestKey ?? '').trim();
-  if (trimmed !== '') return trimmed;
-  const fromEnv = (env[AI_ENV_KEYS[provider]] ?? '').trim();
-  return fromEnv === '' ? null : fromEnv;
+  keychain?: CredentialPort | null,
+): Promise<{ key: string | null; source: CredentialSource | null }> {
+  if (!isRemote(provider)) return { key: null, source: null };
+  return resolveCredentials(
+    [
+      new RequestCredentialPort(requestKey),
+      ...(keychain == null ? [] : [keychain]),
+      new EnvCredentialPort(env),
+    ],
+    provider,
+    presetId,
+  );
 }
 
 export function isRemote(provider: AiProvider): provider is AiRemoteProvider {

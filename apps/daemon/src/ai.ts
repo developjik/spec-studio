@@ -2,17 +2,23 @@ import {
   AI_DEFAULT_ENDPOINTS,
   AI_DEFAULT_MODELS,
   AI_ENV_KEYS,
+  AI_PRESETS,
   AI_PROVIDERS,
   AiProposalRequestSchema,
+  findPreset,
+  type AiPreset,
   type AiProvider,
   type AiProposalRequest,
   type AiProposalSource,
   type AiStatus,
   type AiTestResult,
   type Command,
+  type CredentialPort,
+  type CredentialSource,
   type Project,
   type Project as ProjectType,
 } from '@spec-studio/protocol';
+
 import {
   AiDraftError,
   AiProviderError,
@@ -50,6 +56,8 @@ export class AiRequestError extends Error {
 export interface AiRuntime {
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
+  /** The OS keychain port; null when this daemon has none (standalone, web). */
+  keychain?: CredentialPort | null;
 }
 
 export interface AiCommandPlan {
@@ -60,7 +68,21 @@ export interface AiCommandPlan {
   note: string;
 }
 
-export function aiStatus(env: Record<string, string | undefined>): AiStatus {
+export async function aiStatus(
+  env: Record<string, string | undefined>,
+  keychain: CredentialPort | null,
+): Promise<AiStatus> {
+  const presets = await Promise.all(
+    AI_PRESETS.map(async (preset) => {
+      try {
+        const key = keychain === null ? null : await keychain.resolve(preset.provider, preset.id);
+        return { id: preset.id, hasKeychainKey: key !== null };
+      } catch {
+        // A broken keychain must not fail the status route — report "no key".
+        return { id: preset.id, hasKeychainKey: false };
+      }
+    }),
+  );
   return {
     providers: AI_PROVIDERS.map((provider) => ({
       provider,
@@ -70,11 +92,27 @@ export function aiStatus(env: Record<string, string | undefined>): AiStatus {
       defaultEndpoint: provider === 'local' ? null : AI_DEFAULT_ENDPOINTS[provider],
     })),
     localAvailable: true,
+    keychainAvailable: keychain !== null,
+    presets,
   };
 }
 
-function requireApiKey(provider: AiProvider, requestKey: string | null | undefined, env: AiRuntime['env']): string | null {
-  return resolveApiKey(provider, requestKey, env);
+async function requireApiKey(
+  provider: AiProvider,
+  presetId: string | undefined,
+  requestKey: string | null | undefined,
+  runtime: AiRuntime,
+): Promise<{ key: string | null; source: CredentialSource | null }> {
+  return resolveApiKey(provider, presetId, requestKey, runtime.env, runtime.keychain ?? null);
+}
+
+/**
+ * A preset without a default model (Ollama, LM Studio) wants the name typed
+ * in; only a bare provider keeps the built-in default.
+ */
+function defaultModelFor(provider: AiProvider, preset: AiPreset | undefined): string {
+  if (preset === undefined) return AI_DEFAULT_MODELS[provider];
+  return preset.defaultModel ?? '';
 }
 
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
@@ -107,26 +145,34 @@ export async function planAiProposal(
   runtime: AiRuntime,
 ): Promise<AiCommandPlan> {
   const request = AiProposalRequestSchema.parse(raw);
+  const preset = findPreset(request.presetId ?? '');
   const model =
-    request.model.trim() === '' ? AI_DEFAULT_MODELS[request.provider] : request.model.trim();
+    request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
+  const endpoint = request.endpoint ?? preset?.baseUrl ?? null;
 
   if (!isRemote(request.provider)) {
     return localPlan(project, request, '로컬 규칙으로 만들었습니다. API 키는 쓰지 않았습니다.');
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env);
-  if (apiKey === null) {
-    return localPlan(
-      project,
-      request,
-      'API 키가 없어 로컬 규칙으로 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.',
-    );
+  let apiKey: string;
+  if (preset?.authMode === 'none') {
+    // A local model server asks for no key; callModel just sends an empty Bearer.
+    apiKey = '';
+  } else {
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime);
+    if (resolved.key === null) {
+      return localPlan(
+        project,
+        request,
+        'API 키가 없어 로컬 규칙으로 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.',
+      );
+    }
+    apiKey = resolved.key;
   }
   if (model === '') {
     throw new AiRequestError(400, 'model_required', '모델 이름을 입력해 주세요.');
   }
 
-  const endpoint = request.endpoint ?? null;
   try {
     if (request.mode === 'graph') {
       const { draft, latencyMs } = await requestGraphDraft({
@@ -208,9 +254,12 @@ export async function testAiConnection(
     model: true,
     endpoint: true,
     apiKey: true,
+    presetId: true,
   }).parse(raw);
+  const preset = findPreset(request.presetId ?? '');
   const model =
-    request.model.trim() === '' ? AI_DEFAULT_MODELS[request.provider] : request.model.trim();
+    request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
+  const endpoint = request.endpoint ?? preset?.baseUrl ?? null;
 
   if (!isRemote(request.provider)) {
     return {
@@ -219,25 +268,37 @@ export async function testAiConnection(
       model: '',
       latencyMs: 0,
       message: '로컬 규칙 모드입니다. 키 없이 바로 쓸 수 있습니다.',
+      source: null,
     };
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env);
-  if (apiKey === null) {
-    return {
-      ok: false,
-      provider: request.provider,
-      model,
-      latencyMs: 0,
-      message: 'API 키가 없습니다. 키를 입력하거나 데몬 환경변수를 설정해 주세요.',
-    };
+  let apiKey: string;
+  let source: CredentialSource | null;
+  if (preset?.authMode === 'none') {
+    // Local server: no key by design — probe with an empty Bearer.
+    apiKey = '';
+    source = null;
+  } else {
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime);
+    if (resolved.key === null) {
+      return {
+        ok: false,
+        provider: request.provider,
+        model,
+        latencyMs: 0,
+        message: 'API 키가 없습니다. 키를 입력하거나 데몬 환경변수를 설정해 주세요.',
+        source: null,
+      };
+    }
+    apiKey = resolved.key;
+    source = resolved.source;
   }
 
   const probe = await probeProvider({
     provider: request.provider,
     apiKey,
     model,
-    endpoint: request.endpoint ?? null,
+    endpoint,
     ...(runtime.fetchImpl === undefined ? {} : { fetchImpl: runtime.fetchImpl }),
   });
   return {
@@ -246,5 +307,6 @@ export async function testAiConnection(
     model,
     latencyMs: probe.latencyMs,
     message: probe.message.slice(0, 300),
+    source,
   };
 }

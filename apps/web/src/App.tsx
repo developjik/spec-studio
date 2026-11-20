@@ -113,10 +113,12 @@ export default function App() {
    * or the daemon — closing the tab forgets it, which is the point.
    */
   const [aiSettings, setAiSettings] = useState<AiSettingsValue>({
+    presetId: 'anthropic',
     provider: 'anthropic',
     model: '',
-    endpoint: '',
+    endpoint: 'https://api.anthropic.com',
     apiKey: '',
+    saveToKeychain: false,
   });
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
@@ -732,16 +734,18 @@ export default function App() {
     void runDoc({ type: 'graph.proposal.reject', proposalId: proposal.id });
   };
 
+  const refreshAiStatus = () => {
+    void client
+      .aiStatus()
+      .then((status) => setAiStatus(status))
+      .catch(() => setAiStatus(null));
+  };
+
   /** The panel opens with the daemon's answer about which keys it already has. */
   const openAiPanel = () => {
     setAiOpen(true);
     setAiResult(null);
-    if (daemonStatus === 'connected') {
-      void client
-        .aiStatus()
-        .then((status) => setAiStatus(status))
-        .catch(() => setAiStatus(null));
-    }
+    if (daemonStatus === 'connected') refreshAiStatus();
   };
 
   const updateAiSettings = (patch: Partial<AiSettingsValue>) => {
@@ -750,6 +754,7 @@ export default function App() {
 
   const aiRequest = () => ({
     provider: aiSettings.provider,
+    presetId: aiSettings.presetId,
     model: aiSettings.model,
     endpoint: aiSettings.endpoint.trim() === '' ? null : aiSettings.endpoint.trim(),
     apiKey: aiSettings.apiKey,
@@ -760,6 +765,31 @@ export default function App() {
     setAiResult(null);
     try {
       const result = await client.aiTest(aiRequest());
+      if (result.ok && aiSettings.saveToKeychain && aiSettings.apiKey.trim() !== '') {
+        // Save is a one-way move: the field clears and the key is write-only.
+        try {
+          await client.aiKeychainStore({
+            presetId: aiSettings.presetId,
+            apiKey: aiSettings.apiKey.trim(),
+          });
+          setAiSettings((current) => ({ ...current, apiKey: '', saveToKeychain: false }));
+          refreshAiStatus();
+          setAiResult({
+            tone: 'info',
+            text: `연결 정상 · ${result.latencyMs}ms · 키체인에 저장했습니다`,
+          });
+          return;
+        } catch (error) {
+          setAiResult({
+            tone: 'error',
+            text:
+              error instanceof DaemonError
+                ? `연결은 되었지만 키체인 저장에 실패했습니다. ${error.message}`
+                : '연결은 되었지만 키체인 저장에 실패했습니다.',
+          });
+          return;
+        }
+      }
       setAiResult({
         tone: result.ok ? 'info' : 'error',
         text: result.ok ? `연결 정상 · ${result.latencyMs}ms` : result.message,
@@ -768,6 +798,23 @@ export default function App() {
       setAiResult({
         tone: 'error',
         text: error instanceof DaemonError ? error.message : '연결을 확인하지 못했습니다.',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  /** Write-only keychain: the app can use a stored key and delete it, never show it. */
+  const runKeychainErase = async () => {
+    setAiBusy(true);
+    try {
+      await client.aiKeychainErase({ presetId: aiSettings.presetId });
+      refreshAiStatus();
+      setAiResult({ tone: 'info', text: '키체인에서 삭제했습니다.' });
+    } catch (error) {
+      setAiResult({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '키체인에서 삭제하지 못했습니다.',
       });
     } finally {
       setAiBusy(false);
@@ -887,6 +934,7 @@ export default function App() {
           sqliteMode={sqliteMode}
           onChange={updateAiSettings}
           onTest={() => void runAiTest()}
+          onEraseKeychain={() => void runKeychainErase()}
           onPropose={(mode) => void runAiProposal(mode)}
           onClose={() => setAiOpen(false)}
         />

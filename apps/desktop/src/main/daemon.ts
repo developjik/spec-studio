@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { KeychainService } from './keychain';
 import type { DesktopPaths } from './paths';
 
 /**
@@ -45,9 +46,11 @@ export class DaemonManager {
   #stderrTail: string[] = [];
   #quitting = false;
   #restarts = 0;
+  #keychain: KeychainService;
 
   constructor(paths: DesktopPaths) {
     this.paths = paths;
+    this.#keychain = new KeychainService(paths.userDataDir);
   }
 
   get session(): DaemonSession | null {
@@ -99,6 +102,12 @@ export class DaemonManager {
       },
     });
     this.#child = child;
+
+    // The daemon resolves keychain keys by asking the parent — safeStorage
+    // lives in this process, not in the utility child.
+    child.on('message', (message) => {
+      this.#keychain.handle(message, (answer) => child.postMessage(answer));
+    });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       process.stdout.write(`[daemon] ${String(chunk)}`);

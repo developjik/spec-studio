@@ -3230,3 +3230,50 @@ button {
 .decision-head .decision-source {
   margin-left: auto;
 }
+
+/* — W2 · AI settings: BYOK / 구독 2탭 + 키체인 ————————————————————— */
+
+.modal-tabs--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.modal-tab:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ai-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 18px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.ai-check input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.ai-keychain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-keychain-saved {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.ai-source {
+  margin-top: 8px;
+}
+
+.ai-source strong {
+  color: var(--ink);
+  font-weight: 600;
+}
