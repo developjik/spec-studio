@@ -498,3 +498,7 @@ pnpm test:contract
 | `pnpm dep:check` | Boundary rules |
 | `pnpm test:contract` | SQLite schema contract |
 | `pnpm check` | Everything CI runs |
+
+## License
+
+The core is **Apache-2.0** — the full text lives in the [LICENSE](LICENSE) file. 관리형 서비스(게이트웨이 · 클라우드 · 팀 기능)는 별도 서비스로 제공될 예정입니다. **BYOK(bring-your-own-key)는 항상 무료이며 기능 잠금이 없다** — 자신의 API 키를 그대로 가져오는 한, 어떤 기능도 요금제 뒤에 잠겨 있지 않습니다.
