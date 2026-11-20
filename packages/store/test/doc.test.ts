@@ -281,12 +281,21 @@ describe('the document in SQLite', () => {
       ALTER TABLE doc DROP COLUMN updated_at;
       ALTER TABLE block DROP COLUMN created_at;
       ALTER TABLE block DROP COLUMN updated_at;
+      -- v15 additions a real v12 file never had: strip those too, or the
+      -- v14 → v15 ALTERs collide with columns that are still there.
+      DROP INDEX IF EXISTS event_device_seq;
+      DROP TABLE IF EXISTS meta;
+      ALTER TABLE doc DROP COLUMN kind;
+      ALTER TABLE doc DROP COLUMN deleted_at;
+      ALTER TABLE event DROP COLUMN device_id;
+      ALTER TABLE event DROP COLUMN uuid;
+      ALTER TABLE op_log DROP COLUMN device_id;
       PRAGMA user_version = 12;
     `);
     raw.close();
 
     const upgraded = open();
-    expect(upgraded.schema.actual).toBe(14);
+    expect(upgraded.schema.actual).toBe(15);
     const columns = upgraded.database
       .prepare('PRAGMA table_info(doc)')
       .all() as Array<{ name: string }>;

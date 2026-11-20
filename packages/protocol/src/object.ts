@@ -12,6 +12,8 @@ export const STATES_BY_KIND = {
   pin: ['open', 'resolved', 'orphan'],
   contract: ['draft', 'agreed', 'applied'],
   verification: ['pass', 'fail', 'blocked'],
+  idea: ['captured', 'promoted', 'archived'],
+  evidence: ['captured', 'cited', 'dismissed'],
   specnode: [],
 } as const satisfies Record<z.infer<typeof ObjectKindSchema>, readonly string[]>;
 
@@ -81,6 +83,18 @@ export const ObjectSchema = z
       }
       if (!inList(STATES_BY_KIND.contract, value.state)) {
         reject('contract state must be draft | agreed | applied', ['state']);
+      }
+      return;
+    }
+
+    // §5.2: idea·evidence는 홀로 선다 — subtype도 부모도 없다. 승격(promoted)은
+    // 새 객체 + derived_from 링크로 표현하므로 parentId가 생기는 지점이 없다.
+    if (value.kind === 'idea' || value.kind === 'evidence') {
+      if (value.subtype !== null) reject(`${value.kind} has no subtype`, ['subtype']);
+      if (value.parentId !== null) reject(`${value.kind} has no parent`, ['parentId']);
+      const states = STATES_BY_KIND[value.kind];
+      if (!inList(states, value.state)) {
+        reject(`${value.kind} state must be one of ${states.join(', ')}`, ['state']);
       }
       return;
     }

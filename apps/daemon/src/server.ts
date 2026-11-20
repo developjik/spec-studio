@@ -224,7 +224,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // Opening the store creates the file; the directory has to exist first.
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
-  const store = options.store ?? openSqliteStore({ file: options.dbPath });
+  const store = options.store ?? openSqliteStore({ file: options.dbPath, actor: 'person:owner' });
   const env = options.env ?? process.env;
   const backupDir =
     options.backupDir ??

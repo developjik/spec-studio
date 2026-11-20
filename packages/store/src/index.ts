@@ -54,10 +54,15 @@ export interface StoreCreate {
 }
 
 export interface StoreWrite {
-  /** Applies a command in one transaction and returns the events it emitted. */
-  execute(projectId: string, command: Command): Promise<ExecuteOutcome>;
+  /**
+   * Applies a command in one transaction and returns the events it emitted.
+   * `context.actor` decides who the ledger row names: the call's actor wins,
+   * then the store's own, then 'person:owner'. `ai:<run>` is reserved for the
+   * E2 runtime.
+   */
+  execute(projectId: string, command: Command, context?: { actor?: string }): Promise<ExecuteOutcome>;
   /** Restores `op_log.before` of a proposal adoption (the latest one by default). */
-  revert(projectId: string, seq?: number): Promise<RevertOutcome>;
+  revert(projectId: string, seq?: number, context?: { actor?: string }): Promise<RevertOutcome>;
 }
 
 export interface StorePort extends StoreRead, StoreCreate, StoreWrite {

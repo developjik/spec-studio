@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DatabaseSync as Database } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -35,6 +36,7 @@ import {
   newProjectId,
   newProposalId,
   newScreenId,
+  newSuffix,
   graphNodeToRow,
   type GraphProposalRow,
   type LinkRow,
@@ -68,6 +70,13 @@ export interface SqliteStoreOptions {
   /** Supplied so tests get deterministic timestamps; the port itself has no clock rule. */
   clock?: () => string;
   newId?: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
+  /**
+   * Stamps every op_log/event row this store writes (F6). Given, it replaces
+   * the `meta` lookup — that is how a test simulates a second device on one file.
+   */
+  deviceId?: string;
+  /** The ledger actor when a call does not name one. E1 is a local one-person app, so 'person:owner'. */
+  actor?: string;
 }
 
 export type StoreIdKind =
@@ -162,6 +171,8 @@ export class SqliteStore implements StorePort {
   readonly #clock: () => string;
   readonly #newId: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
   readonly #schema: SchemaInfo;
+  readonly #deviceId: string;
+  readonly #actor: string;
   #closed = false;
 
   private constructor(options: SqliteStoreOptions) {
@@ -174,6 +185,11 @@ export class SqliteStore implements StorePort {
     this.#db.exec('PRAGMA foreign_keys = ON');
     this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#schema = applySchema(this.#db, options.schemaPath);
+    // F6: 발급은 "데몬 DB 기동 시 최초 1회" — 데몬이 스토어를 여는 것이 DB 기동이다.
+    // 과거 행의 device_id는 NULL이며 백필하지 않는다: 어느 디바이스가 썼는지는
+    // 그 시점에만 알 수 있다.
+    this.#deviceId = options.deviceId ?? this.#issueDeviceId();
+    this.#actor = options.actor ?? 'person:owner';
   }
 
   static open(options: SqliteStoreOptions): SqliteStore {
@@ -187,6 +203,20 @@ export class SqliteStore implements StorePort {
   /** The id source the daemon uses when it has to name an object itself. */
   nextId(kind: StoreIdKind, nodeType?: EditableNodeType): string {
     return this.#newId(kind, nodeType);
+  }
+
+  /** The device this database writes as; every new op_log/event row carries it (F6). */
+  get deviceId(): string {
+    return this.#deviceId;
+  }
+
+  /** Reads `meta.device_id`, issuing it on the very first open of this file. */
+  #issueDeviceId(): string {
+    const row = oneRow<{ value: string }>(this.#db, "SELECT value FROM meta WHERE key = 'device_id'");
+    if (row !== undefined) return row.value;
+    const id = `dev_${newSuffix()}`;
+    this.#db.prepare("INSERT INTO meta(key, value) VALUES('device_id', ?)").run(id);
+    return id;
   }
 
   /** Escape hatch for the adapter's own tests; not part of `StorePort`. */
@@ -317,7 +347,11 @@ export class SqliteStore implements StorePort {
     return rows.map((row) => row.id);
   }
 
-  async execute(projectId: string, command: Command): Promise<ExecuteOutcome> {
+  async execute(
+    projectId: string,
+    command: Command,
+    context?: { actor?: string },
+  ): Promise<ExecuteOutcome> {
     const before = await this.readProject(projectId);
     if (before === null) throw new Error(`no project ${projectId} in this database`);
 
@@ -331,7 +365,7 @@ export class SqliteStore implements StorePort {
     return transaction(this.#db, () => {
       this.#writeProject(before, after, at);
       this.#appendEvents(projectId, result.events, at);
-      const opSeq = this.#appendLog(before, after, command, result.events, at);
+      const opSeq = this.#appendLog(before, after, command, result.events, at, context?.actor);
       return {
         project: after,
         seq: this.#lastSeq(projectId),
@@ -346,7 +380,11 @@ export class SqliteStore implements StorePort {
    * store itself wrote into `op_log.before`. The revert is a write like any
    * other: it appends its own `op_log` row, so the undo has an undo.
    */
-  async revert(projectId: string, seq?: number): Promise<RevertOutcome> {
+  async revert(
+    projectId: string,
+    seq?: number,
+    context?: { actor?: string },
+  ): Promise<RevertOutcome> {
     const project = await this.readProject(projectId);
     if (project === null) throw new Error(`no project ${projectId} in this database`);
 
@@ -359,8 +397,9 @@ export class SqliteStore implements StorePort {
     }
 
     const at = this.#clock();
+    const actor = context?.actor;
     if (adopt.kind === 'graph.proposal.adopt') {
-      return this.#revertGraph(project, adopt, at);
+      return this.#revertGraph(project, adopt, at, actor);
     }
     if (project.doc === null) {
       throw new DomainError('doc_missing', '이 프로젝트에는 되돌릴 문서가 없습니다');
@@ -385,6 +424,7 @@ export class SqliteStore implements StorePort {
       );
       this.#insertLog({
         at,
+        actor,
         kind: 'proposal.revert',
         target: doc.id,
         before: currentSnapshot,
@@ -487,7 +527,12 @@ export class SqliteStore implements StorePort {
    * the ones that already existed stay. Written as its own `op_log` row, so the
    * undo has an undo.
    */
-  #revertGraph(project: Project, adopt: OpLogRow & { kind: string }, at: string): RevertOutcome {
+  #revertGraph(
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
     const before = JSON.parse(adopt.before ?? '{}') as {
       nodes?: string[];
       links?: string[];
@@ -522,6 +567,7 @@ export class SqliteStore implements StorePort {
       );
       this.#insertLog({
         at,
+        actor,
         kind: 'graph.proposal.revert',
         target: project.id,
         before: currentSnapshot,
@@ -625,9 +671,12 @@ export class SqliteStore implements StorePort {
       .prepare("INSERT OR IGNORE INTO thread(id,kind,last_seq,created_at) VALUES(?,'project',0,?)")
       .run(threadId, at);
     const insert = this.#db.prepare(
-      'INSERT INTO event(thread_id,type,payload,at) VALUES(?,?,?,?)',
+      'INSERT INTO event(thread_id,type,payload,at,device_id,uuid) VALUES(?,?,?,?,?,?)',
     );
-    for (const event of events) insert.run(threadId, event.type, JSON.stringify(event), at);
+    // F6: 매 행에 device_id·uuid를 적는다 — 수집 쪽은 (device_id, seq)로 멱등을 잡는다.
+    for (const event of events) {
+      insert.run(threadId, event.type, JSON.stringify(event), at, this.#deviceId, randomUUID());
+    }
   }
 
   #insertLog(input: {
@@ -637,13 +686,16 @@ export class SqliteStore implements StorePort {
     before: unknown;
     after: unknown;
     payload: unknown;
-    actor?: string;
+    actor?: string | undefined;
   }): number {
     const result = this.#db
-      .prepare('INSERT INTO op_log(at,actor,kind,target,before,after,payload) VALUES(?,?,?,?,?,?,?)')
+      .prepare(
+        'INSERT INTO op_log(at,actor,device_id,kind,target,before,after,payload) VALUES(?,?,?,?,?,?,?,?)',
+      )
       .run(
         input.at,
-        input.actor ?? 'person:owner',
+        input.actor ?? this.#actor,
+        this.#deviceId,
         input.kind,
         input.target,
         JSON.stringify(input.before),
@@ -664,6 +716,7 @@ export class SqliteStore implements StorePort {
     command: Command,
     events: readonly DomainEvent[],
     at: string,
+    actor?: string,
   ): number {
     if (command.type === 'proposal.adopt') {
       const doc = before.doc;
@@ -679,6 +732,7 @@ export class SqliteStore implements StorePort {
       );
       return this.#insertLog({
         at,
+        actor,
         kind: 'proposal.adopt',
         target: doc.id,
         before: beforeSnapshot,
@@ -696,6 +750,7 @@ export class SqliteStore implements StorePort {
       const createdLinks = after.graph.links.filter((link) => !beforeLinks.has(link.id)).map((link) => link.id);
       return this.#insertLog({
         at,
+        actor,
         kind: 'graph.proposal.adopt',
         target: before.id,
         before: {
@@ -720,6 +775,7 @@ export class SqliteStore implements StorePort {
       const snapshotAfter = blockId === null ? null : findBlockBefore(after.doc, blockId);
       return this.#insertLog({
         at,
+        actor,
         kind,
         target,
         before: { block: snapshotBefore },
@@ -743,6 +799,7 @@ export class SqliteStore implements StorePort {
             : null;
       return this.#insertLog({
         at,
+        actor,
         kind,
         target: nodeId ?? linkId ?? before.id,
         before: nodeId === null ? null : { node: before.graph.nodes.find((node) => node.id === nodeId) ?? null },
@@ -760,6 +817,7 @@ export class SqliteStore implements StorePort {
 
     return this.#insertLog({
       at,
+      actor,
       kind,
       target,
       before: objectOf(before, target),

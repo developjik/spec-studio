@@ -203,9 +203,43 @@ describe('the v11 → v12 migration', () => {
     const legacy = new DatabaseSync(file);
     legacy.exec(`
       CREATE TABLE project(id TEXT PRIMARY KEY);
-      CREATE TABLE obj(id TEXT PRIMARY KEY);
+      CREATE TABLE obj(
+        id         TEXT PRIMARY KEY,
+        project_id TEXT,
+        kind       TEXT NOT NULL,
+        subtype    TEXT,
+        title      TEXT NOT NULL,
+        parent_id  TEXT,
+        props      TEXT NOT NULL DEFAULT '{}',
+        state      TEXT NOT NULL,
+        rev        INTEGER NOT NULL DEFAULT 1,
+        hash       TEXT NOT NULL,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE doc(id TEXT PRIMARY KEY);
       CREATE TABLE block(id TEXT PRIMARY KEY);
+      CREATE TABLE link_type(
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        src_kinds  TEXT NOT NULL,
+        dst_kinds  TEXT NOT NULL,
+        suspect_on TEXT NOT NULL DEFAULT '["hash"]',
+        v1         INTEGER NOT NULL DEFAULT 1
+      );
+      INSERT INTO link_type(id,name,src_kinds,dst_kinds) VALUES
+        ('derived_from','도출된다','["specnode","contract","verification"]',
+         '["specnode","contract","verification","pin"]'),
+        ('references','참조한다','["screen","pin","specnode","contract","verification"]',
+         '["screen","pin","specnode","contract","verification"]');
+      CREATE TABLE thread(id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+        last_seq INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+      CREATE TABLE event(seq INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL,
+        type TEXT NOT NULL, payload TEXT NOT NULL, at TEXT NOT NULL);
+      CREATE TABLE op_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,
+        actor TEXT NOT NULL, kind TEXT NOT NULL, target TEXT, before TEXT, after TEXT,
+        payload TEXT NOT NULL DEFAULT '{}', archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE publish_record (
         id             TEXT PRIMARY KEY,
         doc_id         TEXT NOT NULL,
@@ -227,7 +261,7 @@ describe('the v11 → v12 migration', () => {
     `);
 
     const info = applySchema(legacy);
-    expect(info.actual).toBe(14);
+    expect(info.actual).toBe(15);
     expect(info.created).toBe(false);
 
     const columns = legacy

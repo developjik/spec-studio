@@ -39,6 +39,21 @@ const pin = {
   updatedAt: AT,
 };
 
+// §5.2: idea shares I_ with insight; evidence takes E. Both stand alone.
+const idea = {
+  ...goal,
+  id: `I_${'d'.repeat(12)}`,
+  kind: 'idea' as const,
+  state: 'captured',
+};
+
+const evidence = {
+  ...goal,
+  id: `E_${'e'.repeat(12)}`,
+  kind: 'evidence' as const,
+  state: 'cited',
+};
+
 describe('objects mirror the database constraints', () => {
   it('accepts a well-formed goal and pin', () => {
     expect(ObjectSchema.safeParse(goal).success).toBe(true);
@@ -73,6 +88,25 @@ describe('objects mirror the database constraints', () => {
     expect(ObjectSchema.safeParse({ ...goal, state: 'in-progress' }).success).toBe(false);
     const policy = { ...pin, state: 'agreed' };
     expect(ObjectSchema.safeParse(policy).success).toBe(false);
+  });
+
+  it('accepts a captured idea and a cited evidence', () => {
+    expect(ObjectSchema.safeParse(idea).success).toBe(true);
+    expect(ObjectSchema.safeParse(evidence).success).toBe(true);
+  });
+
+  it('refuses a subtype or a parent on idea/evidence', () => {
+    expect(ObjectSchema.safeParse({ ...idea, subtype: 'policy' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, subtype: 'capture' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...idea, parentId: pin.parentId }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, parentId: pin.parentId }).success).toBe(false);
+  });
+
+  it('keeps idea/evidence state machines', () => {
+    expect(ObjectSchema.safeParse({ ...idea, state: 'promoted' }).success).toBe(true);
+    expect(ObjectSchema.safeParse({ ...idea, state: 'active' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, state: 'dismissed' }).success).toBe(true);
+    expect(ObjectSchema.safeParse({ ...evidence, state: 'open' }).success).toBe(false);
   });
 });
 
