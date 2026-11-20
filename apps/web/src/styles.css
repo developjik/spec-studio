@@ -1398,6 +1398,21 @@ button {
   gap: 6px;
 }
 
+.modal-confirm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.modal-confirm span {
+  flex: 1;
+}
+
 @media (max-width: 760px) {
   .modal-tabs {
     grid-template-columns: minmax(0, 1fr);
@@ -2004,6 +2019,15 @@ button {
 
 .doc-tab--delete.is-armed {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.doc-tab--undo {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.doc-tab--undo:hover {
+  color: var(--text);
 }
 
 .doc-create-form {

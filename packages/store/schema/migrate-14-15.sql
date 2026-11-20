@@ -130,7 +130,10 @@ CREATE UNIQUE INDEX event_device_seq ON event(device_id, seq);
 -- 5. 단일 행 메타: device_id 보관처 (가정 A3). 데몬 DB 기동 시 최초 1회 발급.
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
+-- The stamp rides inside the transaction: a crash between the
+-- schema change and the stamp cannot leave user_version behind the DDL
+-- (W5 carry-over W1-M1).
+PRAGMA user_version = 15;
 COMMIT;
 
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 15;

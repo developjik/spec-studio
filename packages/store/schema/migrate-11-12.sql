@@ -8,6 +8,8 @@
 -- ═══════════════════════════════════════════════════════════════════
 PRAGMA foreign_keys = OFF;
 
+BEGIN IMMEDIATE;
+
 CREATE TABLE publish_record_v12 (
   id             TEXT PRIMARY KEY,
   doc_id         TEXT REFERENCES doc(id) ON DELETE RESTRICT,
@@ -50,4 +52,5 @@ CREATE UNIQUE INDEX publish_version ON publish_record(doc_id, target, page_id, v
   WHERE version IS NOT NULL;
 
 PRAGMA user_version = 12;
+COMMIT;
 PRAGMA foreign_keys = ON;

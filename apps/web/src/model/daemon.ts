@@ -93,6 +93,8 @@ export interface RevertableView {
   proposalId: string | null;
   blocks: number;
   kind: 'doc' | 'graph';
+  /** The `op_log.kind` the undo targets — proposal adopts or doc lifecycle ops. */
+  op: string;
   nodes: number;
 }
 

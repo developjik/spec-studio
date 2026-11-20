@@ -43,7 +43,7 @@ function runPhase(flag) {
 }
 
 try {
-  for (const flag of ['--smoke-create', '--smoke-verify', '--smoke-window']) {
+  for (const flag of ['--smoke-create', '--smoke-verify', '--smoke-window', '--smoke-capture']) {
     const run = runPhase(flag);
     results.push(run);
     if (run.result === null || run.result.ok !== true) break; // later phases depend on earlier ones

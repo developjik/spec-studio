@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Pin, Screen } from '@spec-studio/protocol';
-import { hasFts5, openSqliteStore, splitSchema, type SqliteStore } from '../src';
+import { hasFts5, MIGRATIONS, openSqliteStore, splitSchema, type SqliteStore } from '../src';
 
 /** The v14 canon DDL, frozen as a fixture: this is what a real v14 file looks like. */
 const FIXTURE = fileURLToPath(new URL('./fixtures/schema-v14.sql', import.meta.url));
@@ -249,5 +249,21 @@ describe('v14 → v15 migration', () => {
       store.database.prepare('SELECT actor FROM op_log ORDER BY seq').all() as Array<{ actor: string }>
     ).map((row) => row.actor);
     expect(actors).toEqual(['person:crew', 'person:tester', 'person:crew']);
+  });
+
+  it('stamps user_version inside each migration transaction (W1-M1)', () => {
+    // A crash between DDL and the stamp used to leave user_version behind
+    // the real schema, so the next open retried the whole migration on a
+    // file that already had it. The stamp must live between BEGIN IMMEDIATE
+    // and COMMIT in every migration file — a rollback then loses both.
+    for (const [version, path] of Object.entries(MIGRATIONS)) {
+      const sql = readFileSync(path, 'utf8');
+      const begin = sql.indexOf('BEGIN IMMEDIATE');
+      const stamp = sql.indexOf(`PRAGMA user_version = ${Number(version) + 1};`);
+      const commit = sql.indexOf('COMMIT;', stamp);
+      expect(begin, `${path}: migration has no transaction`).toBeGreaterThanOrEqual(0);
+      expect(stamp, `${path}: expected stamp missing`).toBeGreaterThan(begin);
+      expect(commit, `${path}: stamp sits outside the transaction`).toBeGreaterThan(stamp);
+    }
   });
 });

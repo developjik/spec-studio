@@ -9,6 +9,8 @@
 -- ═══════════════════════════════════════════════════════════════════
 PRAGMA foreign_keys = OFF;
 
+BEGIN IMMEDIATE;
+
 -- v13 always has this table; the guard is for a partial legacy file whose
 -- other tables were rebuilt by hand (a support case, not a product path).
 CREATE TABLE IF NOT EXISTS link_type (
@@ -49,3 +51,4 @@ CREATE TABLE IF NOT EXISTS graph_proposal (
 CREATE INDEX IF NOT EXISTS graph_proposal_project ON graph_proposal(project_id, created_at DESC);
 
 PRAGMA user_version = 14;
+COMMIT;

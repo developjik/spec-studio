@@ -198,6 +198,65 @@ describe('the document registry in SQLite', () => {
       .all() as Array<{ state: string; n: number }>;
     expect(rows).toEqual([{ state: 'live', n: 1 }]);
   });
+
+  it('undoes a doc.create as the tombstone a delete would leave (MN-1)', async () => {
+    const store = open();
+    const projectId = await seeded(store);
+    const created = await store.execute(projectId, {
+      type: 'doc.create',
+      title: '리서치 노트',
+      kind: 'research',
+    });
+    const docId = created.project.docs[1]?.id as string;
+    await store.execute(projectId, {
+      type: 'doc.block.create',
+      docId,
+      blockType: 'paragraph',
+      text: '메모',
+    });
+
+    // Block writes are not undoable, so the create is the latest offer even
+    // after the paragraph landed.
+    const revertable = store.lastRevertable(projectId);
+    expect(revertable).toMatchObject({ kind: 'doc', op: 'doc.create' });
+    expect(revertable?.summary).toContain('리서치 노트');
+
+    const reverted = await store.revert(projectId);
+    expect(reverted.project.docs).toHaveLength(1);
+    // the row stays, tombstoned — same shape a doc.delete leaves
+    const row = store.database
+      .prepare('SELECT deleted_at FROM doc WHERE id = ?')
+      .get(docId) as { deleted_at: string | null };
+    expect(row.deleted_at).not.toBeNull();
+
+    // the undo is its own ledger row; a second undo refuses
+    const undo = store.database
+      .prepare("SELECT kind FROM op_log WHERE kind = 'doc.revert' ORDER BY seq DESC LIMIT 1")
+      .get() as { kind: string };
+    expect(undo.kind).toBe('doc.revert');
+    await expect(store.revert(projectId, created.opSeq)).rejects.toThrow(/찾지 못했습니다/);
+  });
+
+  it('undoes a doc.update back to the title it had (MN-1)', async () => {
+    const store = open();
+    const projectId = await seeded(store);
+    const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
+    const renamed = await store.execute(projectId, {
+      type: 'doc.update',
+      docId,
+      title: '조사 메모',
+    });
+    expect(renamed.project.docs[0]?.title).toBe('조사 메모');
+
+    const revertable = store.lastRevertable(projectId);
+    expect(revertable).toMatchObject({ kind: 'doc', op: 'doc.update' });
+
+    const reverted = await store.revert(projectId);
+    expect(reverted.revertedSeq).toBe(renamed.opSeq);
+    expect(reverted.project.docs[0]?.title).toBe('주문 상세 문서');
+    // blocks are untouched: the undo restores the title, never a doc snapshot
+    expect(reverted.project.docs[0]?.blocks).toHaveLength(1);
+  });
   it('carries two docs with their blocks through an export→import remap', async () => {
     const store = open();
     const projectId = await seeded(store);

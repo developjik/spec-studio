@@ -22,6 +22,8 @@ export interface RevertableView {
   at: string;
   summary: string;
   blocks: number;
+  /** The `op_log.kind` the undo would take back (proposal adopts or doc ops). */
+  op: string;
 }
 
 interface DocPanelProps {
@@ -70,10 +72,15 @@ interface DocTabsProps {
   docs: Doc[];
   activeDocId: string | null;
   busy: boolean;
+  revertable: RevertableView | null;
   onSwitch: (docId: string) => void;
   onCreate: (title: string, kind: DocKind) => void;
   onDelete: (docId: string) => void;
+  onRevert: () => void;
 }
+
+/** Doc lifecycle ops the tab bar can hand back to the ledger as an undo. */
+const DOC_UNDO_OPS = new Set(['doc.create', 'doc.update', 'doc.delete']);
 
 /**
  * One tab per document, plus the two registry moves the bar owns: make a doc,
@@ -157,6 +164,20 @@ function DocTabs(props: DocTabsProps) {
             {armed ? '삭제?' : '휴지통'}
           </button>
         )}
+        {props.revertable !== null &&
+          DOC_UNDO_OPS.has(props.revertable.op) && (
+            <button
+              type="button"
+              className="doc-tab doc-tab--undo"
+              aria-label="문서 작업 되돌리기"
+              title={props.revertable.summary}
+              disabled={props.busy}
+              onClick={props.onRevert}
+              data-testid="doc-undo"
+            >
+              ↩ {props.revertable.summary}
+            </button>
+          )}
       </div>
       {creating && (
         <form className="doc-create-form" onSubmit={submit}>
@@ -228,9 +249,11 @@ export function DocPanel(props: DocPanelProps) {
           docs={props.docs}
           activeDocId={null}
           busy={props.busy}
+          revertable={props.sqliteMode ? props.revertable : null}
           onSwitch={props.onSwitchDoc}
           onCreate={props.onCreateDoc}
           onDelete={props.onDeleteDoc}
+          onRevert={props.onRevert}
         />
         <p className="doc-empty">
           문서가 없습니다. <b>+</b> 버튼으로 첫 문서를 만들 수 있습니다.
@@ -261,9 +284,11 @@ export function DocPanel(props: DocPanelProps) {
         docs={props.docs}
         activeDocId={doc.id}
         busy={props.busy}
+        revertable={props.sqliteMode ? props.revertable : null}
         onSwitch={props.onSwitchDoc}
         onCreate={props.onCreateDoc}
         onDelete={props.onDeleteDoc}
+        onRevert={props.onRevert}
       />
 
       <div className="panel-head doc-head">

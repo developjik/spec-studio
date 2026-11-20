@@ -170,6 +170,8 @@ export default function App() {
   });
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
+  /** ideaId → 브리프 카드 요약 — 승격 시 새 스펙 첫 문단의 씨앗 (MN-2). */
+  const briefSeeds = useRef(new Map<string, string>());
 
   /** On boot: if the loopback daemon answers, SQLite becomes the source of truth. */
   useEffect(() => {
@@ -643,6 +645,7 @@ export default function App() {
           summary,
           blocks: patches,
           kind: 'doc',
+          op: 'proposal.adopt',
           nodes: 0,
           proposalId: proposalId,
         });
@@ -814,6 +817,7 @@ export default function App() {
           summary: proposal.summary,
           blocks: 0,
           kind: 'graph',
+          op: 'graph.proposal.adopt',
           nodes: proposal.nodes.length,
           proposalId: proposal.id,
         });
@@ -995,6 +999,15 @@ export default function App() {
       const docCreated = created.events.find((event) => event.type === 'doc.created');
       await applyCommand({ type: 'idea.update', ideaId: idea.id, state: 'promoted' });
       if (docCreated !== undefined && docCreated.type === 'doc.created') {
+        // MN-2: a promoted spec never opens empty — the brief summary when
+        // this session ran one for the idea, else the idea's own text.
+        const seed = briefSeeds.current.get(idea.id) ?? idea.text;
+        await applyCommand({
+          type: 'doc.block.create',
+          docId: docCreated.doc.id,
+          blockType: 'paragraph',
+          text: seed,
+        });
         setActiveDocId(docCreated.doc.id);
       }
       setNotice({ tone: 'info', text: `아이디어를 스펙 문서로 승격했습니다: ${idea.title}` });
@@ -1040,6 +1053,10 @@ export default function App() {
       const filed = next.proposals.filter((candidate) => candidate.docId === targetDocId).at(-1);
       if (filed !== undefined) {
         setAiCardSource({ proposalId: filed.id, source: outcome.source });
+        // MN-2: remember which idea this brief answered — 승격이 그 요약을
+        // 새 스펙의 첫 문단으로 씁니다. idea↔proposal의 영속 링크가 없어
+        // 세션 한정 기록입니다 (영속화는 proposal.idea_id 스키마 이월).
+        briefSeeds.current.set(ideaId, filed.summary);
       }
       setAiResult({
         tone: outcome.source === 'llm' ? 'info' : 'error',
@@ -1372,6 +1389,10 @@ export default function App() {
           pins={pins}
           pinSeq={project.pinSeq}
           doc={specDoc}
+          project={project}
+          onExportPackage={async (files) => {
+            await applyCommand({ type: 'project.package.export', files });
+          }}
           onClose={() => setOutputOpen(false)}
         />
       )}

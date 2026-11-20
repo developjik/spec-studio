@@ -61,4 +61,6 @@ export * from './base64';
 export * from './csv';
 export * from './html';
 export * from './overlay';
+export * from './summary';
 export * from './tables';
+export * from './tasks';

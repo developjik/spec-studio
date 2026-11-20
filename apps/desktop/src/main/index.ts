@@ -13,12 +13,13 @@ import { createMainWindow, getMainWindow } from './window';
 
 const SMOKE_MARKER = 'SMOKE_RESULT ';
 
-type SmokePhase = 'create' | 'verify' | 'window';
+type SmokePhase = 'create' | 'verify' | 'window' | 'capture';
 
 function smokePhase(): SmokePhase | null {
   if (process.argv.includes('--smoke-create')) return 'create';
   if (process.argv.includes('--smoke-verify')) return 'verify';
   if (process.argv.includes('--smoke-window')) return 'window';
+  if (process.argv.includes('--smoke-capture')) return 'capture';
   return null;
 }
 
@@ -183,6 +184,75 @@ async function runSmoke(
       );
       await manager.stop();
       app.exit(response.ok && persisted ? 0 : 1);
+      return;
+    }
+
+    if (phase === 'capture') {
+      // F2 quick capture, live: register the real chord (so a taken chord is a
+      // failed report, not a silent no-op), then send the same IPC the chord's
+      // callback sends. OS-level key injection is not automatable — the report
+      // marks registration and the IPC→preload→modal leg separately.
+      const win = createMainWindow();
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('window did not load')), 20_000);
+        win.webContents.once('did-finish-load', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        win.webContents.once('did-fail-load', (_event, code, description) => {
+          clearTimeout(timer);
+          reject(new Error(`window load failed: ${code} ${description}`));
+        });
+      });
+      const registered = globalShortcut.register('CommandOrControl+Shift+I', () => {
+        win.webContents.send('specstudio:quick-capture');
+      });
+      const probe = (await win.webContents.executeJavaScript(`(async () => {
+        const wait = (testid, timeout) => new Promise((resolve) => {
+          const started = Date.now();
+          const tick = () => {
+            const el = document.querySelector('[data-testid="' + testid + '"]');
+            if (el !== null || Date.now() - started > timeout) resolve(el !== null);
+            else setTimeout(tick, 100);
+          };
+          tick();
+        });
+        // A daemon-backed boot reopens the last project itself; an empty
+        // database lands on the gate, where the sample button opens one.
+        let inbox = await wait('idea-inbox', 15000);
+        if (!inbox) {
+          const entry = document.querySelector('[data-testid="entry-sample"]');
+          if (entry !== null) {
+            entry.click();
+            inbox = await wait('idea-inbox', 15000);
+          }
+        }
+        return { inbox };
+      })()`)) as { inbox: boolean };
+      const held = globalShortcut.isRegistered('CommandOrControl+Shift+I');
+      win.webContents.send('specstudio:quick-capture');
+      const modal = (await win.webContents.executeJavaScript(`(async () => {
+        const started = Date.now();
+        while (Date.now() - started < 8000) {
+          if (document.querySelector('[data-testid="idea-capture-modal"]') !== null) return true;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return false;
+      })()`)) as boolean;
+      globalShortcut.unregisterAll();
+      const ok = probe.inbox === true && registered && held && modal === true;
+      console.log(
+        `${SMOKE_MARKER}${JSON.stringify({
+          phase,
+          ok,
+          inbox: probe.inbox,
+          registered,
+          held,
+          ipcModal: modal,
+        })}`,
+      );
+      await manager.stop();
+      app.exit(ok ? 0 : 1);
       return;
     }
 

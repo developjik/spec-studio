@@ -92,6 +92,14 @@ export const EventSchema = z.discriminatedUnion('type', [
     revertedSeq: z.number().int().min(1),
     blocks: z.number().int().min(0),
   }),
+  /**
+   * F4: a handoff package left the project. The state does not change — the
+   * event is the record that six files went out, and `files` names them.
+   */
+  z.object({
+    type: z.literal('package.exported'),
+    files: z.array(z.string().min(1).max(120)).min(1).max(16),
+  }),
 
   // ── object graph (v1) ─────────────────────────────────────────────────
   z.object({ type: z.literal('node.created'), node: GraphNodeSchema }),

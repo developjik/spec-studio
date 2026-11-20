@@ -234,6 +234,13 @@ export const CommandSchema = z.discriminatedUnion('type', [
     type: z.literal('graph.proposal.reject'),
     proposalId: z.string().min(1),
   }),
+
+  // ── handoff package (F4) ─────────────────────────────────────────────
+  z.object({
+    type: z.literal('project.package.export'),
+    /** The file names the package wrote — the ledger says what shipped. */
+    files: z.array(z.string().min(1).max(120)).min(1).max(16),
+  }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;

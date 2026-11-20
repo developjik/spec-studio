@@ -961,6 +961,14 @@ export function execute(
       };
     }
 
+    // ── handoff package (F4) ───────────────────────────────────────────
+    case 'project.package.export':
+      // Writing files changes no project state; the event is the record.
+      return {
+        project,
+        events: [{ type: 'package.exported', files: command.files }],
+      };
+
     default: {
       const exhaustive: never = command;
       throw new DomainError('invalid_input', `unknown command ${JSON.stringify(exhaustive)}`);

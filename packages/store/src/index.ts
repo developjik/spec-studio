@@ -28,6 +28,8 @@ export interface RevertableOp {
   blocks: number;
   /** Which layer the decision belongs to: the document or the object graph. */
   kind: 'doc' | 'graph';
+  /** The `op_log.kind` the undo targets — a proposal adopt or a doc op. */
+  op: string;
   /** Graph nodes the undo would remove. */
   nodes: number;
 }

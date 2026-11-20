@@ -301,6 +301,42 @@ describe('the write path', () => {
     ]);
   });
 
+  it('records each package export as an event and an op row with the file list', async () => {
+    const store = open();
+    const projectId = await seed(store);
+    const files = ['spec-summary.md', 'tasks.md', 'bundle.json'];
+
+    const stampedAt = (store.database
+      .prepare('SELECT updated_at FROM project WHERE id = ?')
+      .get(projectId) as { updated_at: string }).updated_at;
+
+    const outcome = await store.execute(projectId, { type: 'project.package.export', files });
+    expect(outcome.events.map((event) => event.type)).toEqual(['package.exported']);
+    await store.execute(projectId, { type: 'project.package.export', files });
+
+    // An export is a read — it must not touch the project's updated_at, or a
+    // second export of the same state would differ from the first (AC-8).
+    expect(
+      (store.database.prepare('SELECT updated_at FROM project WHERE id = ?').get(projectId) as {
+        updated_at: string;
+      }).updated_at,
+    ).toBe(stampedAt);
+
+    const rows = store.database
+      .prepare("SELECT kind, payload, device_id FROM op_log WHERE kind = 'package.export' ORDER BY seq")
+      .all() as Array<{ kind: string; payload: string | null; device_id: string | null }>;
+    // one row per export — a re-export is history, not a deduplicated write
+    expect(rows).toHaveLength(2);
+    expect(JSON.parse(rows[0]!.payload ?? '{}').files).toEqual(files);
+    expect(rows.every((row) => row.device_id !== null && row.device_id !== '')).toBe(true);
+
+    const events = store.database
+      .prepare("SELECT type, device_id FROM event WHERE type = 'package.exported'")
+      .all() as Array<{ type: string; device_id: string | null }>;
+    expect(events).toHaveLength(2);
+    expect(events.every((row) => row.device_id !== null && row.device_id !== '')).toBe(true);
+  });
+
   it('writes nothing when the command is rejected', async () => {
     const store = open();
     const projectId = await seed(store);
