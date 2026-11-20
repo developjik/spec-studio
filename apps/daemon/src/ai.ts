@@ -15,6 +15,7 @@ import {
   type Command,
   type CredentialPort,
   type CredentialSource,
+  type Doc,
   type Project,
   type Project as ProjectType,
 } from '@spec-studio/protocol';
@@ -115,6 +116,21 @@ function defaultModelFor(provider: AiProvider, preset: AiPreset | undefined): st
   return preset.defaultModel ?? '';
 }
 
+/**
+ * Which document a proposal targets: the named one when the request says so,
+ * else the first spec, else whatever exists. One registry, one failure code.
+ */
+function resolveDoc(project: Project, docId: string | undefined): Doc {
+  const doc =
+    docId !== undefined
+      ? project.docs.find((candidate) => candidate.id === docId)
+      : (project.docs.find((candidate) => candidate.kind === 'spec') ?? project.docs[0]);
+  if (doc === undefined) {
+    throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
+  }
+  return doc;
+}
+
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
     return {
@@ -125,10 +141,7 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
       note: why,
     };
   }
-  const doc = project.doc;
-  if (doc === null || (request.docId !== undefined && doc.id !== request.docId)) {
-    throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
-  }
+  const doc = resolveDoc(project, request.docId);
   return {
     command: { type: 'proposal.create', docId: doc.id },
     source: 'rule',
@@ -198,10 +211,7 @@ export async function planAiProposal(
       };
     }
 
-    const doc = project.doc;
-    if (doc === null || (request.docId !== undefined && doc.id !== request.docId)) {
-      throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
-    }
+    const doc = resolveDoc(project, request.docId);
     const { draft, latencyMs } = await requestDocDraft({
       provider: request.provider,
       apiKey,

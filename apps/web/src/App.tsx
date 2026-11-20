@@ -16,6 +16,8 @@ import type {
   BlockType,
   Command,
   DomainEvent,
+  Doc,
+  DocKind,
   Pin,
   Project,
   Screen,
@@ -79,9 +81,21 @@ const EMPTY_MATURITY: Maturity = {
   next: { level: 'L1', todo: [] },
   todo: [],
 };
-
 /** What a command application returns; `opSeq` is the store's undo handle. */
 type ApplyResult = ExecutionResult & { opSeq?: number };
+
+/**
+ * Which registry doc the panel shows: the URL's pick when it still exists,
+ * else the first spec, else whatever exists. The URL is the 정본 of the choice,
+ * so a dangling id simply falls through to the same rule a boot follows.
+ */
+function activeDocOf(docs: readonly Doc[], wanted: string | null): Doc | null {
+  if (wanted !== null) {
+    const named = docs.find((doc) => doc.id === wanted);
+    if (named !== undefined) return named;
+  }
+  return docs.find((doc) => doc.kind === 'spec') ?? docs[0] ?? null;
+}
 
 export default function App() {
   const client = useRef(new DaemonClient()).current;
@@ -98,6 +112,10 @@ export default function App() {
   const [outputOpen, setOutputOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [docMode, setDocMode] = useState<DocMode>('direct');
+  /** Which registry doc is open; the URL is the 정본, this is its echo. */
+  const [activeDocId, setActiveDocId] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get('doc'),
+  );
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [revertable, setRevertable] = useState<RevertableView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -468,8 +486,40 @@ export default function App() {
     }
   };
 
-  const doc = project?.doc ?? null;
+  const docs = project?.docs ?? [];
+  const doc = activeDocOf(docs, activeDocId);
+  /** Handoff sheets print the spec, the same doc the daemon publishes. */
+  const specDoc = activeDocOf(docs, null);
   const proposal = project?.proposal ?? null;
+
+  /** The URL names the doc on screen, so a reload — or a shared link — reopens it. */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (doc === null) {
+      if (!url.searchParams.has('doc')) return;
+      url.searchParams.delete('doc');
+    } else {
+      if (url.searchParams.get('doc') === doc.id) return;
+      url.searchParams.set('doc', doc.id);
+    }
+    window.history.replaceState(null, '', url);
+  }, [doc]);
+
+  const createDoc = (title: string, kind: DocKind) => {
+    void runDoc({ type: 'doc.create', title, kind }, (result) => {
+      const created = result.events.find((event) => event.type === 'doc.created');
+      if (created !== undefined && created.type === 'doc.created') {
+        setActiveDocId(created.doc.id);
+      }
+    });
+  };
+
+  const deleteDoc = (docId: string) => {
+    void runDoc({ type: 'doc.delete', docId }, () => {
+      // The deleted doc cannot stay the URL's pick; the next render falls back.
+      setActiveDocId((current) => (current === docId ? null : current));
+    });
+  };
 
   const addBlock = (afterBlockId: string | null) => {
     if (doc === null) return;
@@ -834,7 +884,12 @@ export default function App() {
     setAiBusy(true);
     setAiResult(null);
     try {
-      const outcome = await client.aiProposal(daemonProjectId, { ...aiRequest(), mode });
+      // The card targets the doc on screen; graph mode has no doc of its own.
+      const outcome = await client.aiProposal(daemonProjectId, {
+        ...aiRequest(),
+        mode,
+        docId: mode === 'doc' && doc !== null ? doc.id : null,
+      });
       setProject(normalizeProject(outcome.project));
       setAiSource(outcome.source);
       setAiResult({
@@ -1038,6 +1093,7 @@ export default function App() {
 
           <DocPanel
             doc={doc}
+            docs={docs}
             pins={pins}
             proposal={proposal}
             mode={docMode}
@@ -1047,6 +1103,9 @@ export default function App() {
             sqliteMode={sqliteMode}
             busy={busy}
             onMode={setDocMode}
+            onSwitchDoc={setActiveDocId}
+            onCreateDoc={createDoc}
+            onDeleteDoc={deleteDoc}
             onAddBlock={addBlock}
             onUpdateText={updateBlockText}
             onChangeType={changeBlockType}
@@ -1096,7 +1155,7 @@ export default function App() {
           screen={screen}
           pins={pins}
           pinSeq={project.pinSeq}
-          doc={project.doc}
+          doc={specDoc}
           onClose={() => setOutputOpen(false)}
         />
       )}

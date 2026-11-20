@@ -298,6 +298,7 @@ describe('the static HTML carries the document (W4)', () => {
     id: `D_${'d'.repeat(12)}`,
     title: '주문 상세 문서',
     rev: 2,
+    kind: 'spec',
     blocks: [
       {
         id: `B_${'b'.repeat(12)}`,
@@ -310,6 +311,7 @@ describe('the static HTML carries the document (W4)', () => {
     ],
     createdAt: AT,
     updatedAt: AT,
+    deletedAt: null,
   };
 
   it('prints the paragraph, its pin and the stale mark without an app', () => {

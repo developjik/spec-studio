@@ -42,7 +42,7 @@ export function remapProject(project: Project, nextId: RemapId): Project {
     links.push({ ...link, id: nextId('link'), src, dst });
   }
 
-  const doc = project.doc === null ? null : remapDoc(project.doc, nextId, pinIds);
+  const docs = project.docs.map((doc) => remapDoc(doc, nextId, pinIds));
 
   return {
     ...project,
@@ -52,7 +52,7 @@ export function remapProject(project: Project, nextId: RemapId): Project {
         ? null
         : { ...project.screen, id: screenId!, createdAt: project.screen.createdAt },
     pins,
-    doc,
+    docs,
     proposal: null,
     graph: { nodes, links },
     graphProposal: null,

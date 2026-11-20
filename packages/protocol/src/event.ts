@@ -33,6 +33,9 @@ export const EventSchema = z.discriminatedUnion('type', [
   }),
 
   z.object({ type: z.literal('doc.attached'), doc: DocSchema }),
+  z.object({ type: z.literal('doc.created'), doc: DocSchema }),
+  z.object({ type: z.literal('doc.renamed'), docId: DocIdSchema, title: z.string().min(1) }),
+  z.object({ type: z.literal('doc.deleted'), docId: DocIdSchema }),
   z.object({ type: z.literal('block.created'), block: BlockSchema }),
   z.object({ type: z.literal('block.updated'), block: BlockSchema }),
   z.object({ type: z.literal('block.deleted'), docId: DocIdSchema, blockId: BlockIdSchema }),

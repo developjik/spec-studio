@@ -6,6 +6,7 @@ import {
   type BlockSnapshotEntry,
   type BlockStale,
   type Doc,
+  type DocKind,
   type DocSnapshot,
   type Pin,
   type Proposal,
@@ -39,7 +40,13 @@ export function pinFingerprint(pin: Pick<Pin, 'type' | 'title' | 'body'>): strin
   return hash.toString(16).padStart(8, '0');
 }
 
-export function createDoc(input: { id: string; title: string; at: string }): Doc {
+export function createDoc(input: {
+  id: string;
+  title: string;
+  at: string;
+  /** Registry kind; a screen's auto-doc and W4-era docs are specs. */
+  kind?: DocKind;
+}): Doc {
   const title = input.title.trim();
   if (title === '') throw new DomainError('invalid_input', '문서에는 제목이 필요합니다');
   return {
@@ -47,6 +54,8 @@ export function createDoc(input: { id: string; title: string; at: string }): Doc
     title: title.slice(0, 120),
     rev: 0,
     blocks: [],
+    kind: input.kind ?? 'spec',
+    deletedAt: null,
     createdAt: input.at,
     updatedAt: input.at,
   };

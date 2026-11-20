@@ -94,8 +94,11 @@ export function buildGraphPrompt(project: Project): string {
 }
 
 export function buildDocPrompt(project: Project, docId?: string): string {
-  const doc = project.doc;
-  if (doc === null || (docId !== undefined && doc.id !== docId)) {
+  const doc =
+    docId !== undefined
+      ? project.docs.find((candidate) => candidate.id === docId)
+      : (project.docs.find((candidate) => candidate.kind === 'spec') ?? project.docs[0]);
+  if (doc === undefined) {
     return '';
   }
   const lines: string[] = [];

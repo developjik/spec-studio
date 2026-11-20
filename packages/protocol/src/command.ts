@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AiDocDraftSchema, AiGraphDraftSchema, AiProposalSourceSchema } from './ai';
-import { BlockIdSchema, BlockTypeSchema, DocIdSchema, ProposalIdSchema } from './doc';
+import { BlockIdSchema, BlockTypeSchema, DocIdSchema, DocKindSchema, ProposalIdSchema } from './doc';
 import {
   EditableNodeTypeSchema,
   GraphLinkTypeSchema,
@@ -53,6 +53,19 @@ export const CommandSchema = z.discriminatedUnion('type', [
     screenId: ScreenIdSchema,
     pinId: PinIdSchema,
   }),
+
+  // ── document registry (W3/F5) ─────────────────────────────────────────
+  z.object({
+    type: z.literal('doc.create'),
+    title: z.string().trim().min(1).max(120),
+    kind: DocKindSchema.default('spec'),
+  }),
+  z.object({
+    type: z.literal('doc.update'),
+    docId: DocIdSchema,
+    title: z.string().trim().min(1).max(120),
+  }),
+  z.object({ type: z.literal('doc.delete'), docId: DocIdSchema }),
 
   // ── document blocks (W4) ─────────────────────────────────────────────
   z.object({
@@ -190,6 +203,9 @@ export type PinUpdateCommand = Extract<Command, { type: 'pin.update' }>;
 export type PinDeleteCommand = Extract<Command, { type: 'pin.delete' }>;
 export type ScreenAttachCommand = Extract<Command, { type: 'screen.attach' }>;
 export type ScreenUpdateCommand = Extract<Command, { type: 'screen.update' }>;
+export type DocCreateCommand = Extract<Command, { type: 'doc.create' }>;
+export type DocUpdateCommand = Extract<Command, { type: 'doc.update' }>;
+export type DocDeleteCommand = Extract<Command, { type: 'doc.delete' }>;
 export type DocBlockCreateCommand = Extract<Command, { type: 'doc.block.create' }>;
 export type DocBlockUpdateCommand = Extract<Command, { type: 'doc.block.update' }>;
 export type ProposalCreateCommand = Extract<Command, { type: 'proposal.create' }>;

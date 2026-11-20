@@ -69,8 +69,8 @@ export interface DaemonProjectSummary {
   screenCode: string | null;
   pins: number;
   figmaUrl: string | null;
-  docTitle: string | null;
-  blocks: number;
+  /** The doc registry, compactly: one row per live document (W3/F5). */
+  docs: Array<{ id: string; title: string; kind: string; blocks: number }>;
   proposalState: string | null;
   graphNodes: number;
   graphLinks: number;
@@ -336,7 +336,7 @@ export class DaemonClient {
    */
   async aiProposal(
     projectId: string,
-    input: AiRequestView & { mode: AiProposalMode },
+    input: AiRequestView & { mode: AiProposalMode; docId?: string | null },
   ): Promise<AiProposalOutcomeView> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/ai/proposal`, {
       method: 'POST',
@@ -347,6 +347,9 @@ export class DaemonClient {
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,
+        // Which registry doc a `doc` proposal edits; absent leaves the daemon
+        // to pick the first spec.
+        ...(input.docId == null ? {} : { docId: input.docId }),
       },
     });
   }

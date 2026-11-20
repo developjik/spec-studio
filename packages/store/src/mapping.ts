@@ -250,7 +250,7 @@ export function projectFromRows(input: {
   updatedAt: string;
   screen: ObjRow | null;
   pins: ObjRow[];
-  doc?: Doc | null;
+  docs?: Doc[];
   proposal?: Proposal | null;
   graphNodes?: ObjRow[];
   links?: LinkRow[];
@@ -265,7 +265,7 @@ export function projectFromRows(input: {
     screen,
     pins,
     pinSeq: input.screen === null ? 0 : screenPinSeq(input.screen),
-    doc: input.doc ?? null,
+    docs: input.docs ?? [],
     proposal: input.proposal ?? null,
     graph: {
       nodes: (input.graphNodes ?? [])
@@ -316,6 +316,8 @@ export interface DocRow {
   screen_id: string | null;
   title: string;
   rev: number;
+  kind: string;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -394,6 +396,9 @@ export function docFromRows(row: DocRow, blocks: BlockRow[]): Doc {
     blocks: [...blocks]
       .sort((a, b) => (a.idx === b.idx ? a.id.localeCompare(b.id) : a.idx.localeCompare(b.idx)))
       .map(blockFromRow),
+    // The column CHECK already holds the vocabulary; deleted docs never read.
+    kind: row.kind === 'research' ? 'research' : 'spec',
+    deletedAt: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
   };

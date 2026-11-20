@@ -149,9 +149,9 @@ describe('maturity ladder', () => {
     expect(l0.level).toBe('L0');
     expect(l0.levels[0]!.checks.every((check) => check.done)).toBe(true);
 
-    const doc = project.doc!;
+    const doc = project.docs[0]!;
     let next = run(project, { type: 'doc.block.create', docId: doc.id, blockType: 'paragraph', text: '취소는 배송 전까지만.' }, ctx).project;
-    const blockId = next.doc!.blocks[0]!.id;
+    const blockId = next.docs[0]!.blocks[0]!.id;
     next = run(next, { type: 'doc.pin.link', docId: doc.id, blockId, pinId: next.pins[0]!.id }, ctx).project;
     const policyNode = run(next, { type: 'node.create', nodeType: 'policy', title: '배송 전 취소', body: '' }, ctx).project;
     const policyId = policyNode.graph.nodes[0]!.id;
@@ -183,9 +183,9 @@ describe('maturity ladder', () => {
 
   it('counts a publication as the L2 evidence too', () => {
     const { project, ctx } = seeded();
-    const doc = project.doc!;
+    const doc = project.docs[0]!;
     let next = run(project, { type: 'doc.block.create', docId: doc.id, blockType: 'paragraph', text: '문장' }, ctx).project;
-    next = run(next, { type: 'doc.pin.link', docId: doc.id, blockId: next.doc!.blocks[0]!.id, pinId: next.pins[0]!.id }, ctx).project;
+    next = run(next, { type: 'doc.pin.link', docId: doc.id, blockId: next.docs[0]!.blocks[0]!.id, pinId: next.pins[0]!.id }, ctx).project;
     const reqNode = run(next, { type: 'node.create', nodeType: 'req', title: '요구', body: '' }, ctx).project;
     const reqId = reqNode.graph.nodes[0]!.id;
     next = run(reqNode, { type: 'link.create', linkType: 'implements', src: reqNode.pins[0]!.id, dst: reqId }, ctx).project;

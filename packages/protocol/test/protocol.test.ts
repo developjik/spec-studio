@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CommandSchema,
   ObjectSchema,
+  ProjectBundleSchema,
   ProjectSchema,
   ScreenRefSchema,
   ScreenSchema,
@@ -232,5 +233,84 @@ describe('project', () => {
     const parsed = ProjectSchema.safeParse(project);
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.pins[0]?.number).toBe(1);
+  });
+});
+
+describe('bundle (W3/F5)', () => {
+  const legacyDoc = {
+    id: `D_${'d'.repeat(12)}`,
+    title: '주문 상세 문서',
+    rev: 2,
+    blocks: [
+      {
+        id: `B_${'b'.repeat(12)}`,
+        type: 'paragraph' as const,
+        text: '배송이 시작되기 전까지만 취소할 수 있다.',
+        pinRefs: [],
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    ],
+    createdAt: AT,
+    updatedAt: AT,
+  };
+
+  it('reads a pre-registry bundle (one `doc`) as a one-doc registry', () => {
+    const bundle = {
+      format: 'spec-studio.bundle',
+      version: 1 as const,
+      exportedAt: AT,
+      project: {
+        version: 1 as const,
+        id: 'PRJ_000000000001',
+        name: '주문 취소 정책',
+        screen: null,
+        pins: [],
+        pinSeq: 0,
+        doc: legacyDoc,
+        proposal: null,
+        graph: { nodes: [], links: [] },
+        graphProposal: null,
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    };
+    const parsed = ProjectBundleSchema.safeParse(bundle);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.project.docs).toHaveLength(1);
+    expect(parsed.data.project.docs[0]).toMatchObject({
+      id: legacyDoc.id,
+      kind: 'spec',
+      deletedAt: null,
+    });
+    expect('doc' in parsed.data.project).toBe(false);
+  });
+
+  it('reads a registry bundle as-is, kinds and all', () => {
+    const bundle = {
+      format: 'spec-studio.bundle',
+      version: 1 as const,
+      exportedAt: AT,
+      project: {
+        version: 1 as const,
+        id: 'PRJ_000000000002',
+        name: '주문 취소 정책',
+        screen: null,
+        pins: [],
+        pinSeq: 0,
+        docs: [legacyDoc, { ...legacyDoc, id: `D_${'r'.repeat(12)}`, kind: 'research' }],
+        proposal: null,
+        graph: { nodes: [], links: [] },
+        graphProposal: null,
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    };
+    const parsed = ProjectBundleSchema.safeParse(bundle);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.project.docs.map((doc) => doc.kind)).toEqual(['spec', 'research']);
+    }
   });
 });

@@ -130,11 +130,12 @@ interface AiEnvelope {
   project?: {
     id: string;
     pins: Array<{ id: string; number: number; title: string }>;
-    doc?: {
+    docs: Array<{
       id: string;
+      kind: string;
       blocks: Array<{ id: string; text: string; pinRefs: Array<{ pinId: string }> }>;
-    } | null;
-    proposal?: { id: string; origin: string; state: string; patches: unknown[] } | null;
+    }>;
+    proposal?: { id: string; docId: string; origin: string; state: string; patches: unknown[] } | null;
     graph?: { nodes: Array<{ id: string; type: string; title: string }>; links: unknown[] };
     graphProposal?: {
       id: string;
@@ -374,7 +375,7 @@ describe('the AI routes', () => {
     const daemon = await boot();
     const { projectId, pins } = await seedScreen(daemon);
     const seeded = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
-    const docId = seeded.body.project?.doc?.id ?? '';
+    const docId = seeded.body.project?.docs[0]?.id ?? '';
     expect(docId).not.toBe('');
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: {
@@ -387,7 +388,7 @@ describe('the AI routes', () => {
       },
     });
     const withDoc = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
-    const block = withDoc.body.project?.doc?.blocks[0];
+    const block = withDoc.body.project?.docs[0]?.blocks[0];
     expect(block).toBeDefined();
 
     llm.setReply(() =>
@@ -418,11 +419,101 @@ describe('the AI routes', () => {
       },
     });
     expect(adopted.status).toBe(200);
-    expect(adopted.body.project?.doc?.blocks[0]?.text).toContain('배송이 시작되기 전까지만');
+    expect(adopted.body.project?.docs[0]?.blocks[0]?.text).toContain('배송이 시작되기 전까지만');
 
     const reverted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/revert`, { body: {} });
     expect(reverted.status).toBe(200);
-    expect(reverted.body.project?.doc?.blocks[0]?.text).toBe('취소는 언제든 가능하다.');
+    expect(reverted.body.project?.docs[0]?.blocks[0]?.text).toBe('취소는 언제든 가능하다.');
+  });
+
+  it('targets the doc the request names, and defaults to the spec doc', async () => {
+    const daemon = await boot();
+    const { projectId, pins } = await seedScreen(daemon);
+    const seeded = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
+    const specDocId = seeded.body.project?.docs[0]?.id ?? '';
+    const research = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: { type: 'doc.create', title: '리서치 노트', kind: 'research' },
+      },
+    });
+    const researchDocId = research.body.project?.docs[1]?.id ?? '';
+    expect(researchDocId).not.toBe('');
+
+    const blocks: Record<string, string> = {};
+    for (const [label, docId] of [
+      ['spec', specDocId],
+      ['research', researchDocId],
+    ] as const) {
+      const added = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+        body: {
+          command: {
+            type: 'doc.block.create',
+            docId,
+            blockType: 'paragraph',
+            text: label === 'spec' ? '취소는 언제든 가능하다.' : '경쟁 서비스는 취소가 하루만 가능했다.',
+          },
+        },
+      });
+      blocks[label] = added.body.project?.docs.find((doc) => doc.id === docId)?.blocks[0]?.id ?? '';
+    }
+
+    llm.setReply(() =>
+      JSON.stringify({
+        summary: '지정한 문서의 문단을 고친다',
+        patches: [
+          { blockId: blocks.research, text: '경쟁 서비스는 취소가 이틀까지 가능했다.', pins: [pins[0]?.number ?? 1] },
+        ],
+      }),
+    );
+    const targeted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'doc',
+        docId: researchDocId,
+        provider: 'openai',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+        apiKey: 'sk-doc',
+      },
+    });
+    expect(targeted.status).toBe(200);
+    const prompt = JSON.stringify(llm.requests.at(-1)?.body.messages ?? []);
+    expect(prompt).toContain(blocks.research);
+    expect(prompt).not.toContain(blocks.spec);
+    expect(prompt).toContain('리서치 노트');
+    expect(targeted.body.project?.proposal?.docId).toBe(researchDocId);
+
+    // no docId → the first spec doc, not the newest doc. The research
+    // proposal leaves the table first, and the model now patches the spec.
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: {
+          type: 'proposal.reject',
+          docId: researchDocId,
+          proposalId: targeted.body.project?.proposal?.id,
+        },
+      },
+    });
+    llm.setReply(() =>
+      JSON.stringify({
+        summary: '스펙 문서의 문단을 고친다',
+        patches: [
+          { blockId: blocks.spec, text: '취소는 배송 준비 중에만 가능하다.', pins: [pins[0]?.number ?? 1] },
+        ],
+      }),
+    );
+    const defaulted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'doc',
+        provider: 'openai',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+        apiKey: 'sk-doc',
+      },
+    });
+    expect(defaulted.status).toBe(200);
+    const defaultPrompt = JSON.stringify(llm.requests.at(-1)?.body.messages ?? []);
+    expect(defaultPrompt).toContain(blocks.spec);
+    expect(defaultPrompt).not.toContain(blocks.research);
   });
 });
 

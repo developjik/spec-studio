@@ -218,9 +218,12 @@ export function evaluateMaturityLevel(
   project: Project,
   options: { published?: boolean; doc?: Doc | null } = {},
 ): Maturity {
-  const doc = options.doc === undefined ? project.doc : options.doc;
-  const stale = doc === null ? 0 : staleBadges(doc, project.pins).length;
-  const citedBlocks = doc === null ? 0 : doc.blocks.filter((block) => block.pinRefs.length > 0).length;
+  const docs = options.doc === undefined ? project.docs : options.doc === null ? [] : [options.doc];
+  const stale = docs.reduce((sum, doc) => sum + staleBadges(doc, project.pins).length, 0);
+  const citedBlocks = docs.reduce(
+    (sum, doc) => sum + doc.blocks.filter((block) => block.pinRefs.length > 0).length,
+    0,
+  );
 
   const report = traceability(project);
   const structural = project.graph.nodes.filter((node) => node.type === 'req' || node.type === 'policy');

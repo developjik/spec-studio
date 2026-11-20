@@ -369,6 +369,7 @@ describe('W4: the document travels with the spec', () => {
     id: `D_${'d'.repeat(12)}`,
     title: '주문 상세 문서',
     rev: 4,
+    kind: 'spec',
     blocks: [
       {
         id: `B_${'b'.repeat(12)}`,
@@ -381,6 +382,7 @@ describe('W4: the document travels with the spec', () => {
     ],
     createdAt: '2026-11-19T09:00:00.000Z',
     updatedAt: '2026-11-19T09:00:00.000Z',
+    deletedAt: null,
   };
 
   it('puts the paragraphs and their pins into the Confluence body', () => {

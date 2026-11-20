@@ -22,7 +22,7 @@ import type {
   Project,
   Proposal,
 } from '@spec-studio/protocol';
-import { DocSnapshotSchema } from '@spec-studio/protocol';
+import { DocSnapshotSchema, DocSchema } from '@spec-studio/protocol';
 import {
   blockToRow,
   docFromRows,
@@ -122,6 +122,9 @@ function allRows<T>(db: DatabaseSync, sql: string, ...params: Array<string | num
  * the two apart is what lets the ledger's CHECK constraints mean something.
  */
 const OP_KIND: Readonly<Record<string, string>> = {
+  'doc.create': 'doc.create',
+  'doc.update': 'doc.update',
+  'doc.delete': 'doc.delete',
   'doc.block.create': 'block.create',
   'doc.block.update': 'block.update',
   'doc.block.delete': 'block.delete',
@@ -246,7 +249,7 @@ export class SqliteStore implements StorePort {
       screen: null,
       pins: [],
       pinSeq: 0,
-      doc: null,
+      docs: [],
       proposal: null,
       graph: { nodes: [], links: [] },
       graphProposal: null,
@@ -280,13 +283,13 @@ export class SqliteStore implements StorePort {
             screen.id,
           );
 
-    const docRow = oneRow<DocRow>(
+    const docRows = allRows<DocRow>(
       this.#db,
-      'SELECT * FROM doc WHERE project_id = ? ORDER BY coalesce(updated_at, created_at) DESC, rowid DESC LIMIT 1',
+      'SELECT * FROM doc WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, rowid',
       projectId,
     );
-    const doc = docRow === undefined ? null : docFromRows(docRow, this.#readBlocks(docRow.id));
-    const proposal = doc === null ? null : this.#readProposal(doc.id);
+    const docs = docRows.map((row) => docFromRows(row, this.#readBlocks(row.id)));
+    const proposal = docs.length === 0 ? null : this.#readProposal(projectId);
     const graphNodes = allRows<ObjRow>(
       this.#db,
       `SELECT * FROM obj WHERE project_id = ? AND deleted_at IS NULL AND (
@@ -317,7 +320,7 @@ export class SqliteStore implements StorePort {
         updatedAt: row.updated_at,
         screen,
         pins,
-        doc,
+        docs,
         proposal,
         graphNodes,
         links,
@@ -388,7 +391,7 @@ export class SqliteStore implements StorePort {
     const project = await this.readProject(projectId);
     if (project === null) throw new Error(`no project ${projectId} in this database`);
 
-    const adopt = this.#findAdoptable(projectId, project.doc?.id ?? null, seq);
+    const adopt = this.#findAdoptable(projectId, seq);
     if (adopt === null) {
       throw new DomainError(
         'invalid_input',
@@ -401,19 +404,34 @@ export class SqliteStore implements StorePort {
     if (adopt.kind === 'graph.proposal.adopt') {
       return this.#revertGraph(project, adopt, at, actor);
     }
-    if (project.doc === null) {
+    if (adopt.kind === 'doc.delete') {
+      return this.#revertDocDelete(projectId, project, adopt, at, actor);
+    }
+    // The adopt row's target (and the snapshot's docId) names the doc it
+    // touched; with a registry that doc has to be found, not assumed.
+    const snapshot = DocSnapshotSchema.parse(JSON.parse(adopt.before ?? '{}'));
+    const current = project.docs.find((doc) => doc.id === snapshot.docId);
+    if (current === undefined) {
       throw new DomainError('doc_missing', '이 프로젝트에는 되돌릴 문서가 없습니다');
     }
-    const snapshot = DocSnapshotSchema.parse(JSON.parse(adopt.before ?? '{}'));
-    const currentSnapshot = snapshotOfBlocks(project.doc, snapshot.entries.map((entry) => entry.blockId), project.doc.rev);
-    const doc = restoreSnapshot(project.doc, snapshot, at);
+    const currentSnapshot = snapshotOfBlocks(
+      current,
+      snapshot.entries.map((entry) => entry.blockId),
+      current.rev,
+    );
+    const doc = restoreSnapshot(current, snapshot, at);
     // The decision was undone: the proposal is no longer adopted, and the
     // revert row below is what says it was an undo rather than a refusal.
     const proposal: Proposal | null =
       project.proposal === null || project.proposal.state !== 'adopted'
         ? project.proposal
         : { ...project.proposal, state: 'rejected', decidedAt: at };
-    const next: Project = { ...project, doc, proposal, updatedAt: at };
+    const next: Project = {
+      ...project,
+      docs: project.docs.map((candidate) => (candidate.id === doc.id ? doc : candidate)),
+      proposal,
+      updatedAt: at,
+    };
 
     transaction(this.#db, () => {
       this.#writeProject(project, next, at);
@@ -443,12 +461,7 @@ export class SqliteStore implements StorePort {
 
   /** What a revert button would undo, or null when there is nothing to undo. */
   lastRevertable(projectId: string): RevertableOp | null {
-    const docRow = oneRow<DocRow>(
-      this.#db,
-      'SELECT * FROM doc WHERE project_id = ? ORDER BY coalesce(updated_at, created_at) DESC, rowid DESC LIMIT 1',
-      projectId,
-    );
-    const adopt = this.#findAdoptable(projectId, docRow?.id ?? null, undefined);
+    const adopt = this.#findAdoptable(projectId, undefined);
     if (adopt === null) return null;
     const payload = JSON.parse(adopt.payload) as { summary?: string; proposalId?: string };
     if (adopt.kind === 'graph.proposal.adopt') {
@@ -461,6 +474,21 @@ export class SqliteStore implements StorePort {
         blocks: 0,
         kind: 'graph',
         nodes: before.nodes?.length ?? 0,
+      };
+    }
+    if (adopt.kind === 'doc.delete') {
+      const before = JSON.parse(adopt.before ?? 'null') as {
+        title?: string;
+        blocks?: unknown[];
+      } | null;
+      return {
+        seq: adopt.seq,
+        at: adopt.at,
+        summary: before?.title === undefined ? '문서 삭제' : `문서 삭제: ${before.title}`,
+        proposalId: null,
+        blocks: before?.blocks?.length ?? 0,
+        kind: 'doc',
+        nodes: 0,
       };
     }
     const snapshot = DocSnapshotSchema.safeParse(JSON.parse(adopt.before ?? '{}'));
@@ -589,6 +617,55 @@ export class SqliteStore implements StorePort {
     };
   }
 
+  /**
+   * Puts a deleted document back: the `doc` row loses its tombstone and every
+   * block the tombstone took with it returns as it was. The deletion's
+   * `op_log.before` holds the whole document, so nothing is rebuilt from
+   * memory. Written as its own `op_log` row, so the undo has an undo.
+   */
+  #revertDocDelete(
+    projectId: string,
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
+    const deleted = DocSchema.safeParse(JSON.parse(adopt.before ?? 'null'));
+    if (
+      !deleted.success ||
+      project.docs.some((doc) => doc.id === deleted.data.id)
+    ) {
+      throw new DomainError('invalid_input', '되돌릴 삭제 기록을 찾지 못했습니다');
+    }
+    const doc = deleted.data;
+    const next: Project = { ...project, docs: [...project.docs, doc], updatedAt: at };
+
+    transaction(this.#db, () => {
+      this.#writeProject(project, next, at);
+      this.#appendEvents(
+        projectId,
+        [{ type: 'doc.reverted', docId: doc.id, revertedSeq: adopt.seq, blocks: doc.blocks.length }],
+        at,
+      );
+      this.#insertLog({
+        at,
+        actor,
+        kind: 'doc.revert',
+        target: doc.id,
+        before: null,
+        after: doc,
+        payload: { revertedSeq: adopt.seq },
+      });
+    });
+
+    return {
+      project: next,
+      revertedSeq: adopt.seq,
+      blocks: doc.blocks.length,
+      seq: this.#lastSeq(projectId),
+    };
+  }
+
   #threadId(projectId: string): string {
     return `project:${projectId}`;
   }
@@ -610,11 +687,16 @@ export class SqliteStore implements StorePort {
     );
   }
 
-  #readProposal(docId: string): Proposal | null {
+  /**
+   * The one proposal on the table per project: whichever the project's docs
+   * produced most recently, across the whole registry.
+   */
+  #readProposal(projectId: string): Proposal | null {
     const row = oneRow<ProposalRow>(
       this.#db,
-      'SELECT * FROM proposal WHERE doc_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
-      docId,
+      `SELECT p.* FROM proposal p JOIN doc d ON d.id = p.doc_id
+        WHERE d.project_id = ? ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1`,
+      projectId,
     );
     if (row === undefined) return null;
     const ops = allRows<ProposalOpRow>(
@@ -633,29 +715,36 @@ export class SqliteStore implements StorePort {
   }
 
   /**
-   * The most recent adoption of either kind that has not been reverted yet.
-   * Both the document proposal and the graph proposal are decisions a person
-   * can take back; the ledger, not the proposal table, is what says which is
-   * still undoable.
+   * The most recent decision a person can take back: an adoption of either
+   * kind, or a document deletion. The ledger, not the proposal table, is what
+   * says which is still undoable. Targets name the project or any of its docs
+   * — tombstoned ones too, or a deletion could never be found again.
    */
   #findAdoptable(
     projectId: string,
-    docId: string | null,
     seq: number | undefined,
   ): (OpLogRow & { kind: string }) | null {
+    const targets = new Set(
+      [
+        projectId,
+        ...allRows<{ id: string }>(this.#db, 'SELECT id FROM doc WHERE project_id = ?', projectId).map(
+          (row) => row.id,
+        ),
+      ],
+    );
     const rows = allRows<OpLogRow>(
       this.#db,
       `SELECT * FROM op_log
-        WHERE kind IN ('proposal.adopt','graph.proposal.adopt')
+        WHERE kind IN ('proposal.adopt','graph.proposal.adopt','doc.delete')
         ORDER BY seq DESC`,
     );
     for (const row of rows) {
-      if (row.target !== projectId && (docId === null || row.target !== docId)) continue;
+      if (row.target === null || !targets.has(row.target)) continue;
       if (seq !== undefined && row.seq !== seq) continue;
       const reverted = oneRow<{ seq: number }>(
         this.#db,
         `SELECT seq FROM op_log
-          WHERE kind IN ('proposal.revert','graph.proposal.revert')
+          WHERE kind IN ('proposal.revert','graph.proposal.revert','doc.revert')
             AND json_extract(payload,'\$.revertedSeq') = ? LIMIT 1`,
         row.seq,
       );
@@ -719,16 +808,17 @@ export class SqliteStore implements StorePort {
     actor?: string,
   ): number {
     if (command.type === 'proposal.adopt') {
-      const doc = before.doc;
+      const doc = before.docs.find((candidate) => candidate.id === command.docId);
       const proposal = after.proposal;
-      if (doc === null || proposal === null) {
+      if (doc === undefined || proposal === null) {
         throw new Error('an adopted proposal needs the document it was built on');
       }
+      const adopted = after.docs.find((candidate) => candidate.id === doc.id) ?? doc;
       const beforeSnapshot = snapshotForPatches(doc, proposal.patches);
       const afterSnapshot = snapshotOfBlocks(
-        { ...doc, blocks: after.doc?.blocks ?? doc.blocks },
+        adopted,
         proposal.patches.map((patch) => patch.blockId),
-        after.doc?.rev ?? doc.rev,
+        adopted.rev,
       );
       return this.#insertLog({
         at,
@@ -769,10 +859,37 @@ export class SqliteStore implements StorePort {
 
     const kind = OP_KIND[command.type] ?? command.type;
     if (command.type.startsWith('doc.') || command.type.startsWith('proposal.')) {
+      // A deletion's undo needs the whole document, not one block, so the
+      // tombstone row carries the doc it removed as its `before`.
+      if (command.type === 'doc.delete') {
+        const removed = before.docs.find((candidate) => candidate.id === command.docId) ?? null;
+        return this.#insertLog({
+          at,
+          actor,
+          kind,
+          target: command.docId,
+          before: removed,
+          after: null,
+          payload: { events: events.map((event) => event.type) },
+        });
+      }
       const blockId = 'blockId' in command ? command.blockId : null;
-      const target = blockId ?? after.doc?.id ?? before.doc?.id ?? null;
-      const snapshotBefore = blockId === null ? null : findBlockBefore(before.doc, blockId);
-      const snapshotAfter = blockId === null ? null : findBlockBefore(after.doc, blockId);
+      const commandDocId = 'docId' in command ? command.docId : undefined;
+      const beforeDoc =
+        commandDocId === undefined
+          ? undefined
+          : before.docs.find((candidate) => candidate.id === commandDocId);
+      const afterDoc =
+        commandDocId === undefined
+          ? undefined
+          : after.docs.find((candidate) => candidate.id === commandDocId);
+      const created = events.find(
+        (event): event is Extract<DomainEvent, { type: 'doc.created' }> =>
+          event.type === 'doc.created',
+      );
+      const target = blockId ?? created?.doc.id ?? afterDoc?.id ?? beforeDoc?.id ?? null;
+      const snapshotBefore = blockId === null ? null : findBlockBefore(beforeDoc ?? null, blockId);
+      const snapshotAfter = blockId === null ? null : findBlockBefore(afterDoc ?? null, blockId);
       return this.#insertLog({
         at,
         actor,
@@ -850,11 +967,14 @@ export class SqliteStore implements StorePort {
       if (!kept.has(old.id)) this.#tombstone(old.id, at);
     }
 
-    if (project.doc !== null) {
-      this.#writeDoc(project.doc, project.id, project.screen?.id ?? null, at);
-      if (before !== null && before.doc !== null && before.doc.id !== project.doc.id) {
-        this.#retireDoc(before.doc, at);
-      }
+    for (const doc of project.docs) {
+      this.#writeDoc(doc, project.id, project.screen?.id ?? null, at);
+    }
+    // A doc the read had but the new state does not is a deletion: tombstone
+    // the row, never remove it.
+    const keptDocs = new Set(project.docs.map((doc) => doc.id));
+    for (const old of before?.docs ?? []) {
+      if (!keptDocs.has(old.id)) this.#retireDoc(old.id, at);
     }
 
     if (project.proposal !== null) this.#writeProposal(project.proposal);
@@ -932,16 +1052,18 @@ export class SqliteStore implements StorePort {
   #writeDoc(doc: Doc, projectId: string, screenId: string | null, at: string): void {
     this.#db
       .prepare(
-        `INSERT INTO doc(id, project_id, screen_id, title, rev, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO doc(id, project_id, screen_id, title, rev, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            screen_id  = excluded.screen_id,
            title      = excluded.title,
            rev        = excluded.rev,
+           kind       = excluded.kind,
+           deleted_at = NULL,
            updated_at = excluded.updated_at`,
       )
-      .run(doc.id, projectId, screenId, doc.title, doc.rev, doc.createdAt, at);
+      .run(doc.id, projectId, screenId, doc.title, doc.rev, doc.kind, doc.createdAt, at);
 
     const live = allRows<{ id: string }>(
       this.#db,
@@ -988,10 +1110,13 @@ export class SqliteStore implements StorePort {
     });
   }
 
-  #retireDoc(doc: Doc, at: string): void {
+  #retireDoc(docId: string, at: string): void {
     this.#db
       .prepare("UPDATE block SET state = 'deleted', updated_at = ? WHERE doc_id = ? AND state = 'live'")
-      .run(at, doc.id);
+      .run(at, docId);
+    this.#db
+      .prepare('UPDATE doc SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL')
+      .run(at, docId);
   }
 
   #writeProposal(proposal: Proposal): void {

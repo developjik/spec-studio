@@ -161,11 +161,13 @@ describe('v14 → v15 migration', () => {
       name: '주문 상세 기획',
       screen: { id: 'S_migration0001', code: 'SCR-110' },
       pins: [{ id: 'P_migration0001', number: 1, type: 'policy' }],
-      doc: {
-        id: 'D_migration0001',
-        rev: 2,
-        blocks: [{ id: 'B_migration0001' }, { id: 'B_migration0002' }],
-      },
+      docs: [
+        {
+          id: 'D_migration0001',
+          rev: 2,
+          blocks: [{ id: 'B_migration0001' }, { id: 'B_migration0002' }],
+        },
+      ],
       graph: {
         nodes: [{ id: 'N_migration0001', type: 'req' }],
         links: [{ id: 'L_migration0001', type: 'implements' }],

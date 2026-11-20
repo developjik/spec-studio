@@ -1,5 +1,6 @@
 import { normalizeProject } from '@spec-studio/core';
 import {
+  normalizeLegacyProject,
   ProjectBundleSchema,
   ProjectSchema,
   type Project,
@@ -14,7 +15,9 @@ export function loadProject(): Project | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw === null) return null;
-    const parsed = ProjectSchema.safeParse(JSON.parse(raw));
+    // localStorage written before the registry carries one `doc`; reading it
+    // is the same as a registry with that single document.
+    const parsed = ProjectSchema.safeParse(normalizeLegacyProject(JSON.parse(raw)));
     return parsed.success ? normalizeProject(parsed.data) : null;
   } catch {
     return null;
@@ -42,7 +45,7 @@ export function clearStoredProject(): void {
 }
 
 export function parseProjectFile(text: string): Project {
-  const parsed = ProjectSchema.safeParse(JSON.parse(text));
+  const parsed = ProjectSchema.safeParse(normalizeLegacyProject(JSON.parse(text)));
   if (!parsed.success) {
     throw new Error('spec-studio 프로젝트 JSON이 아닙니다.');
   }
@@ -81,7 +84,7 @@ export function parseBundleFile(text: string): ProjectBundle {
   if (asBundle.success) {
     return { ...asBundle.data, project: normalizeProject(asBundle.data.project) };
   }
-  const asProject = ProjectSchema.safeParse(raw);
+  const asProject = ProjectSchema.safeParse(normalizeLegacyProject(raw));
   if (asProject.success) {
     return bundleOf(normalizeProject(asProject.data));
   }

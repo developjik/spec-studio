@@ -65,7 +65,7 @@ interface Envelope {
     id: string;
     pins: Array<{ id: string; number: number; title: string }>;
     screen: { id: string; figmaUrl?: string | null } | null;
-    doc?: {
+    docs: Array<{
       id: string;
       rev: number;
       blocks: Array<{
@@ -73,7 +73,7 @@ interface Envelope {
         text: string;
         pinRefs: Array<{ pinId: string }>;
       }>;
-    } | null;
+    }>;
     proposal?: { id: string; state: string; summary: string; patches: unknown[] } | null;
     graph?: {
       nodes: Array<{ id: string; type: string; title: string; state: string }>;
@@ -347,8 +347,8 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
   it('links a paragraph to a pin, marks it stale, adopts one card and reverts it', async () => {
     const projectId = await project();
     const opened = await api<Envelope>(daemon, `/api/projects/${projectId}`);
-    const docId = opened.body.project?.doc?.id as string;
-    expect(opened.body.project?.doc?.blocks).toEqual([]);
+    const docId = opened.body.project?.docs[0]?.id as string;
+    expect(opened.body.project?.docs[0]?.blocks).toEqual([]);
     expect(opened.body.revert).toBeNull();
 
     const added = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
@@ -361,22 +361,22 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
         },
       },
     });
-    const blockId = added.body.project?.doc?.blocks[0]?.id as string;
+    const blockId = added.body.project?.docs[0]?.blocks[0]?.id as string;
     const pinId = opened.body.project?.pins[0]?.id as string;
 
     const linked = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'doc.pin.link', docId, blockId, pinId } },
     });
-    expect(linked.body.project?.doc?.blocks[0]?.pinRefs).toHaveLength(1);
-    expect(linked.body.project?.doc?.blocks[0]?.text).toContain('[핀] #1 취소 요청');
-    const originalText = linked.body.project?.doc?.blocks[0]?.text as string;
+    expect(linked.body.project?.docs[0]?.blocks[0]?.pinRefs).toHaveLength(1);
+    expect(linked.body.project?.docs[0]?.blocks[0]?.text).toContain('[핀] #1 취소 요청');
+    const originalText = linked.body.project?.docs[0]?.blocks[0]?.text as string;
 
     // a pin edit makes the paragraph stale; a move does not
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, anchor: { x: 0.3, y: 0.4 } } },
     });
     const moved = await api<Envelope>(daemon, `/api/projects/${projectId}`);
-    expect(moved.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(moved.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
 
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, title: '취소 요청 버튼' } },
@@ -395,7 +395,7 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
       body: { command: { type: 'proposal.adopt', docId, proposalId: proposal?.id } },
     });
     expect(adopted.body.opSeq).toBeGreaterThan(0);
-    expect(adopted.body.project?.doc?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
+    expect(adopted.body.project?.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
     expect(adopted.body.project?.proposal?.state).toBe('adopted');
 
     const beforeRevert = await api<Envelope>(daemon, `/api/projects/${projectId}`);
@@ -407,14 +407,14 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     });
     expect(reverted.status).toBe(200);
     expect(reverted.body.revertedSeq).toBe(adopted.body.opSeq);
-    expect(reverted.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(reverted.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
     expect(reverted.body.revert).toBeNull();
 
     // survives a restart: same blocks, same text, nothing left to undo
     await daemon.close();
     const reopened = await boot();
     const after = await api<Envelope>(reopened, `/api/projects/${projectId}`);
-    expect(after.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(after.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
     expect(after.body.project?.proposal?.state).toBe('rejected');
     expect(after.body.revert).toBeNull();
   });

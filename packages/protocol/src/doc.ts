@@ -5,7 +5,8 @@ import { PinIdSchema } from './ids.js';
  * A document is the prose side of a screen: the paragraphs a person reads,
  * each one allowed to stand on the numbered pins the screen already carries.
  * Blocks have stable ids because a proposal, a citation and a revert all need
- * to name the same paragraph before and after an edit.
+ * to name the same paragraph before and after an edit. A project keeps a
+ * registry of these, and a deleted row stays (tombstoned) rather than leaving.
  */
 export const DocIdSchema = z
   .string()
@@ -38,6 +39,14 @@ export const BLOCK_TYPE_LABEL: Record<BlockType, string> = {
 };
 
 /**
+ * What a document is for. `spec` is the prose a screen's pins stand under;
+ * `research` is notes that may cite the same pins without being the spec.
+ */
+export const DOC_KINDS = ['spec', 'research'] as const;
+export const DocKindSchema = z.enum(DOC_KINDS);
+export type DocKind = z.infer<typeof DocKindSchema>;
+
+/**
  * A pin a block stands on. `fingerprint` is the pin's spec (type · title ·
  * body) at the moment the link was made or last confirmed, and it is what
  * decides the `stale` badge: dragging a pin's anchor moves the pin without
@@ -68,6 +77,10 @@ export const DocSchema = z.object({
   /** Commit counter: one increment per adopted command, not per keystroke. */
   rev: z.number().int().min(0),
   blocks: z.array(BlockSchema),
+  /** What the document is for; the registry may hold spec and research notes. */
+  kind: DocKindSchema.default('spec'),
+  /** Set the moment the row was tombstoned; live docs always carry null. */
+  deletedAt: z.string().nullable().default(null),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

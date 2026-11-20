@@ -94,7 +94,7 @@ export function createProject(input: { id: string; name: string; at: string }): 
     screen: null,
     pins: [],
     pinSeq: 0,
-    doc: null,
+    docs: [],
     proposal: null,
     graph: { nodes: [], links: [] },
     graphProposal: null,
@@ -149,12 +149,14 @@ function requireScreen(project: Project, screenId: string): Screen {
   return screen;
 }
 
+/**
+ * The registry lookup every doc command starts from. There is one registry, so
+ * "another document" and "no such document" are the same failure.
+ */
 function requireDoc(project: Project, docId: string): Doc {
-  if (project.doc === null) throw new DomainError('doc_missing', '문서가 아직 없습니다');
-  if (project.doc.id !== docId) {
-    throw new DomainError('doc_mismatch', 'the command targets a different document');
-  }
-  return project.doc;
+  const doc = project.docs.find((candidate) => candidate.id === docId);
+  if (doc === undefined) throw new DomainError('doc_missing', `문서가 없습니다: ${docId}`);
+  return doc;
 }
 
 function requireOpenProposal(project: Project, proposalId: string): Proposal {
@@ -181,43 +183,28 @@ export function execute(
     case 'screen.attach': {
       const screen = command.screen;
       const differentScreen = project.screen !== null && project.screen.id !== screen.id;
-      if (differentScreen) {
-        // A new screen is a new numbering space; the previous pins stay with
-        // the previous screen and are not renumbered into this one. Its
-        // document is new too — the prose described that screen, not this one.
-        const doc = createDoc({
-          id: ctx.nextId('doc'),
-          title: `${screen.title} 문서`,
-          at: ctx.at,
-        });
+      const carried = differentScreen
+        ? // A new screen is a new numbering space: the previous pins stay with
+          // the previous screen and are not renumbered into this one, and a
+          // proposal built on those pins leaves the table. The document
+          // registry survives — its docs never belonged to one screen only.
+          { ...project, screen, pins: [], pinSeq: 0, proposal: null }
+        : { ...project, screen };
+      // A screen only brings its own auto-doc when the registry is empty; the
+      // v1 flow (attach → a document exists) still holds.
+      if (project.docs.length > 0) {
         return {
-          project: {
-            ...project,
-            screen,
-            pins: [],
-            pinSeq: 0,
-            doc,
-            proposal: null,
-            updatedAt: ctx.at,
-          },
-          events: [
-            { type: 'screen.attached', screen },
-            { type: 'doc.attached', doc },
-          ],
+          project: { ...carried, updatedAt: ctx.at },
+          events: [{ type: 'screen.attached', screen }],
         };
       }
-      const doc =
-        project.doc ??
-        createDoc({ id: ctx.nextId('doc'), title: `${screen.title} 문서`, at: ctx.at });
+      const doc = createDoc({ id: ctx.nextId('doc'), title: `${screen.title} 문서`, at: ctx.at });
       return {
-        project: { ...project, screen, doc, updatedAt: ctx.at },
-        events:
-          project.doc === null
-            ? [
-                { type: 'screen.attached', screen },
-                { type: 'doc.attached', doc },
-              ]
-            : [{ type: 'screen.attached', screen }],
+        project: { ...carried, docs: [...project.docs, doc], updatedAt: ctx.at },
+        events: [
+          { type: 'screen.attached', screen },
+          { type: 'doc.attached', doc },
+        ],
       };
     }
 
@@ -316,6 +303,56 @@ export function execute(
       };
     }
 
+    // ── document registry (W3/F5) ──────────────────────────────────────
+    case 'doc.create': {
+      const doc = createDoc({
+        id: ctx.nextId('doc'),
+        title: command.title,
+        kind: command.kind,
+        at: ctx.at,
+      });
+      return {
+        project: { ...project, docs: [...project.docs, doc], updatedAt: ctx.at },
+        events: [{ type: 'doc.created', doc }],
+      };
+    }
+
+    case 'doc.update': {
+      const doc = requireDoc(project, command.docId);
+      const title = command.title.trim();
+      if (title === '') throw new DomainError('invalid_input', '문서에는 제목이 필요합니다');
+      const next: Doc = { ...doc, title, updatedAt: ctx.at };
+      return {
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) => (candidate.id === doc.id ? next : candidate)),
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'doc.renamed', docId: doc.id, title }],
+      };
+    }
+
+    case 'doc.delete': {
+      const doc = requireDoc(project, command.docId);
+      // A proposal still on the table for this doc cannot outlive it; the
+      // decision is recorded the same way a refusal records it.
+      const proposal =
+        project.proposal !== null &&
+        project.proposal.docId === doc.id &&
+        project.proposal.state === 'open'
+          ? { ...project.proposal, state: 'rejected' as const, decidedAt: ctx.at }
+          : project.proposal;
+      return {
+        project: {
+          ...project,
+          docs: project.docs.filter((candidate) => candidate.id !== doc.id),
+          proposal,
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'doc.deleted', docId: doc.id }],
+      };
+    }
+
     // ── document blocks ────────────────────────────────────────────────
     case 'doc.block.create': {
       const doc = requireDoc(project, command.docId);
@@ -332,7 +369,13 @@ export function execute(
           : command.afterBlockId;
       const blocks = insertBlock(doc, block, after);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.created', block }],
       };
     }
@@ -354,7 +397,13 @@ export function execute(
         candidate.id === block.id ? block : candidate,
       );
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.updated', block }],
       };
     }
@@ -366,7 +415,13 @@ export function execute(
       }
       const blocks = doc.blocks.filter((block) => block.id !== command.blockId);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.deleted', docId: doc.id, blockId: command.blockId }],
       };
     }
@@ -375,7 +430,13 @@ export function execute(
       const doc = requireDoc(project, command.docId);
       const blocks = moveBlock(doc, command.blockId, command.afterBlockId, ctx.at);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [
           {
             type: 'block.moved',
@@ -406,10 +467,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -441,10 +506,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -484,10 +553,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -530,14 +603,18 @@ export function execute(
       const doc = requireDoc(project, command.docId);
       const proposal = requireOpenProposal(project, command.proposalId);
       if (proposal.docId !== doc.id) {
-        throw new DomainError('doc_mismatch', '이 제안은 다른 문서의 것입니다');
+        // One registry: a proposal naming another doc is the same failure as
+        // naming none.
+        throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       }
       const applied = applyPatches(doc, proposal.patches, ctx.at);
       const decided: Proposal = { ...proposal, state: 'adopted', decidedAt: ctx.at };
       return {
         project: {
           ...project,
-          doc: applied.doc,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? applied.doc : candidate,
+          ),
           proposal: decided,
           updatedAt: ctx.at,
         },

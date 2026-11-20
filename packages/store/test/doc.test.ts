@@ -64,7 +64,7 @@ async function seeded(store: SqliteStore): Promise<string> {
       anchor: draft.anchor,
     });
   }
-  const doc = (await store.readProject(project.id))?.doc;
+  const doc = (await store.readProject(project.id))?.docs[0];
   if (doc === null || doc === undefined) throw new Error('the screen did not bring a document');
   const created = await store.execute(project.id, {
     type: 'doc.block.create',
@@ -72,7 +72,7 @@ async function seeded(store: SqliteStore): Promise<string> {
     blockType: 'paragraph',
     text: '배송이 시작되기 전까지만 취소할 수 있다.',
   });
-  const blockId = created.project.doc?.blocks[0]?.id as string;
+  const blockId = created.project.docs[0]?.blocks[0]?.id as string;
   const pinId = created.project.pins[0]?.id as string;
   await store.execute(project.id, { type: 'doc.pin.link', docId: doc.id, blockId, pinId });
   return project.id;
@@ -101,7 +101,7 @@ describe('the document in SQLite', () => {
   it('keeps block order and text across a reopen', async () => {
     const store = open();
     const projectId = await seeded(store);
-    const doc = (await store.readProject(projectId))?.doc;
+    const doc = (await store.readProject(projectId))?.docs[0];
     await store.execute(projectId, {
       type: 'doc.block.create',
       docId: doc?.id as string,
@@ -113,7 +113,7 @@ describe('the document in SQLite', () => {
     stores.length = 0;
 
     const second = open();
-    const reopened = (await second.readProject(projectId))?.doc;
+    const reopened = (await second.readProject(projectId))?.docs[0];
     expect(reopened?.blocks[0]?.text).toBe('취소 정책');
     expect(reopened?.blocks[1]?.text).toContain('배송이 시작되기 전까지만 취소할 수 있다.');
     expect(reopened?.blocks[1]?.text).toContain('[핀] #1 취소 요청');
@@ -124,10 +124,10 @@ describe('the document in SQLite', () => {
     const store = open();
     const projectId = await seeded(store);
     const before = await store.readProject(projectId);
-    const docId = before?.doc?.id as string;
-    const blockId = before?.doc?.blocks[0]?.id as string;
+    const docId = before?.docs[0]?.id as string;
+    const blockId = before?.docs[0]?.blocks[0]?.id as string;
     const pinId = before?.pins[0]?.id as string;
-    const originalText = before?.doc?.blocks[0]?.text as string;
+    const originalText = before?.docs[0]?.blocks[0]?.text as string;
 
     // the pin's spec moves on, which is what makes the paragraph stale
     await store.execute(projectId, {
@@ -154,7 +154,7 @@ describe('the document in SQLite', () => {
       docId,
       proposalId: proposal?.id as string,
     });
-    expect(adopted.project.doc?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
+    expect(adopted.project.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
     expect(adopted.project.proposal?.state).toBe('adopted');
 
     // the undo record is in the file, before anything in memory
@@ -175,7 +175,7 @@ describe('the document in SQLite', () => {
 
     const reverted = await store.revert(projectId);
     expect(reverted.revertedSeq).toBe(adopted.opSeq);
-    expect(reverted.project.doc?.blocks[0]?.text).toBe(originalText);
+    expect(reverted.project.docs[0]?.blocks[0]?.text).toBe(originalText);
     expect(reverted.project.proposal?.state).toBe('rejected');
     expect(store.lastRevertable(projectId)).toBeNull();
 
@@ -191,14 +191,14 @@ describe('the document in SQLite', () => {
     stores.length = 0;
     const second = open();
     const after = await second.readProject(projectId);
-    expect(after?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(after?.docs[0]?.blocks[0]?.text).toBe(originalText);
     expect(second.lastRevertable(projectId)).toBeNull();
   });
 
   it('removes a block an adopted insert added, and keeps the rest', async () => {
     const store = open();
     const projectId = await seeded(store);
-    const docId = (await store.readProject(projectId))?.doc?.id as string;
+    const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
     const created = await store.execute(projectId, { type: 'proposal.create', docId });
     expect(created.project.proposal?.patches[0]?.before).toBeNull();
 
@@ -208,10 +208,10 @@ describe('the document in SQLite', () => {
       proposalId: created.project.proposal?.id as string,
     });
     const adopted = await store.readProject(projectId);
-    expect(adopted?.doc?.blocks).toHaveLength(2);
+    expect(adopted?.docs[0]?.blocks).toHaveLength(2);
 
     const reverted = await store.revert(projectId);
-    expect(reverted.project.doc?.blocks).toHaveLength(1);
+    expect(reverted.project.docs[0]?.blocks).toHaveLength(1);
     const states = store.database
       .prepare('SELECT state, count(*) AS n FROM block GROUP BY state ORDER BY state')
       .all() as Array<{ state: string; n: number }>;
@@ -224,7 +224,7 @@ describe('the document in SQLite', () => {
   it('refuses a second revert of the same adoption', async () => {
     const store = open();
     const projectId = await seeded(store);
-    const docId = (await store.readProject(projectId))?.doc?.id as string;
+    const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
     const created = await store.execute(projectId, { type: 'proposal.create', docId });
     const adopted = await store.execute(projectId, {
       type: 'proposal.adopt',
@@ -238,14 +238,14 @@ describe('the document in SQLite', () => {
   it('names ledger rows with the schema vocabulary', async () => {
     const store = open();
     const projectId = await seeded(store);
-    const docId = (await store.readProject(projectId))?.doc?.id as string;
+    const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
     const created = await store.execute(projectId, {
       type: 'doc.block.create',
       docId,
       blockType: 'paragraph',
       text: '둘째 문단',
     });
-    const blockId = created.project.doc?.blocks[1]?.id as string;
+    const blockId = created.project.docs[0]?.blocks[1]?.id as string;
     await store.execute(projectId, { type: 'doc.block.update', docId, blockId, text: '고친 문단' });
     await store.execute(projectId, { type: 'doc.block.delete', docId, blockId });
     const kinds = store.database

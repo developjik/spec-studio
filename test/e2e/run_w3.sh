@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the W3 end-to-end check: mock Confluence + daemon + Vite + Playwright.
+# Runs the W3 end-to-end check: mock Confluence + daemon + Vite + Playwright,
+# plus the AC-4 doc registry (research doc beside the spec, URL ?doc=, delete).
 # Usage: test/e2e/run_w3.sh   (from the repository root)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
