@@ -57,6 +57,10 @@ function context(): ExecuteContext {
           return `L_${String(n).padStart(12, '0')}`;
         case 'graphProposal':
           return `GP_${String(n).padStart(12, '0')}`;
+        case 'idea':
+          return `I_${String(n).padStart(12, '0')}`;
+        case 'evidence':
+          return `E_${String(n).padStart(12, '0')}`;
       }
     },
   };
@@ -240,9 +244,9 @@ describe('one proposal, one decision, one revert', () => {
     const before = project.docs[0]?.blocks[0]?.text;
     const created = run(project, { type: 'proposal.create', docId }, ctx);
 
-    expect(created.proposal?.state).toBe('open');
-    expect(created.proposal?.patches).toHaveLength(1);
-    expect(created.proposal?.summary).toContain('#1');
+    expect(created.proposals[0]?.state).toBe('open');
+    expect(created.proposals[0]?.patches).toHaveLength(1);
+    expect(created.proposals[0]?.summary).toContain('#1');
     expect(created.docs[0]?.blocks[0]?.text).toBe(before);
   });
 
@@ -252,14 +256,14 @@ describe('one proposal, one decision, one revert', () => {
     const beforeText = beforeDoc.blocks[0]?.text as string;
 
     const created = run(project, { type: 'proposal.create', docId }, ctx);
-    const proposal = created.proposal!;
+    const proposal = created.proposals[0]!;
     const adopted = run(
       created,
       { type: 'proposal.adopt', docId, proposalId: proposal.id },
       ctx,
     );
 
-    expect(adopted.proposal?.state).toBe('adopted');
+    expect(adopted.proposals[0]?.state).toBe('adopted');
     expect(adopted.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
     expect(staleBadges(adopted.docs[0]!, adopted.pins)).toEqual([]);
 
@@ -280,7 +284,7 @@ describe('one proposal, one decision, one revert', () => {
   it('proposes an insert when nothing is stale, and a revert removes it again', () => {
     const { project, ctx } = seeded();
     const created = run(project, { type: 'proposal.create', docId }, ctx);
-    const proposal = created.proposal!;
+    const proposal = created.proposals[0]!;
     expect(proposal.patches).toHaveLength(1);
     expect(proposal.patches[0]?.before).toBeNull();
     expect(proposal.patches[0]?.after.text).toContain('이 화면에서 확인할 것');
@@ -305,7 +309,7 @@ describe('one proposal, one decision, one revert', () => {
     next = run(next, { type: 'doc.pin.link', docId, blockId, pinId: pin2 }, ctx);
     next = run(next, { type: 'pin.delete', screenId: SCREEN.id, pinId: pin2 }, ctx);
     const created = run(next, { type: 'proposal.create', docId }, ctx);
-    const patch = created.proposal?.patches[0];
+    const patch = created.proposals[0]?.patches[0];
     expect(patch?.after.text).not.toContain('배송 시작 후 취소 불가');
     expect(patch?.after.pinRefs.map((ref) => ref.pinId)).toEqual([pin1]);
   });
@@ -316,10 +320,10 @@ describe('one proposal, one decision, one revert', () => {
     const text = created.docs[0]?.blocks[0]?.text;
     const rejected = run(
       created,
-      { type: 'proposal.reject', docId, proposalId: created.proposal!.id },
+      { type: 'proposal.reject', docId, proposalId: created.proposals[0]!.id },
       ctx,
     );
-    expect(rejected.proposal?.state).toBe('rejected');
+    expect(rejected.proposals[0]?.state).toBe('rejected');
     expect(rejected.docs[0]?.blocks[0]?.text).toBe(text);
   });
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { DocSchema } from './doc';
+import { EvidenceSchema } from './evidence';
 import { GraphProposalSchema, GraphSchema } from './graph';
+import { IdeaSchema } from './idea';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
 import { ScreenSchema } from './screen';
@@ -11,10 +13,11 @@ import { ScreenSchema } from './screen';
  * be deleted while the mark stays, which is what keeps numbers from being
  * reused.
  *
- * W4 adds the document registry beside the screen (`docs`) and the one
- * proposal currently on the table (`proposal`). They are part of the project
- * state because a command must change them in the same transaction as the
- * pins it reads, and because a reload must find them where it left them.
+ * W4 adds the document registry beside the screen (`docs`) and the proposals
+ * on the table (`proposals`) — the latest one per doc, open or decided. They
+ * are part of the project state because a command must change them in the same
+ * transaction as the pins it reads, and because a reload must find them where
+ * it left them.
  */
 export const ProjectSchema = z.object({
   version: z.literal(1),
@@ -24,7 +27,7 @@ export const ProjectSchema = z.object({
   pins: z.array(PinSchema),
   pinSeq: z.number().int().min(0),
   docs: z.array(DocSchema).default([]),
-  proposal: ProposalSchema.nullable().default(null),
+  proposals: z.array(ProposalSchema).default([]),
   /**
    * v1 object graph: the four editable node kinds and the seven named links.
    * Screens and pins live in their own fields above; the graph view joins the
@@ -34,6 +37,13 @@ export const ProjectSchema = z.object({
   graph: GraphSchema.default({ nodes: [], links: [] }),
   /** The pin-derived drafts waiting for one decision, or the last decision. */
   graphProposal: GraphProposalSchema.nullable().default(null),
+  /**
+   * The idea inbox and the research board's evidence (E1 §4 F2·F3). Both are
+   * `obj` kinds without a parent or a canvas node; they live here the way pins
+   * do so a capture and the links that cite it share one transaction.
+   */
+  ideas: z.array(IdeaSchema).default([]),
+  evidence: z.array(EvidenceSchema).default([]),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

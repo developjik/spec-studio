@@ -138,7 +138,7 @@ describe('the document in SQLite', () => {
     });
 
     const created = await store.execute(projectId, { type: 'proposal.create', docId });
-    const proposal = created.project.proposal;
+    const proposal = created.project.proposals[0];
     expect(proposal?.state).toBe('open');
     expect(proposal?.patches).toHaveLength(1);
 
@@ -155,7 +155,7 @@ describe('the document in SQLite', () => {
       proposalId: proposal?.id as string,
     });
     expect(adopted.project.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
-    expect(adopted.project.proposal?.state).toBe('adopted');
+    expect(adopted.project.proposals[0]?.state).toBe('adopted');
 
     // the undo record is in the file, before anything in memory
     const log = store.database
@@ -176,7 +176,7 @@ describe('the document in SQLite', () => {
     const reverted = await store.revert(projectId);
     expect(reverted.revertedSeq).toBe(adopted.opSeq);
     expect(reverted.project.docs[0]?.blocks[0]?.text).toBe(originalText);
-    expect(reverted.project.proposal?.state).toBe('rejected');
+    expect(reverted.project.proposals[0]?.state).toBe('rejected');
     expect(store.lastRevertable(projectId)).toBeNull();
 
     // the revert is its own op_log row, so the undo has an undo
@@ -200,12 +200,12 @@ describe('the document in SQLite', () => {
     const projectId = await seeded(store);
     const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
     const created = await store.execute(projectId, { type: 'proposal.create', docId });
-    expect(created.project.proposal?.patches[0]?.before).toBeNull();
+    expect(created.project.proposals[0]?.patches[0]?.before).toBeNull();
 
     await store.execute(projectId, {
       type: 'proposal.adopt',
       docId,
-      proposalId: created.project.proposal?.id as string,
+      proposalId: created.project.proposals[0]?.id as string,
     });
     const adopted = await store.readProject(projectId);
     expect(adopted?.docs[0]?.blocks).toHaveLength(2);
@@ -229,7 +229,7 @@ describe('the document in SQLite', () => {
     const adopted = await store.execute(projectId, {
       type: 'proposal.adopt',
       docId,
-      proposalId: created.project.proposal?.id as string,
+      proposalId: created.project.proposals[0]?.id as string,
     });
     await store.revert(projectId, adopted.opSeq);
     await expect(store.revert(projectId, adopted.opSeq)).rejects.toThrow(/찾지 못했습니다/);

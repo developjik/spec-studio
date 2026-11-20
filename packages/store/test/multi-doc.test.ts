@@ -161,8 +161,8 @@ describe('the document registry in SQLite', () => {
     const docId = (await store.readProject(projectId))?.docs[0]?.id as string;
     await store.execute(projectId, { type: 'proposal.create', docId });
     const deleted = await store.execute(projectId, { type: 'doc.delete', docId });
-    expect(deleted.project.proposal?.state).toBe('rejected');
-    expect(deleted.project.proposal?.decidedAt).not.toBeNull();
+    expect(deleted.project.proposals.find((p) => p.docId === docId)?.state).toBe('rejected');
+    expect(deleted.project.proposals.find((p) => p.docId === docId)?.decidedAt).not.toBeNull();
   });
 
   it('puts a deleted doc and its blocks back through the ledger', async () => {

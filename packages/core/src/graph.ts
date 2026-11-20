@@ -134,6 +134,10 @@ export function normalizeGraph(project: Project): Graph {
   if (project.screen !== null) known.add(project.screen.id);
   for (const pin of project.pins) known.add(pin.id);
   for (const node of project.graph.nodes) known.add(node.id);
+  // Ideas and evidence are link ends too (A1) — a references link naming an
+  // evidence row is not a ghost edge.
+  for (const idea of project.ideas) known.add(idea.id);
+  for (const evidence of project.evidence) known.add(evidence.id);
   const links = project.graph.links.filter(
     (link) => known.has(link.src) && known.has(link.dst) && link.src !== link.dst,
   );
@@ -535,17 +539,25 @@ export function buildGraphProposalFromDraft(
     );
   }
 
-  const resolveEnd = (ref: string): { ref: string; type: GraphNodeType } | null => {
+  type DraftEnd = { ref: string; kind: 'canvas'; type: GraphNodeType } | { ref: string; kind: 'idea' };
+  const resolveEnd = (ref: string): DraftEnd | null => {
     const at = ref.indexOf(':');
     const scheme = ref.slice(0, at);
     const value = ref.slice(at + 1);
     if (scheme === 'item') {
       const type = keyTypes.get(value);
-      return type === undefined ? null : { ref: `item:${value}`, type };
+      return type === undefined ? null : { ref: `item:${value}`, kind: 'canvas', type };
     }
     if (scheme === 'pin') {
       const pin = pinsByNumber.get(Number(value));
-      return pin === undefined ? null : { ref: `pin:${pin.id}`, type: 'pin' };
+      return pin === undefined ? null : { ref: `pin:${pin.id}`, kind: 'canvas', type: 'pin' };
+    }
+    if (scheme === 'idea') {
+      // A spec draft may name an idea as a `derived_from` destination; an id
+      // the inbox does not have is dropped here, before it reaches the card.
+      return project.ideas.some((idea) => idea.id === value)
+        ? { ref: `idea:${value}`, kind: 'idea' }
+        : null;
     }
     return null;
   };
@@ -557,7 +569,16 @@ export function buildGraphProposalFromDraft(
     const dst = resolveEnd(draftLink.dst);
     if (src === null || dst === null) continue;
     if (src.ref === dst.ref) continue;
-    if (!linkEndsAllow(draftLink.type, src.type, dst.type)) continue;
+    // An idea end is checked against the kind-level registry (A1): only
+    // `derived_from` may arrive at one, and only from an editable node.
+    const allowed =
+      src.kind === 'idea' || dst.kind === 'idea'
+        ? draftLink.type === 'derived_from' &&
+          dst.kind === 'idea' &&
+          src.kind === 'canvas' &&
+          src.type !== 'pin'
+        : linkEndsAllow(draftLink.type, src.type, dst.type);
+    if (!allowed) continue;
     const key = `${draftLink.type}:${src.ref}:${dst.ref}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -616,10 +637,15 @@ function describeCounts(counts: Record<EditableNodeType, number>): string {
   return parts.join(' · ');
 }
 
-/** Keys of a proposal, resolved to real ids only when it is adopted. */
+/**
+ * Keys of a proposal, resolved to real ids only when it is adopted. An `idea:`
+ * ref resolves only while the inbox still has that idea — the caller passes
+ * the live id set, so an adopt naming a deleted idea fails whole, like a pin.
+ */
 export function resolveProposalRef(
   ref: string,
   created: ReadonlyMap<string, string>,
+  ideaIds?: ReadonlySet<string>,
 ): string | null {
   const at = ref.indexOf(':');
   if (at < 0) return null;
@@ -627,7 +653,25 @@ export function resolveProposalRef(
   const value = ref.slice(at + 1);
   if (scheme === 'item') return created.get(value) ?? null;
   if (scheme === 'pin' || scheme === 'node') return value;
+  if (scheme === 'idea') {
+    return ideaIds !== undefined && ideaIds.has(value) ? value : null;
+  }
   return null;
+}
+
+/**
+ * F3-3's research-side warning: requirement nodes with no `references` link
+ * to an evidence object. The spec view lists these as 미근거; a requirement
+ * cited only by pins or policies still counts as ungrounded here, because
+ * research grounding is evidence or nothing.
+ */
+export function ungroundedRequirements(project: Project): GraphNode[] {
+  const evidenceIds = new Set(project.evidence.map((row) => row.id));
+  const grounded = new Set<string>();
+  for (const link of project.graph.links) {
+    if (link.type === 'references' && evidenceIds.has(link.dst)) grounded.add(link.src);
+  }
+  return project.graph.nodes.filter((node) => node.type === 'req' && !grounded.has(node.id));
 }
 
 export function makeGraphNode(input: {

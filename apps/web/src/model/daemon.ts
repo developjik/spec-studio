@@ -21,9 +21,17 @@ export interface DesktopBridge {
   readonly desktopVersion: string;
 }
 
+/**
+ * The desktop shell's surface: daemon facts at boot, plus the F2 quick-capture
+ * ping. Both are optional at the call site — the same bundle treats absence of
+ * `window.specstudio` as "plain browser" and changes nothing else.
+ */
 declare global {
   interface Window {
-    specstudio?: { getDaemonInfo(): DesktopBridge };
+    specstudio?: {
+      getDaemonInfo(): DesktopBridge | null;
+      onQuickCapture?(callback: () => void): () => void;
+    };
   }
 }
 
@@ -332,11 +340,17 @@ export class DaemonClient {
   /**
    * Asks the daemon for a proposal. The answer is the project *after* the card
    * was filed, so the screen and the card can never disagree about what is on
-   * the table.
+   * the table. `brief` also names the idea and the evidence it should cite.
    */
   async aiProposal(
     projectId: string,
-    input: AiRequestView & { mode: AiProposalMode; docId?: string | null },
+    input: AiRequestView & {
+      mode: AiProposalMode;
+      docId?: string | null;
+      ideaId?: string | null;
+      evidenceIds?: string[];
+      topic?: string;
+    },
   ): Promise<AiProposalOutcomeView> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/ai/proposal`, {
       method: 'POST',
@@ -347,9 +361,14 @@ export class DaemonClient {
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,
-        // Which registry doc a `doc` proposal edits; absent leaves the daemon
-        // to pick the first spec.
+        // Which registry doc a `doc`/`brief` proposal edits; absent leaves
+        // the daemon to pick the first spec (doc) or research (brief) doc.
         ...(input.docId == null ? {} : { docId: input.docId }),
+        // F3-2: the brief's inputs ride the same request; omitted means the
+        // daemon falls back to its own defaults.
+        ...(input.ideaId == null ? {} : { ideaId: input.ideaId }),
+        ...(input.evidenceIds === undefined ? {} : { evidenceIds: input.evidenceIds }),
+        ...(input.topic === undefined || input.topic === '' ? {} : { topic: input.topic }),
       },
     });
   }

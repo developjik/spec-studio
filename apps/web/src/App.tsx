@@ -6,6 +6,7 @@ import {
   graphViewNodes,
   normalizeProject,
   traceability,
+  ungroundedRequirements,
   type ExecutionResult,
   type Maturity,
 } from '@spec-studio/core';
@@ -18,6 +19,7 @@ import type {
   DomainEvent,
   Doc,
   DocKind,
+  Idea,
   Pin,
   Project,
   Screen,
@@ -28,12 +30,22 @@ import { GraphView } from './components/GraphView';
 import { EntryGate } from './components/EntryGate';
 import { CanvasStage } from './components/CanvasStage';
 import { PinPanel } from './components/PinPanel';
+import { IdeaInboxPanel, type InboxCaptureInput } from './components/IdeaInboxPanel';
+import {
+  EvidencePanel,
+  type EvidenceClipInput,
+  type EvidenceReqOption,
+} from './components/EvidencePanel';
 import type { PinDraftInput } from './components/PinComposer';
 import type { PinEditInput } from './components/PinEditor';
 import { OutputModal } from './components/OutputModal';
 import { PublishModal } from './components/PublishModal';
 import { FigmaBar } from './components/FigmaBar';
-import { AiSettingsModal, type AiPanelResult, type AiSettingsValue } from './components/AiSettingsModal';
+import {
+  AiSettingsModal,
+  type AiPanelResult,
+  type AiSettingsValue,
+} from './components/AiSettingsModal';
 import { DocPanel, type DocMode } from './components/DocPanel';
 import { newProjectId, newScreenId, nextEntityId } from './model/ids';
 import {
@@ -65,8 +77,20 @@ import {
 type Notice = { tone: 'info' | 'error'; text: string };
 
 const nowIso = () => new Date().toISOString();
+
 const nextId = (
-  kind: 'project' | 'screen' | 'pin' | 'doc' | 'block' | 'proposal' | 'node' | 'link' | 'graphProposal',
+  kind:
+    | 'project'
+    | 'screen'
+    | 'pin'
+    | 'doc'
+    | 'block'
+    | 'proposal'
+    | 'node'
+    | 'link'
+    | 'graphProposal'
+    | 'idea'
+    | 'evidence',
   nodeType?: 'req' | 'policy' | 'contract' | 'qa',
 ) => nextEntityId(kind, nodeType);
 
@@ -118,6 +142,12 @@ export default function App() {
   );
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [revertable, setRevertable] = useState<RevertableView | null>(null);
+  const [aiCardSource, setAiCardSource] = useState<{
+    proposalId: string;
+    source: AiProposalSource;
+  } | null>(null);
+  /** F2 quick capture: the desktop shortcut and the in-app button both open it. */
+  const [inboxCaptureOpen, setInboxCaptureOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<StudioView>('studio');
   const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
@@ -203,6 +233,15 @@ export default function App() {
     const outcome = saveProject(project);
     if (!outcome.ok) setNotice({ tone: 'error', text: outcome.reason });
   }, [project, daemonStatus]);
+
+  /**
+   * The desktop shell's global shortcut pings; the browser build has no
+   * `window.specstudio` and keeps the in-app 빠른 캡처 button as the only path.
+   */
+  useEffect(() => {
+    const off = window.specstudio?.onQuickCapture?.(() => setInboxCaptureOpen(true));
+    return () => off?.();
+  }, []);
 
   useEffect(() => {
     if (notice === null) return;
@@ -490,7 +529,12 @@ export default function App() {
   const doc = activeDocOf(docs, activeDocId);
   /** Handoff sheets print the spec, the same doc the daemon publishes. */
   const specDoc = activeDocOf(docs, null);
-  const proposal = project?.proposal ?? null;
+  // A doc's card is its *latest* proposal row — a fresh create appends behind
+  // the decided one it retired, so the first match can be yesterday's card.
+  const proposal =
+    doc !== null
+      ? (project?.proposals.filter((p) => p.docId === doc.id).at(-1) ?? null)
+      : null;
 
   /** The URL names the doc on screen, so a reload — or a shared link — reopens it. */
   useEffect(() => {
@@ -914,6 +958,128 @@ export default function App() {
     }
   };
 
+  // ── idea inbox · research board (E1 §4 F2·F3) ────────────────────────
+
+  const captureIdea = (input: InboxCaptureInput) => {
+    if (project === null) {
+      setNotice({ tone: 'error', text: '프로젝트를 먼저 열어야 인박스에 저장할 수 있습니다.' });
+      return;
+    }
+    // Image paste stays a screen-only thing: a data URL cannot ride the
+    // command's 500-char `image` path field, so the inbox takes text + URL.
+    const trimmedUrl = input.url.trim();
+    void runDoc({
+      type: 'idea.capture',
+      text: input.text,
+      ...(trimmedUrl === '' ? {} : { url: trimmedUrl }),
+    });
+  };
+
+  const archiveIdea = (ideaId: string) => {
+    void runDoc({ type: 'idea.archive', ideaId });
+  };
+
+  /**
+   * 승격 = 두 순차 커맨드 (§4 F2): the spec doc first, then the state move —
+   * both op_log'd, so the promotion is as undoable as the doc it created.
+   */
+  const promoteIdea = async (idea: Idea) => {
+    setBusy(true);
+    try {
+      const created = await applyCommand({
+        type: 'doc.create',
+        title: idea.title.slice(0, 120),
+        kind: 'spec',
+      });
+      if (created === null) return;
+      const docCreated = created.events.find((event) => event.type === 'doc.created');
+      await applyCommand({ type: 'idea.update', ideaId: idea.id, state: 'promoted' });
+      if (docCreated !== undefined && docCreated.type === 'doc.created') {
+        setActiveDocId(docCreated.doc.id);
+      }
+      setNotice({ tone: 'info', text: `아이디어를 스펙 문서로 승격했습니다: ${idea.title}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * The brief flow (F3-2): idea + evidence in, one decision card out. The
+   * research doc is created first when the project has none — sequential
+   * commands, because the command path is the only write path.
+   */
+  const runBrief = async (ideaId: string, evidenceIds: string[]) => {
+    if (!sqliteMode || daemonProjectId === null) {
+      setNotice({ tone: 'error', text: 'SQLite 데몬 모드에서만 브리프를 만들 수 있습니다.' });
+      return;
+    }
+    setAiBusy(true);
+    try {
+      let targetDocId = docs.find((candidate) => candidate.kind === 'research')?.id ?? null;
+      if (targetDocId === null) {
+        const created = await applyCommand({
+          type: 'doc.create',
+          title: '리서치',
+          kind: 'research',
+        });
+        if (created === null) return;
+        const docCreated = created.events.find((event) => event.type === 'doc.created');
+        if (docCreated === undefined || docCreated.type !== 'doc.created') return;
+        targetDocId = docCreated.doc.id;
+      }
+      const outcome = await client.aiProposal(daemonProjectId, {
+        ...aiRequest(),
+        mode: 'brief',
+        docId: targetDocId,
+        ideaId,
+        evidenceIds,
+      });
+      const next = normalizeProject(outcome.project);
+      setProject(next);
+      setAiSource(outcome.source);
+      const filed = next.proposals.filter((candidate) => candidate.docId === targetDocId).at(-1);
+      if (filed !== undefined) {
+        setAiCardSource({ proposalId: filed.id, source: outcome.source });
+      }
+      setAiResult({
+        tone: outcome.source === 'llm' ? 'info' : 'error',
+        text: outcome.note,
+      });
+      setNotice({ tone: 'info', text: outcome.note });
+      setActiveDocId(targetDocId);
+      setDocMode('proposal');
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '브리프를 받지 못했습니다.',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const captureEvidence = (input: EvidenceClipInput) => {
+    void runDoc({
+      type: 'evidence.capture',
+      url: input.url,
+      excerpt: input.excerpt,
+      evidenceType: input.evidenceType,
+      ...(input.title === '' ? {} : { title: input.title }),
+    });
+  };
+
+  const dismissEvidence = (evidenceId: string) => {
+    void runDoc({ type: 'evidence.dismiss', evidenceId });
+  };
+
+  /** F3-3: the same `link.create` the graph speaks — references → evidence. */
+  const linkEvidence = (srcNodeId: string, evidenceId: string) => {
+    void runDoc(
+      { type: 'link.create', linkType: 'references', src: srcNodeId, dst: evidenceId },
+      () => void reload(),
+    );
+  };
+
   const createGraphNode = (
     nodeType: 'req' | 'policy' | 'contract' | 'qa',
     title: string,
@@ -960,6 +1126,24 @@ export default function App() {
   const report = project === null ? null : traceability(project);
   const graphNodes = project === null ? [] : graphViewNodes(project);
   const nextNumber = (project?.pinSeq ?? 0) + 1;
+  /** F3-3's spec-view warning: requirements no references→evidence link grounds. */
+  const ungroundedReqs =
+    project === null
+      ? []
+      : ungroundedRequirements(project).map((node) => ({ id: node.id, title: node.title }));
+  const ungroundedIds = new Set(ungroundedReqs.map((req) => req.id));
+  /** The evidence panel's 연결 targets: every requirement, 미근거 first. */
+  const reqOptions: EvidenceReqOption[] =
+    project === null
+      ? []
+      : project.graph.nodes
+          .filter((node) => node.type === 'req')
+          .map((node) => ({
+            id: node.id,
+            title: node.title,
+            ungrounded: ungroundedIds.has(node.id),
+          }));
+
 
   return (
     <div className="app">
@@ -1038,7 +1222,9 @@ export default function App() {
           onRevert={() => void revertAdopted()}
         />
       ) : screen !== null && project !== null ? (
-        <main className="studio">
+        <main
+          className={`studio${doc !== null && doc.kind === 'research' ? ' studio--research' : ''}`}
+        >
           <section className="canvas-column">
             <div className="canvas-tools">
               <span className="tool-label">Screen</span>
@@ -1100,6 +1286,8 @@ export default function App() {
             selectedPinId={selectedPinId}
             focusBlockId={focusBlockId}
             revertable={revertable}
+            ungrounded={ungroundedReqs}
+            sourceHint={aiCardSource}
             sqliteMode={sqliteMode}
             busy={busy}
             onMode={setDocMode}
@@ -1122,21 +1310,49 @@ export default function App() {
             onFocusHandled={() => setFocusBlockId(null)}
           />
 
-          <PinPanel
-            doc={doc}
-            onFocusBlock={setFocusBlockId}
-            pins={pins}
-            filter={filter}
-            screenCode={screen.code}
-            nextNumber={nextNumber}
-            pinSeq={project.pinSeq}
-            selectedPinId={selectedPinId}
-            onFilter={setFilter}
-            onSelect={setSelectedPinId}
-            onDelete={(pin) => void deletePin(pin)}
-            onUpdate={updatePin}
-            onCloseEditor={() => setSelectedPinId(null)}
-          />
+          {doc !== null && doc.kind === 'research' && (
+            <EvidencePanel
+              evidence={project.evidence}
+              requirements={reqOptions}
+              busy={busy}
+              onCapture={captureEvidence}
+              onDismiss={dismissEvidence}
+              onLink={linkEvidence}
+            />
+          )}
+
+          <div className="side-rail">
+            <PinPanel
+              doc={doc}
+              onFocusBlock={setFocusBlockId}
+              pins={pins}
+              filter={filter}
+              screenCode={screen.code}
+              nextNumber={nextNumber}
+              pinSeq={project.pinSeq}
+              selectedPinId={selectedPinId}
+              onFilter={setFilter}
+              onSelect={setSelectedPinId}
+              onDelete={(pin) => void deletePin(pin)}
+              onUpdate={updatePin}
+              onCloseEditor={() => setSelectedPinId(null)}
+            />
+
+            <IdeaInboxPanel
+              ideas={project.ideas}
+              evidence={project.evidence}
+              busy={busy}
+              briefBusy={aiBusy}
+              sqliteMode={sqliteMode}
+              captureOpen={inboxCaptureOpen}
+              onOpenCapture={() => setInboxCaptureOpen(true)}
+              onCloseCapture={() => setInboxCaptureOpen(false)}
+              onCapture={captureIdea}
+              onArchive={archiveIdea}
+              onPromote={(idea) => void promoteIdea(idea)}
+              onRunBrief={(ideaId, evidenceIds) => void runBrief(ideaId, evidenceIds)}
+            />
+          </div>
         </main>
       ) : (
         <EntryGate

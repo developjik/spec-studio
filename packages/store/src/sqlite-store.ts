@@ -26,9 +26,13 @@ import { DocSnapshotSchema, DocSchema } from '@spec-studio/protocol';
 import {
   blockToRow,
   docFromRows,
+  evidenceToRow,
+  ideaToRow,
   newBlockId,
   newDocId,
   newOpId,
+  newEvidenceId,
+  newIdeaId,
   newGraphProposalId,
   newLinkId,
   newNodeId,
@@ -88,7 +92,9 @@ export type StoreIdKind =
   | 'proposal'
   | 'node'
   | 'link'
-  | 'graphProposal';
+  | 'graphProposal'
+  | 'idea'
+  | 'evidence';
 
 interface ProjectRow {
   id: string;
@@ -122,6 +128,12 @@ function allRows<T>(db: DatabaseSync, sql: string, ...params: Array<string | num
  * the two apart is what lets the ledger's CHECK constraints mean something.
  */
 const OP_KIND: Readonly<Record<string, string>> = {
+  'idea.capture': 'idea.capture',
+  'idea.update': 'idea.update',
+  'idea.archive': 'idea.archive',
+  'evidence.capture': 'evidence.capture',
+  'evidence.update': 'evidence.update',
+  'evidence.dismiss': 'evidence.dismiss',
   'doc.create': 'doc.create',
   'doc.update': 'doc.update',
   'doc.delete': 'doc.delete',
@@ -153,6 +165,8 @@ const DEFAULT_IDS = {
   node: (nodeType: EditableNodeType) => newNodeId(nodeType),
   link: newLinkId,
   graphProposal: newGraphProposalId,
+  idea: newIdeaId,
+  evidence: newEvidenceId,
 } as const;
 
 /**
@@ -250,7 +264,9 @@ export class SqliteStore implements StorePort {
       pins: [],
       pinSeq: 0,
       docs: [],
-      proposal: null,
+      proposals: [],
+      ideas: [],
+      evidence: [],
       graph: { nodes: [], links: [] },
       graphProposal: null,
       createdAt: at,
@@ -283,13 +299,25 @@ export class SqliteStore implements StorePort {
             screen.id,
           );
 
+    // E1 §4 F2·F3: the inbox and the evidence board, ordered by birth.
+    const ideaRows = allRows<ObjRow>(
+      this.#db,
+      "SELECT * FROM obj WHERE project_id = ? AND kind = 'idea' AND deleted_at IS NULL ORDER BY created_at, rowid",
+      projectId,
+    );
+    const evidenceRows = allRows<ObjRow>(
+      this.#db,
+      "SELECT * FROM obj WHERE project_id = ? AND kind = 'evidence' AND deleted_at IS NULL ORDER BY created_at, rowid",
+      projectId,
+    );
+
     const docRows = allRows<DocRow>(
       this.#db,
       'SELECT * FROM doc WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, rowid',
       projectId,
     );
     const docs = docRows.map((row) => docFromRows(row, this.#readBlocks(row.id)));
-    const proposal = docs.length === 0 ? null : this.#readProposal(projectId);
+    const proposals = docs.length === 0 ? [] : this.#readProposals(projectId);
     const graphNodes = allRows<ObjRow>(
       this.#db,
       `SELECT * FROM obj WHERE project_id = ? AND deleted_at IS NULL AND (
@@ -321,9 +349,11 @@ export class SqliteStore implements StorePort {
         screen,
         pins,
         docs,
-        proposal,
+        proposals,
         graphNodes,
         links,
+        ideas: ideaRows,
+        evidence: evidenceRows,
         graphProposal: graphProposalRow ?? null,
       }),
     );
@@ -420,16 +450,37 @@ export class SqliteStore implements StorePort {
       current.rev,
     );
     const doc = restoreSnapshot(current, snapshot, at);
-    // The decision was undone: the proposal is no longer adopted, and the
-    // revert row below is what says it was an undo rather than a refusal.
-    const proposal: Proposal | null =
-      project.proposal === null || project.proposal.state !== 'adopted'
-        ? project.proposal
-        : { ...project.proposal, state: 'rejected', decidedAt: at };
+    // The decision was undone: the adopted proposal of that doc is no longer
+    // adopted, and the revert row below is what says it was an undo rather
+    // than a refusal.
+    // The adopt row already names its card; resolve by id like every other
+    // proposal lookup, not by whichever adopted row the array happens to
+    // hold first for this doc.
+    const adoptPayload = JSON.parse(adopt.payload) as { proposalId?: string };
+    const adopted =
+      (adoptPayload.proposalId === undefined
+        ? null
+        : (project.proposals.find(
+            (candidate) => candidate.id === adoptPayload.proposalId,
+          ) ?? null)) ??
+      project.proposals
+        .filter(
+          (candidate) => candidate.docId === snapshot.docId && candidate.state === 'adopted',
+        )
+        .at(-1) ??
+      null;
+    const proposals =
+      adopted === null
+        ? project.proposals
+        : project.proposals.map((candidate) =>
+            candidate.id === adopted.id
+              ? { ...adopted, state: 'rejected' as const, decidedAt: at }
+              : candidate,
+          );
     const next: Project = {
       ...project,
       docs: project.docs.map((candidate) => (candidate.id === doc.id ? doc : candidate)),
-      proposal,
+      proposals,
       updatedAt: at,
     };
 
@@ -447,7 +498,7 @@ export class SqliteStore implements StorePort {
         target: doc.id,
         before: currentSnapshot,
         after: snapshot,
-        payload: { revertedSeq: adopt.seq, proposalId: proposal?.id ?? null },
+        payload: { revertedSeq: adopt.seq, proposalId: adopted?.id ?? null },
       });
     });
 
@@ -688,30 +739,38 @@ export class SqliteStore implements StorePort {
   }
 
   /**
-   * The one proposal on the table per project: whichever the project's docs
-   * produced most recently, across the whole registry.
+   * The proposal on the table per doc: whichever each of the project's docs
+   * produced most recently. Decided ones stay until a newer one replaces
+   * them, exactly like the single slot did.
    */
-  #readProposal(projectId: string): Proposal | null {
-    const row = oneRow<ProposalRow>(
+  #readProposals(projectId: string): Proposal[] {
+    const rows = allRows<ProposalRow>(
       this.#db,
       `SELECT p.* FROM proposal p JOIN doc d ON d.id = p.doc_id
-        WHERE d.project_id = ? ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1`,
+        WHERE d.project_id = ?
+          AND p.rowid = (SELECT MAX(rowid) FROM proposal WHERE doc_id = p.doc_id)
+        ORDER BY p.created_at, p.rowid`,
       projectId,
     );
-    if (row === undefined) return null;
-    const ops = allRows<ProposalOpRow>(
-      this.#db,
-      'SELECT id, proposal_id, seq, kind, view, state FROM proposal_op WHERE proposal_id = ? ORDER BY seq',
-      row.id,
-    );
-    if (ops.length === 0) return null;
-    return proposalFromRows(
-      {
-        ...row,
-        state: row.state === 'reviewing' ? 'open' : row.state,
-      },
-      ops,
-    );
+    const proposals: Proposal[] = [];
+    for (const row of rows) {
+      const ops = allRows<ProposalOpRow>(
+        this.#db,
+        'SELECT id, proposal_id, seq, kind, view, state FROM proposal_op WHERE proposal_id = ? ORDER BY seq',
+        row.id,
+      );
+      if (ops.length === 0) continue;
+      proposals.push(
+        proposalFromRows(
+          {
+            ...row,
+            state: row.state === 'reviewing' ? 'open' : row.state,
+          },
+          ops,
+        ),
+      );
+    }
+    return proposals;
   }
 
   /**
@@ -809,8 +868,8 @@ export class SqliteStore implements StorePort {
   ): number {
     if (command.type === 'proposal.adopt') {
       const doc = before.docs.find((candidate) => candidate.id === command.docId);
-      const proposal = after.proposal;
-      if (doc === undefined || proposal === null) {
+      const proposal = after.proposals.find((candidate) => candidate.id === command.proposalId);
+      if (doc === undefined || proposal === undefined) {
         throw new Error('an adopted proposal needs the document it was built on');
       }
       const adopted = after.docs.find((candidate) => candidate.id === doc.id) ?? doc;
@@ -901,6 +960,38 @@ export class SqliteStore implements StorePort {
       });
     }
 
+    if (command.type.startsWith('idea.') || command.type.startsWith('evidence.')) {
+      // The ledger names the object, the way node.* rows do: captures take
+      // the id from their event, the rest from the command itself.
+      const capturedIdea = events.find(
+        (event): event is Extract<DomainEvent, { type: 'idea.captured' }> =>
+          event.type === 'idea.captured',
+      );
+      const capturedEvidence = events.find(
+        (event): event is Extract<DomainEvent, { type: 'evidence.captured' }> =>
+          event.type === 'evidence.captured',
+      );
+      const commandId =
+        command.type === 'idea.update' || command.type === 'idea.archive'
+          ? command.ideaId
+          : command.type === 'evidence.update' || command.type === 'evidence.dismiss'
+            ? command.evidenceId
+            : null;
+      const target = capturedIdea?.idea.id ?? capturedEvidence?.evidence.id ?? commandId;
+      const beforeRow = before.ideas.find((row) => row.id === target) ?? before.evidence.find((row) => row.id === target) ?? null;
+      const afterRow = after.ideas.find((row) => row.id === target) ?? after.evidence.find((row) => row.id === target) ?? null;
+      return this.#insertLog({
+        at,
+        actor,
+        kind,
+        target,
+        before: { object: beforeRow },
+        after: { object: afterRow },
+        payload: { events: events.map((event) => event.type) },
+      });
+    }
+
+
     if (command.type.startsWith('node.') || command.type.startsWith('link.') || command.type.startsWith('graph.')) {
       const nodeId =
         command.type === 'node.create'
@@ -967,6 +1058,24 @@ export class SqliteStore implements StorePort {
       if (!kept.has(old.id)) this.#tombstone(old.id, at);
     }
 
+    // E1 §4 F2·F3: same contract as pins — upsert what the state holds,
+    // tombstone what the previous read had and the new state dropped.
+    for (const idea of project.ideas) {
+      this.#upsertObj(ideaToRow(idea, project.id));
+    }
+    const keptIdeas = new Set(project.ideas.map((idea) => idea.id));
+    for (const old of before?.ideas ?? []) {
+      if (!keptIdeas.has(old.id)) this.#tombstone(old.id, at);
+    }
+
+    for (const evidence of project.evidence) {
+      this.#upsertObj(evidenceToRow(evidence, project.id));
+    }
+    const keptEvidence = new Set(project.evidence.map((row) => row.id));
+    for (const old of before?.evidence ?? []) {
+      if (!keptEvidence.has(old.id)) this.#tombstone(old.id, at);
+    }
+
     for (const doc of project.docs) {
       this.#writeDoc(doc, project.id, project.screen?.id ?? null, at);
     }
@@ -977,7 +1086,7 @@ export class SqliteStore implements StorePort {
       if (!keptDocs.has(old.id)) this.#retireDoc(old.id, at);
     }
 
-    if (project.proposal !== null) this.#writeProposal(project.proposal);
+    for (const proposal of project.proposals) this.#writeProposal(proposal);
 
     for (const node of project.graph.nodes) {
       this.#upsertObj(graphNodeToRow(node, project.id));

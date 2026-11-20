@@ -11,7 +11,7 @@ import {
   type Project,
   type ProjectBundle,
 } from '@spec-studio/protocol';
-import { DomainError, remapProject } from '@spec-studio/core';
+import { DomainError, remapProject, ungroundedRequirements } from '@spec-studio/core';
 import {
   openSqliteStore,
   SCHEMA_VERSION,
@@ -117,7 +117,9 @@ function projectSummary(project: Project): Record<string, unknown> {
       kind: doc.kind,
       blocks: doc.blocks.length,
     })),
-    proposalState: project.proposal?.state ?? null,
+    proposalState: project.proposals.at(-1)?.state ?? null,
+    /** F3-3: requirements with no evidence behind them — the spec sidepanel's 미근거 list. */
+    ungroundedReqs: ungroundedRequirements(project).map((node) => node.id),
     graphNodes: project.graph.nodes.length,
     graphLinks: project.graph.links.length,
     graphProposalState: project.graphProposal?.state ?? null,

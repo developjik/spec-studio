@@ -74,7 +74,7 @@ interface Envelope {
         pinRefs: Array<{ pinId: string }>;
       }>;
     }>;
-    proposal?: { id: string; state: string; summary: string; patches: unknown[] } | null;
+    proposals?: Array<{ id: string; state: string; summary: string; patches: unknown[] }>;
     graph?: {
       nodes: Array<{ id: string; type: string; title: string; state: string }>;
       links: Array<{ id: string; type: string; src: string; dst: string; suspectSince: string | null }>;
@@ -386,7 +386,7 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     const created = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'proposal.create', docId } },
     });
-    const proposal = created.body.project?.proposal;
+    const proposal = created.body.project?.proposals?.[0];
     expect(proposal?.state).toBe('open');
     expect(proposal?.patches).toHaveLength(1);
     expect(proposal?.summary).toContain('#1');
@@ -396,7 +396,7 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     });
     expect(adopted.body.opSeq).toBeGreaterThan(0);
     expect(adopted.body.project?.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
-    expect(adopted.body.project?.proposal?.state).toBe('adopted');
+    expect(adopted.body.project?.proposals?.[0]?.state).toBe('adopted');
 
     const beforeRevert = await api<Envelope>(daemon, `/api/projects/${projectId}`);
     expect(beforeRevert.body.revert).toMatchObject({ seq: adopted.body.opSeq, blocks: 1 });
@@ -415,7 +415,7 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     const reopened = await boot();
     const after = await api<Envelope>(reopened, `/api/projects/${projectId}`);
     expect(after.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
-    expect(after.body.project?.proposal?.state).toBe('rejected');
+    expect(after.body.project?.proposals?.[0]?.state).toBe('rejected');
     expect(after.body.revert).toBeNull();
   });
 

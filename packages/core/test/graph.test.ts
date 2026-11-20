@@ -52,6 +52,10 @@ function context(): ExecuteContext {
           return `L_${suffix}`;
         case 'graphProposal':
           return `GP_${suffix}`;
+        case 'idea':
+          return `I_${suffix}`;
+        case 'evidence':
+          return `E_${suffix}`;
       }
     },
   };

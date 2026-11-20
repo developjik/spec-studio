@@ -117,7 +117,6 @@ export const GRAPH_LINK_ENDS: Record<GraphLinkType, { src: GraphNodeType[]; dst:
     dst: ['req', 'policy', 'contract', 'qa', 'pin'],
   },
 };
-
 export function linkEndsAllow(
   type: GraphLinkType,
   srcType: GraphNodeType | null,
@@ -126,6 +125,42 @@ export function linkEndsAllow(
   if (srcType === null || dstType === null) return false;
   const ends = GRAPH_LINK_ENDS[type];
   return ends.src.includes(srcType) && ends.dst.includes(dstType);
+}
+
+/**
+ * The same registry at `obj`-kind level — copied verbatim from the
+ * `link_type` rows in `schema.sql` (v1 seven), not re-derived from the canvas
+ * table above. This is the table `link.create` checks against (A1): an idea
+ * or an evidence row can be an endpoint even though it is not a canvas node,
+ * and the store's `link_kind_guard_*` triggers enforce exactly these rows.
+ */
+export const LINK_KIND_ENDS: Record<GraphLinkType, { src: ObjectKind[]; dst: ObjectKind[] }> = {
+  implements: { src: ['screen', 'pin'], dst: ['specnode'] },
+  verifies: { src: ['verification'], dst: ['specnode', 'screen', 'contract', 'pin'] },
+  governs: { src: ['specnode'], dst: ['screen', 'pin', 'specnode'] },
+  handles_edge: { src: ['pin', 'screen', 'specnode'], dst: ['specnode'] },
+  references: {
+    src: ['screen', 'pin', 'specnode', 'contract', 'verification'],
+    dst: ['screen', 'pin', 'specnode', 'contract', 'verification', 'evidence'],
+  },
+  derived_from: {
+    src: ['specnode', 'contract', 'verification'],
+    dst: ['specnode', 'contract', 'verification', 'pin', 'idea'],
+  },
+  blocks: {
+    src: ['specnode', 'contract', 'verification', 'pin'],
+    dst: ['specnode', 'contract', 'verification', 'pin'],
+  },
+};
+
+export function linkKindEndsAllow(
+  type: GraphLinkType,
+  srcKind: ObjectKind | null,
+  dstKind: ObjectKind | null,
+): boolean {
+  if (srcKind === null || dstKind === null) return false;
+  const ends = LINK_KIND_ENDS[type];
+  return ends.src.includes(srcKind) && ends.dst.includes(dstKind);
 }
 
 /** One node as the graph view renders it. Editable kinds are stored in `project.graph`. */
@@ -176,11 +211,12 @@ export type GraphProposalState = z.infer<typeof GraphProposalStateSchema>;
  *   item:<key>   a node this proposal would create
  *   pin:<id>     an existing pin
  *   node:<id>    any existing object (screen, req, policy, contract, qa)
+ *   idea:<id>    an existing idea — a `derived_from` destination only
  */
 export const ProposalRefSchema = z
   .string()
-  .regex(/^(item|pin|node):[A-Za-z0-9_-]{3,40}$/, {
-    message: 'a proposal ref is item:<key>, pin:<id> or node:<id>',
+  .regex(/^(item|pin|node|idea):[A-Za-z0-9_-]{3,40}$/, {
+    message: 'a proposal ref is item:<key>, pin:<id>, node:<id> or idea:<id>',
   });
 
 export const GraphProposalNodeSchema = z.object({

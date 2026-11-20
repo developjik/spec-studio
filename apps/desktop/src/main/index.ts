@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, protocol } from 'electron';
+import { app, dialog, globalShortcut, ipcMain, protocol } from 'electron';
 import { DaemonManager, type DaemonSession } from './daemon';
 import { desktopPaths } from './paths';
 import { registerAppProtocol } from './protocol';
@@ -117,6 +117,19 @@ async function boot(): Promise<void> {
   app.on('activate', () => {
     if (getMainWindow() === null) createMainWindow();
   });
+
+  /**
+   * F2's quick capture (A6 macOS 우선): one global chord that pings the
+   * renderer, which opens the same inbox modal its button does. A refused
+   * registration is a lost shortcut, not a failed boot.
+   */
+  const registered = globalShortcut.register('CommandOrControl+Shift+I', () => {
+    getMainWindow()?.webContents.send('specstudio:quick-capture');
+  });
+  if (!registered) {
+    console.warn('quick-capture shortcut unavailable (CommandOrControl+Shift+I already taken)');
+  }
+  app.on('will-quit', () => globalShortcut.unregisterAll());
 }
 
 async function runSmoke(

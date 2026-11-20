@@ -300,7 +300,7 @@ describe('bundle (W3/F5)', () => {
         pins: [],
         pinSeq: 0,
         docs: [legacyDoc, { ...legacyDoc, id: `D_${'r'.repeat(12)}`, kind: 'research' }],
-        proposal: null,
+        proposals: [],
         graph: { nodes: [], links: [] },
         graphProposal: null,
         createdAt: AT,

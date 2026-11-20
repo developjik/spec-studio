@@ -5,9 +5,11 @@ import {
   type BlockPinRef,
   type Doc,
   type EditableNodeType,
+  type Evidence,
   type GraphLink,
   type GraphNode,
   type GraphProposal,
+  type Idea,
   type Pin,
   type Project,
   type Proposal,
@@ -79,6 +81,8 @@ export const newBlockId = (): string => `B_${newSuffix()}`;
 export const newProposalId = (): string => `PR_${newSuffix()}`;
 export const newLinkId = (): string => `L_${newSuffix()}`;
 export const newGraphProposalId = (): string => `GP_${newSuffix()}`;
+export const newIdeaId = (): string => `I_${newSuffix()}`;
+export const newEvidenceId = (): string => `E_${newSuffix()}`;
 
 /** A graph node's id prefix is its `obj` kind: N_ req/policy, C_ contract, V_ qa. */
 export function newNodeId(type: EditableNodeType): string {
@@ -178,6 +182,115 @@ export function pinFromRow(row: ObjRow): Pin {
   };
 }
 
+/** What an idea row keeps in `props`; title/state/timestamps are columns. */
+interface IdeaProps {
+  text: string;
+  url?: string;
+  imagePath?: string;
+  tags: Idea['tags'];
+  capturedAt: string;
+}
+
+export function ideaToRow(idea: Idea, projectId: string): ObjRow {
+  const props: IdeaProps = {
+    text: idea.text,
+    ...(idea.url === undefined ? {} : { url: idea.url }),
+    ...(idea.imagePath === undefined ? {} : { imagePath: idea.imagePath }),
+    tags: idea.tags,
+    capturedAt: idea.capturedAt,
+  };
+  return {
+    id: idea.id,
+    project_id: projectId,
+    kind: 'idea',
+    subtype: null,
+    title: idea.title,
+    parent_id: null,
+    props: JSON.stringify(props),
+    state: idea.state,
+    rev: 1,
+    hash: contentHash({
+      title: idea.title,
+      text: idea.text,
+      url: idea.url ?? null,
+      imagePath: idea.imagePath ?? null,
+      tags: idea.tags,
+      state: idea.state,
+    }),
+    deleted_at: null,
+    created_at: idea.createdAt,
+    updated_at: idea.updatedAt,
+  };
+}
+
+export function ideaFromRow(row: ObjRow): Idea {
+  const props = parseJson<IdeaProps>(row.props || '{}');
+  return {
+    id: row.id,
+    title: row.title,
+    text: props.text,
+    ...(props.url === undefined ? {} : { url: props.url }),
+    ...(props.imagePath === undefined ? {} : { imagePath: props.imagePath }),
+    tags: props.tags ?? ['텍스트'],
+    state: row.state as Idea['state'],
+    capturedAt: props.capturedAt ?? row.created_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface EvidenceProps {
+  url: string;
+  excerpt: string;
+  type: Evidence['type'];
+  capturedAt: string;
+}
+
+export function evidenceToRow(evidence: Evidence, projectId: string): ObjRow {
+  const props: EvidenceProps = {
+    url: evidence.url,
+    excerpt: evidence.excerpt,
+    type: evidence.type,
+    capturedAt: evidence.capturedAt,
+  };
+  return {
+    id: evidence.id,
+    project_id: projectId,
+    kind: 'evidence',
+    subtype: null,
+    title: evidence.title,
+    parent_id: null,
+    props: JSON.stringify(props),
+    state: evidence.state,
+    rev: 1,
+    hash: contentHash({
+      title: evidence.title,
+      url: evidence.url,
+      excerpt: evidence.excerpt,
+      type: evidence.type,
+      state: evidence.state,
+    }),
+    deleted_at: null,
+    created_at: evidence.createdAt,
+    updated_at: evidence.updatedAt,
+  };
+}
+
+export function evidenceFromRow(row: ObjRow): Evidence {
+  const props = parseJson<EvidenceProps>(row.props || '{}');
+  return {
+    id: row.id,
+    title: row.title,
+    url: props.url,
+    excerpt: props.excerpt ?? '',
+    type: props.type ?? 'web',
+    state: row.state as Evidence['state'],
+    capturedAt: props.capturedAt ?? row.created_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function graphNodeToRow(node: GraphNode, projectId: string): ObjRow {
   const { kind, subtype } = NODE_TYPE_KIND[node.type];
   return {
@@ -251,10 +364,13 @@ export function projectFromRows(input: {
   screen: ObjRow | null;
   pins: ObjRow[];
   docs?: Doc[];
-  proposal?: Proposal | null;
+  proposals?: Proposal[];
   graphNodes?: ObjRow[];
   links?: LinkRow[];
   graphProposal?: GraphProposalRow | null;
+  /** E1 §4 F2·F3: the inbox and the evidence board ride in `obj` rows too. */
+  ideas?: ObjRow[];
+  evidence?: ObjRow[];
 }): Project {
   const screen = input.screen === null ? null : screenFromRow(input.screen);
   const pins = input.pins.map(pinFromRow).sort((a, b) => a.number - b.number);
@@ -266,7 +382,9 @@ export function projectFromRows(input: {
     pins,
     pinSeq: input.screen === null ? 0 : screenPinSeq(input.screen),
     docs: input.docs ?? [],
-    proposal: input.proposal ?? null,
+    proposals: input.proposals ?? [],
+    ideas: (input.ideas ?? []).map(ideaFromRow),
+    evidence: (input.evidence ?? []).map(evidenceFromRow),
     graph: {
       nodes: (input.graphNodes ?? [])
         .map(graphNodeFromRow)

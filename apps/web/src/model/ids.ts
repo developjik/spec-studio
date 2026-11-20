@@ -41,9 +41,28 @@ export function newGraphProposalId(): string {
   return `GP_${randomSuffix(SUFFIX_LENGTH)}`;
 }
 
+export function newIdeaId(): string {
+  return `I_${randomSuffix(SUFFIX_LENGTH)}`;
+}
+
+export function newEvidenceId(): string {
+  return `E_${randomSuffix(SUFFIX_LENGTH)}`;
+}
+
 /** Browser-mode id source: the same prefixes the daemon hands out. */
 export function nextEntityId(
-  kind: 'project' | 'screen' | 'pin' | 'doc' | 'block' | 'proposal' | 'node' | 'link' | 'graphProposal',
+  kind:
+    | 'project'
+    | 'screen'
+    | 'pin'
+    | 'doc'
+    | 'block'
+    | 'proposal'
+    | 'node'
+    | 'link'
+    | 'graphProposal'
+    | 'idea'
+    | 'evidence',
   nodeType?: 'req' | 'policy' | 'contract' | 'qa',
 ): string {
   switch (kind) {
@@ -69,5 +88,9 @@ export function nextEntityId(
       return newBlockId();
     case 'proposal':
       return newProposalId();
+    case 'idea':
+      return newIdeaId();
+    case 'evidence':
+      return newEvidenceId();
   }
 }

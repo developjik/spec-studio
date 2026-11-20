@@ -1,4 +1,6 @@
 export * from './ids';
+export * from './idea';
+export * from './evidence';
 export * from './pin';
 export * from './screen';
 export * from './doc';

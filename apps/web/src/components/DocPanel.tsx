@@ -34,6 +34,16 @@ interface DocPanelProps {
   selectedPinId: string | null;
   focusBlockId: string | null;
   revertable: RevertableView | null;
+  /**
+   * F3-3's research-side warning on the spec view: requirement nodes no
+   * `references` link grounds with evidence. Empty list renders nothing.
+   */
+  ungrounded: Array<{ id: string; title: string }>;
+  /**
+   * The source of the card the last AI request filed, when that card is the
+   * one on the table — doc proposals carry no llm/rule flag of their own.
+   */
+  sourceHint: { proposalId: string; source: 'llm' | 'rule' } | null;
   sqliteMode: boolean;
   busy: boolean;
   onMode: (mode: DocMode) => void;
@@ -235,6 +245,15 @@ export function DocPanel(props: DocPanelProps) {
   const ours = proposal !== null && proposal.docId === doc.id ? proposal : null;
   const proposalOpen = ours !== null && ours.state === 'open';
   const directEditable = mode === 'direct' && !props.busy;
+  // The honest badge: what the daemon said filed this card wins; the origin
+  // fallback keeps the old meaning (핀 추출 = rule, 그 외 = LLM 문안).
+  const cardSource =
+    ours !== null && props.sourceHint !== null && props.sourceHint.proposalId === ours.id
+      ? props.sourceHint.source
+      : ours?.origin === 'doc-chat'
+        ? 'llm'
+        : 'rule';
+
 
   return (
     <aside className="doc-panel" aria-label="문서" data-testid="doc-panel">
@@ -260,6 +279,19 @@ export function DocPanel(props: DocPanelProps) {
           </span>
         )}
       </div>
+
+      {doc.kind === 'spec' && props.ungrounded.length > 0 && (
+        <div className="ungrounded-note" data-testid="req-ungrounded">
+          <p className="ungrounded-count">근거 없는 요구사항 {props.ungrounded.length}건</p>
+          <ul>
+            {props.ungrounded.map((req) => (
+              <li key={req.id} title={req.title}>
+                {req.title}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="doc-mode" role="group" aria-label="편집 계층">
         <button
@@ -345,16 +377,16 @@ export function DocPanel(props: DocPanelProps) {
             <p className="proposal-eyebrow">
               제안 1건 · 결정 카드 1개
               <span
-                className={`decision-source decision-source--${ours.origin === 'doc-chat' ? 'llm' : 'rule'}`}
+                className={`decision-source decision-source--${cardSource}`}
                 data-testid="proposal-source"
-                data-source={ours.origin === 'doc-chat' ? 'llm' : 'rule'}
+                data-source={cardSource}
                 title={
-                  ours.origin === 'doc-chat'
+                  cardSource === 'llm'
                     ? '모델이 쓴 문단 patch입니다. 채택 전까지 본문은 그대로입니다.'
                     : '로컬 규칙이 만든 문단 patch입니다.'
                 }
               >
-                {ours.origin === 'doc-chat' ? 'LLM 제안' : '로컬 규칙'}
+                {cardSource === 'llm' ? 'LLM 제안' : '로컬 규칙'}
               </span>
             </p>
             <p className="proposal-summary" data-testid="proposal-summary">

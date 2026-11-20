@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockSchema, DocIdSchema, DocSchema, ProposalIdSchema } from './doc';
+import { EvidenceSchema } from './evidence';
 import { GraphLinkSchema, GraphNodeSchema, GraphProposalSchema } from './graph';
+import { IdeaSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
@@ -31,6 +33,14 @@ export const EventSchema = z.discriminatedUnion('type', [
     /** Kept in the event so downstream copies can leave the same gap. */
     number: z.number().int().min(1),
   }),
+
+  // ── idea inbox · research board (E1 §4 F2·F3) ────────────────────────
+  z.object({ type: z.literal('idea.captured'), idea: IdeaSchema }),
+  z.object({ type: z.literal('idea.updated'), idea: IdeaSchema }),
+  z.object({ type: z.literal('idea.archived'), idea: IdeaSchema }),
+  z.object({ type: z.literal('evidence.captured'), evidence: EvidenceSchema }),
+  z.object({ type: z.literal('evidence.updated'), evidence: EvidenceSchema }),
+  z.object({ type: z.literal('evidence.dismissed'), evidence: EvidenceSchema }),
 
   z.object({ type: z.literal('doc.attached'), doc: DocSchema }),
   z.object({ type: z.literal('doc.created'), doc: DocSchema }),

@@ -5,6 +5,7 @@ import {
   type AiProposalMode,
   type Project,
 } from '@spec-studio/protocol';
+import { selectedEvidence, type BriefInput } from './brief.js';
 
 /**
  * The prompt is the contract read aloud.
@@ -37,6 +38,11 @@ export function buildSystemPrompt(mode: AiProposalMode): string {
       '링크는 아래 표에 있는 타입과 방향만 쓴다. 링크의 양 끝은 item:<key> 또는 pin:<번호> 로 쓴다.',
       LINK_TABLE,
       '이미 그래프에 있는 제목은 다시 제안하지 않는다. 핀에서 실제로 읽히는 것만 만든다.',
+    );
+  } else if (mode === 'brief') {
+    common.push(
+      '리서치 브리프 초안만 만든다. 모든 사실 주장(claim)은 evidenceRefs에 주어진 증거 id를 갖거나 ungrounded: true 로 표시한다.',
+      '전문을 복사하지 않는다. 발췌는 짧게 인용하고 요약으로 쓴다.',
     );
   } else {
     common.push(
@@ -131,6 +137,51 @@ export function buildDocPrompt(project: Project, docId?: string): string {
   );
   lines.push('');
   lines.push('규칙: patches는 1~6개. 기존 문단 id만. 바뀌는 문단만 넣는다. text는 20~600자.');
+  return lines.join('\n');
+}
+
+/**
+ * F3-2's prompt: the idea (or topic), the evidence the person picked, and
+ * the exact JSON shape. The id list is the whole citation universe — an id
+ * outside it is not a mistake the store forgives, so the prompt says so.
+ */
+export function buildBriefPrompt(project: Project, input: BriefInput = {}): string {
+  const idea =
+    input.ideaId !== undefined && input.ideaId !== null
+      ? (project.ideas.find((row) => row.id === input.ideaId) ?? null)
+      : null;
+  const evidence = selectedEvidence(project, input);
+
+  const lines: string[] = [];
+  lines.push(
+    idea !== null
+      ? `아이디어: ${idea.title}\n${idea.text.slice(0, 1200)}`
+      : `주제: ${(input.topic ?? '(없음)').slice(0, 500)}`,
+  );
+  lines.push('');
+  lines.push(`증거 ${evidence.length}개 (id · 제목 · 발췌):`);
+  if (evidence.length === 0) lines.push('- (없다. 사실 주장은 모두 ungrounded: true 로 표시한다.)');
+  for (const row of evidence) {
+    const excerpt = row.excerpt.replace(/\s+/g, ' ').slice(0, 200);
+    lines.push(`- ${row.id} · ${row.title} · ${excerpt}`);
+  }
+  lines.push('');
+  lines.push('다음 JSON 하나로만 답한다:');
+  lines.push(
+    JSON.stringify({
+      title: '브리프 제목 (최대 120자)',
+      summary: '한 줄 요약 (최대 300자)',
+      claims: [
+        { text: '사실 주장', evidenceRefs: ['E_예시'], ungrounded: false },
+        { text: '근거 없는 가정', evidenceRefs: [], ungrounded: true },
+      ],
+    }),
+  );
+  lines.push('');
+  lines.push(
+    '규칙: claims은 1~12개. evidenceRefs에는 위 목록에 있는 E_ id만 쓴다. 목록에 없는 id를 인용하면 초안 전체가 버려진다. '
+      + '모든 주장은 근거를 갖거나 ungrounded: true 여야 한다.',
+  );
   return lines.join('\n');
 }
 

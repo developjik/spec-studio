@@ -4,7 +4,6 @@ export type DomainErrorCode =
   | 'screen_mismatch'
   | 'pin_not_found'
   | 'doc_missing'
-  | 'doc_mismatch'
   | 'block_not_found'
   | 'proposal_missing'
   | 'proposal_decided'

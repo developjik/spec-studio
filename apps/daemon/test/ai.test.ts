@@ -128,14 +128,15 @@ async function startMockLlm(): Promise<MockLlm> {
 
 interface AiEnvelope {
   project?: {
-    id: string;
     pins: Array<{ id: string; number: number; title: string }>;
+    ideas?: Array<{ id: string; title: string; tags: string[]; state: string }>;
+    evidence?: Array<{ id: string; title: string; state: string }>;
     docs: Array<{
       id: string;
       kind: string;
       blocks: Array<{ id: string; text: string; pinRefs: Array<{ pinId: string }> }>;
     }>;
-    proposal?: { id: string; docId: string; origin: string; state: string; patches: unknown[] } | null;
+    proposals?: Array<{ id: string; docId: string; origin: string; state: string; patches: unknown[] }>;
     graph?: { nodes: Array<{ id: string; type: string; title: string }>; links: unknown[] };
     graphProposal?: {
       id: string;
@@ -407,14 +408,14 @@ describe('the AI routes', () => {
       body: { mode: 'doc', provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1`, apiKey: 'sk-doc' },
     });
     expect(proposal.status).toBe(200);
-    expect(proposal.body.project?.proposal?.origin).toBe('doc-chat');
+    expect(proposal.body.project?.proposals?.[0]?.origin).toBe('doc-chat');
 
     const adopted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: {
         command: {
           type: 'proposal.adopt',
           docId,
-          proposalId: proposal.body.project?.proposal?.id,
+          proposalId: proposal.body.project?.proposals?.[0]?.id,
         },
       },
     });
@@ -480,7 +481,7 @@ describe('the AI routes', () => {
     expect(prompt).toContain(blocks.research);
     expect(prompt).not.toContain(blocks.spec);
     expect(prompt).toContain('리서치 노트');
-    expect(targeted.body.project?.proposal?.docId).toBe(researchDocId);
+    expect(targeted.body.project?.proposals?.[0]?.docId).toBe(researchDocId);
 
     // no docId → the first spec doc, not the newest doc. The research
     // proposal leaves the table first, and the model now patches the spec.
@@ -489,7 +490,7 @@ describe('the AI routes', () => {
         command: {
           type: 'proposal.reject',
           docId: researchDocId,
-          proposalId: targeted.body.project?.proposal?.id,
+          proposalId: targeted.body.project?.proposals?.[0]?.id,
         },
       },
     });
@@ -514,6 +515,73 @@ describe('the AI routes', () => {
     const defaultPrompt = JSON.stringify(llm.requests.at(-1)?.body.messages ?? []);
     expect(defaultPrompt).toContain(blocks.spec);
     expect(defaultPrompt).not.toContain(blocks.research);
+  });
+
+  it('builds a brief from real evidence with the rule fallback, and adopts it', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'doc.create', title: '취소 리서치', kind: 'research' } },
+    });
+    const idea = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'idea.capture', text: '주문 취소 UX 개선\n경쟁 정책을 조사한다.' } },
+    });
+    const ideaId = idea.body.project?.ideas?.[0]?.id ?? '';
+    const titles = ['경쟁사 A 취소 정책', '취소 사유 통계'];
+    const evidenceIds: string[] = [];
+    for (const [index, title] of titles.entries()) {
+      const captured = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+        body: {
+          command: {
+            type: 'evidence.capture',
+            url: `https://example.com/e/${index}`,
+            title,
+            excerpt: '결제 후 24시간 이내 무료 취소',
+            evidenceType: 'web',
+          },
+        },
+      });
+      evidenceIds.push(captured.body.project?.evidence?.[index]?.id ?? '');
+    }
+
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'brief', provider: 'local', ideaId, evidenceIds },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('rule');
+    expect(proposal.body.note).toContain('로컬 규칙');
+    const research = proposal.body.project?.docs.find((doc) => doc.kind === 'research');
+    expect(research?.id).toBeDefined();
+    const card = proposal.body.project?.proposals?.[0];
+    expect(card?.state).toBe('open');
+
+    const adopted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'proposal.adopt', docId: research?.id, proposalId: card?.id } },
+    });
+    const blocks = adopted.body.project?.docs.find((doc) => doc.kind === 'research')?.blocks ?? [];
+    expect(blocks.map((block) => block.text)).toEqual([
+      '주문 취소 UX 개선',
+      '주문 취소 UX 개선',
+      `경쟁사 A 취소 정책 (출처: ${titles[0]})`,
+      `취소 사유 통계 (출처: ${titles[1]})`,
+      '기회: 주문 취소 UX 개선에서 증거 없이 가정한 기회이다. (근거 없음)',
+      '다음 질문: 주문 취소 UX 개선에서 다음에 확인해야 할 질문이다. (근거 없음)',
+    ]);
+    // only the two seeded titles are ever cited — no invented sources
+    const cited = blocks.filter((block) => block.text.includes('(출처:'));
+    expect(cited.every((block) => titles.some((title) => block.text.includes(title)))).toBe(true);
+  });
+
+  it('refuses a brief when the project has no research document', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'brief', provider: 'local' },
+    });
+    expect(proposal.status).toBe(400);
+    expect(proposal.body.error?.code).toBe('doc_missing');
+    expect(proposal.body.error?.message).toContain('리서치 문서를 먼저 만들어 주세요');
+    expect(llm.requests).toHaveLength(0);
   });
 });
 

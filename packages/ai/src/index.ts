@@ -5,8 +5,9 @@ import {
   type CredentialSource,
 } from '@spec-studio/protocol';
 import { AiProviderError, callModel, redact } from './providers.js';
-import { buildDocPrompt, buildGraphPrompt, buildProbePrompt, buildSystemPrompt } from './prompt.js';
-import { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+import { buildBriefPrompt, buildDocPrompt, buildGraphPrompt, buildProbePrompt, buildSystemPrompt } from './prompt.js';
+import { AiDraftError, extractJsonObject, parseBriefDraft, parseDocDraft, parseGraphDraft } from './parse.js';
+import type { BriefInput } from './brief.js';
 import {
   EnvCredentialPort,
   RequestCredentialPort,
@@ -22,12 +23,20 @@ export {
   type ModelCallResult,
 } from './providers.js';
 export {
+  buildBriefPrompt,
   buildDocPrompt,
   buildGraphPrompt,
   buildProbePrompt,
   buildSystemPrompt,
 } from './prompt.js';
-export { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+export {
+  AiDraftError,
+  extractJsonObject,
+  parseBriefDraft,
+  parseDocDraft,
+  parseGraphDraft,
+} from './parse.js';
+export { buildFallbackBrief, selectedEvidence, BRIEF_MAX_EVIDENCE, type BriefInput } from './brief.js';
 export { EnvCredentialPort, RequestCredentialPort, resolveCredentials } from './credentials.js';
 export type { CredentialPort, CredentialSource } from '@spec-studio/protocol';
 
@@ -109,6 +118,29 @@ export async function requestDocDraft(input: {
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
   });
   return { draft: parseDocDraft(result.text), text: result.text, latencyMs: result.latencyMs };
+}
+
+export async function requestBriefDraft(input: {
+  provider: AiRemoteProvider;
+  apiKey: string;
+  model: string;
+  endpoint?: string | null;
+  project: Parameters<typeof buildBriefPrompt>[0];
+  brief?: BriefInput;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}) {
+  const result = await callModel({
+    provider: input.provider,
+    apiKey: input.apiKey,
+    model: input.model,
+    endpoint: input.endpoint ?? null,
+    system: buildSystemPrompt('brief'),
+    prompt: buildBriefPrompt(input.project, input.brief ?? {}),
+    ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  });
+  return { draft: parseBriefDraft(result.text), text: result.text, latencyMs: result.latencyMs };
 }
 
 /** A cheap probe for the settings panel's connection badge. */

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BlockIdSchema } from './doc.js';
+import { EvidenceIdSchema } from './evidence.js';
 import { EditableNodeTypeSchema, GraphLinkTypeSchema } from './graph.js';
 
 /**
@@ -133,7 +134,7 @@ export const AI_DEFAULT_ENDPOINTS: Record<AiRemoteProvider, string> = {
   openai: findPreset('openai')?.baseUrl ?? '',
 };
 
-export const AI_PROPOSAL_MODES = ['graph', 'doc'] as const;
+export const AI_PROPOSAL_MODES = ['graph', 'doc', 'brief'] as const;
 export const AiProposalModeSchema = z.enum(AI_PROPOSAL_MODES);
 export type AiProposalMode = (typeof AI_PROPOSAL_MODES)[number];
 
@@ -177,6 +178,8 @@ export type AiDraftNode = z.infer<typeof AiDraftNodeSchema>;
  * A link inside a draft. Ids do not exist yet, so both ends are symbolic:
  *   item:<key>   a node this draft creates
  *   pin:<number> a pin already on the screen
+ * An idea is a destination only — a draft may say a specnode came from an
+ * idea (`idea:<I_id>`), never the other way around.
  */
 export const AiDraftLinkSchema = z.object({
   type: GraphLinkTypeSchema,
@@ -187,8 +190,8 @@ export const AiDraftLinkSchema = z.object({
     }),
   dst: z
     .string()
-    .regex(/^(item|pin):[A-Za-z0-9_-]{1,24}$/, {
-      message: 'a draft ref is item:<key> or pin:<number>',
+    .regex(/^(item|pin|idea):[A-Za-z0-9_-]{1,24}$/, {
+      message: 'a draft ref is item:<key>, pin:<number> or idea:<I_id>',
     }),
 });
 export type AiDraftLink = z.infer<typeof AiDraftLinkSchema>;
@@ -214,6 +217,40 @@ export const AiDocDraftSchema = z.object({
 });
 export type AiDocDraft = z.infer<typeof AiDocDraftSchema>;
 
+/** One claim of a research brief: what it says and what it stands on (F3-2). */
+export const AiBriefClaimSchema = z.object({
+  text: z.string().trim().min(1).max(800),
+  /** Evidence ids only — an id the project does not have is rejected before 채택. */
+  evidenceRefs: z.array(EvidenceIdSchema).max(6).default([]),
+  /** The honest marker: a claim with no source says so instead of inventing one. */
+  ungrounded: z.boolean().default(false),
+});
+export type AiBriefClaim = z.infer<typeof AiBriefClaimSchema>;
+
+/**
+ * The brief draft (§5.4): a title, a summary and 1–12 claims. Every claim
+ * either cites evidence or is marked `ungrounded` — that disjunction is the
+ * whole trust boundary of AC-2, so it is enforced here, not in the UI.
+ */
+export const AiBriefDraftSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120),
+    summary: z.string().trim().min(1).max(300),
+    claims: z.array(AiBriefClaimSchema).min(1).max(12),
+  })
+  .superRefine((value, ctx) => {
+    for (const [index, claim] of value.claims.entries()) {
+      if (claim.evidenceRefs.length === 0 && !claim.ungrounded) {
+        ctx.addIssue({
+          code: 'custom',
+          message: '주장에는 근거 참조 또는 근거 없음 표시가 필요합니다',
+          path: ['claims', index],
+        });
+      }
+    }
+  });
+export type AiBriefDraft = z.infer<typeof AiBriefDraftSchema>;
+
 /**
  * What the browser asks the daemon for. The key rides in this body or sits in
  * the OS keychain — nowhere else.
@@ -227,8 +264,14 @@ export const AiProposalRequestSchema = z.object({
   apiKey: z.string().max(400).nullable().optional(),
   /** Which gateway preset the request is aimed at, when it uses one. */
   presetId: z.string().max(60).optional(),
-  /** Which document a `doc` proposal edits; defaults to the project's document. */
+  /** Which document a `doc` or `brief` proposal edits; defaults to the project's document. */
   docId: z.string().max(40).optional(),
+  /** A `brief` runs on this idea (F3-2), or on `topic` when no idea is picked. */
+  ideaId: z.string().max(60).optional(),
+  /** The evidence a brief should cite; omitted means everything on the board. */
+  evidenceIds: z.array(z.string().max(60)).max(24).optional(),
+  /** 주제 텍스트 when no idea is picked. */
+  topic: z.string().trim().min(1).max(500).optional(),
 });
 export type AiProposalRequest = z.infer<typeof AiProposalRequestSchema>;
 

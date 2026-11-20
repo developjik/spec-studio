@@ -6,6 +6,7 @@ import {
   AI_PROVIDERS,
   AiProposalRequestSchema,
   findPreset,
+  type AiProposalMode,
   type AiPreset,
   type AiProvider,
   type AiProposalRequest,
@@ -23,8 +24,10 @@ import {
 import {
   AiDraftError,
   AiProviderError,
+  buildFallbackBrief,
   isRemote,
   probeProvider,
+  requestBriefDraft,
   requestDocDraft,
   requestGraphDraft,
   resolveApiKey,
@@ -117,16 +120,25 @@ function defaultModelFor(provider: AiProvider, preset: AiPreset | undefined): st
 }
 
 /**
- * Which document a proposal targets: the named one when the request says so,
- * else the first spec, else whatever exists. One registry, one failure code.
+ * Which document a proposal targets. `brief` runs on a research doc — the
+ * first one when the request does not name one — because a brief *is*
+ * research prose; `doc`/default keep the first spec. One registry, one
+ * failure code.
  */
-function resolveDoc(project: Project, docId: string | undefined): Doc {
+function resolveDoc(project: Project, docId: string | undefined, mode: AiProposalMode): Doc {
   const doc =
     docId !== undefined
       ? project.docs.find((candidate) => candidate.id === docId)
-      : (project.docs.find((candidate) => candidate.kind === 'spec') ?? project.docs[0]);
+      : mode === 'brief'
+        ? project.docs.find((candidate) => candidate.kind === 'research')
+        : (project.docs.find((candidate) => candidate.kind === 'spec') ?? project.docs[0]);
   if (doc === undefined) {
-    throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
+    throw new DomainError(
+      'doc_missing',
+      mode === 'brief'
+        ? '리서치 문서를 먼저 만들어 주세요'
+        : '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.',
+    );
   }
   return doc;
 }
@@ -141,7 +153,24 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
       note: why,
     };
   }
-  const doc = resolveDoc(project, request.docId);
+  if (request.mode === 'brief') {
+    // The fallback brief is the same function eval gates; the card carries
+    // its draft so core's evidence check runs for rules too.
+    const doc = resolveDoc(project, request.docId, 'brief');
+    const draft = buildFallbackBrief(project, {
+      ideaId: request.ideaId ?? null,
+      topic: request.topic ?? null,
+      evidenceIds: request.evidenceIds ?? null,
+    });
+    return {
+      command: { type: 'proposal.create', docId: doc.id, draft, source: 'rule' },
+      source: 'rule',
+      provider: 'local',
+      model: '',
+      note: why,
+    };
+  }
+  const doc = resolveDoc(project, request.docId, 'doc');
   return {
     command: { type: 'proposal.create', docId: doc.id },
     source: 'rule',
@@ -211,7 +240,38 @@ export async function planAiProposal(
       };
     }
 
-    const doc = resolveDoc(project, request.docId);
+    if (request.mode === 'brief') {
+      const doc = resolveDoc(project, request.docId, 'brief');
+      const { draft, latencyMs } = await requestBriefDraft({
+        provider: request.provider,
+        apiKey,
+        model,
+        endpoint,
+        project,
+        brief: {
+          ideaId: request.ideaId ?? null,
+          topic: request.topic ?? null,
+          evidenceIds: request.evidenceIds ?? null,
+        },
+        ...(runtime.fetchImpl === undefined ? {} : { fetchImpl: runtime.fetchImpl }),
+      });
+      return {
+        command: {
+          type: 'proposal.create',
+          docId: doc.id,
+          draft,
+          source: 'llm',
+          provider: request.provider,
+          model,
+        },
+        source: 'llm',
+        provider: request.provider,
+        model,
+        note: `LLM이 브리프 주장 ${draft.claims.length}개를 만들었습니다 (${latencyMs}ms).`,
+      };
+    }
+
+    const doc = resolveDoc(project, request.docId, 'doc');
     const { draft, latencyMs } = await requestDocDraft({
       provider: request.provider,
       apiKey,
