@@ -10,6 +10,8 @@ import {
   probeProvider,
   redact,
   resolveApiKey,
+  hasEnvKey,
+  isOfficialEndpoint,
 } from '../src/index';
 
 /**
@@ -207,5 +209,52 @@ describe('resolving the key', () => {
     expect(resolveApiKey('anthropic', '', env)).toBe('env-anthropic');
     expect(resolveApiKey('openai', null, {})).toBeNull();
     expect(resolveApiKey('local', 'ignored', env)).toBeNull();
+  });
+
+  it('spends an environment key only on the provider\'s own host', () => {
+    const env = { ANTHROPIC_API_KEY: 'env-anthropic', OPENAI_API_KEY: 'env-openai' };
+
+    // The default endpoint, the official base URL, or no endpoint at all.
+    expect(resolveApiKey('openai', '', env, null)).toBe('env-openai');
+    expect(resolveApiKey('openai', '', env, 'https://api.openai.com/v1')).toBe('env-openai');
+    expect(resolveApiKey('anthropic', '', env, 'https://api.anthropic.com')).toBe('env-anthropic');
+
+    // Anything else is a host the request chose, and the daemon's key stays home.
+    expect(resolveApiKey('openai', '', env, 'https://collect.evil.example/v1')).toBeNull();
+    expect(resolveApiKey('openai', '', env, 'http://127.0.0.1:9999/v1')).toBeNull();
+    expect(resolveApiKey('openai', '', env, 'https://api.openai.com.evil.example/v1')).toBeNull();
+
+    // A key the request carried is the user's own, and may go where they point it.
+    expect(resolveApiKey('openai', 'sk-body', env, 'https://collect.evil.example/v1')).toBe('sk-body');
+  });
+
+  it('knows which endpoints are the provider\'s own, and is not fooled by a lookalike', () => {
+    expect(isOfficialEndpoint('anthropic', '')).toBe(true);
+    expect(isOfficialEndpoint('anthropic', 'https://api.anthropic.com/v1/messages')).toBe(true);
+    expect(isOfficialEndpoint('openai', 'https://api.openai.com')).toBe(true);
+
+    expect(isOfficialEndpoint('openai', 'https://api.openai.com.evil.example/v1')).toBe(false);
+    expect(isOfficialEndpoint('openai', 'https://api.openai.com@evil.example/v1')).toBe(false);
+    expect(isOfficialEndpoint('openai', 'http://api.openai.com/v1')).toBe(false);
+    expect(isOfficialEndpoint('anthropic', 'not a url')).toBe(false);
+  });
+
+  it('reports whether a provider has an environment key, never the key', () => {
+    expect(hasEnvKey('openai', { OPENAI_API_KEY: 'sk-env' })).toBe(true);
+    expect(hasEnvKey('openai', { OPENAI_API_KEY: '  ' })).toBe(false);
+    expect(hasEnvKey('local', { OPENAI_API_KEY: 'sk-env' })).toBe(false);
+  });
+
+  it('will not dial an endpoint that is not http(s)', async () => {
+    const attempt = callModel({
+      provider: 'openai',
+      apiKey: 'sk-body',
+      model: 'm',
+      endpoint: 'file:///etc/passwd',
+      system: 's',
+      prompt: 'p',
+    });
+    await expect(attempt).rejects.toBeInstanceOf(AiProviderError);
+    await expect(attempt).rejects.toThrow(/http\(s\)/);
   });
 });

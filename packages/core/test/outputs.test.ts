@@ -15,6 +15,7 @@ import {
   renderStaticHtml,
   utf8Bytes,
   base64FromBytes,
+  csvCell,
   type ExecuteContext,
 } from '../src';
 
@@ -133,6 +134,32 @@ describe('qa csv', () => {
     expect(csv).toContain('"여러\n줄"');
     expect(csv).toContain('"쉼표, 따옴표 ""포함"""');
   });
+
+  it('neutralises a cell a spreadsheet would run as a formula', () => {
+    expect(csvCell('=cmd|calc')).toBe("'=cmd|calc");
+    expect(csvCell('+1+1')).toBe("'+1+1");
+    expect(csvCell('-2+3')).toBe("'-2+3");
+    expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(csvCell('\t=cmd')).toBe("'\t=cmd");
+    expect(csvCell('\r=cmd')).toBe('"\'\r=cmd"');
+    expect(csvCell('\n=cmd')).toBe('"\'\n=cmd"');
+    // A '=' that is not the first character is prose, and stays as written.
+    expect(csvCell('사전조건: 주문 상태 = 배송 시작')).toBe('사전조건: 주문 상태 = 배송 시작');
+  });
+
+  it('keeps the formula guard when the cell also needs quoting', () => {
+    const risky = pin(8, 'function', '=HYPERLINK("http://evil.example","주문")');
+    const csv = buildQaCsv({ screen, pins: [risky] });
+    expect(csv).toContain(`"'=HYPERLINK(""http://evil.example"",""주문"")"`);
+    expect(csv).not.toContain(',=HYPERLINK');
+  });
+
+  it('guards a body whose formula hides behind a leading line break', () => {
+    const sneaky = pin(9, 'function', '취소 요청', '\n=HYPERLINK("http://evil.example","주문")');
+    const csv = buildQaCsv({ screen, pins: [sneaky] });
+    expect(csv).toContain('"\'\n=HYPERLINK');
+    expect(csv).not.toMatch(/,\n=HYPERLINK/);
+  });
 });
 
 describe('static html', () => {
@@ -164,6 +191,22 @@ describe('static html', () => {
     expect(document).not.toContain('<script>alert(1)</script>');
     expect(document).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(document).toContain('&quot;quoted&quot; &amp; &lt;b&gt;');
+  });
+
+  it('carries a policy that keeps the document inert wherever it is opened', () => {
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    expect(html).toContain("default-src 'none'");
+    expect(html).toContain('img-src data:');
+  });
+
+  it('refuses to build a document around an image it would not embed', () => {
+    const hostile = {
+      ...screen,
+      ref: { kind: 'image' as const, value: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==' },
+    };
+    expect(() => renderStaticHtml({ screen: hostile, pins, generatedAt: AT })).toThrow(
+      /allowed image type/,
+    );
   });
 
   it('names the file after the screen code', () => {
@@ -214,6 +257,19 @@ describe('base64', () => {
     const inlined = inlineImage('data:image/png;base64,AA==');
     expect(inlined.base64).toBe('AA==');
     expect(inlined.dataUrl).toBe('data:image/png;base64,AA==');
+  });
+
+  it('refuses a data url that is not a screenshot this app will embed', () => {
+    for (const hostile of [
+      'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+      'data:application/xhtml+xml;base64,PHNjcmlwdD4=',
+      'data:image/png" onerror="alert(1);base64,AA==',
+      'data:image/png;base64,AA=="><script>alert(1)</script>',
+      'https://example.com/shot.png',
+      'data:image/png;base64,',
+    ]) {
+      expect(() => inlineImage(hostile)).toThrow(/allowed image type/);
+    }
   });
 });
 

@@ -32,7 +32,11 @@ interface MockLlm {
   url: string;
   /** The next answer the fake model gives, already stringified. */
   status: number;
-  requests: Array<{ path: string; body: { model?: string; messages?: unknown[] } }>;
+  requests: Array<{
+    path: string;
+    headers: Record<string, string | string[] | undefined>;
+    body: { model?: string; messages?: unknown[] };
+  }>;
   setReply(reply: () => string): void;
   close(): Promise<void>;
 }
@@ -65,7 +69,11 @@ async function startMockLlm(): Promise<MockLlm> {
           { type: 'verifies', src: 'item:n2-qa', dst: 'item:n1-policy' },
         ],
       }),
-    requests: [] as Array<{ path: string; body: { model?: string; messages?: unknown[] } }>,
+    requests: [] as Array<{
+      path: string;
+      headers: Record<string, string | string[] | undefined>;
+      body: { model?: string; messages?: unknown[] };
+    }>,
   };
 
   const server: Server = createServer((request, response) => {
@@ -75,6 +83,7 @@ async function startMockLlm(): Promise<MockLlm> {
       const raw = Buffer.concat(chunks).toString('utf8');
       state.requests.push({
         path: request.url ?? '',
+        headers: request.headers,
         body: raw === '' ? {} : (JSON.parse(raw) as { model?: string; messages?: unknown[] }),
       });
       response.statusCode = state.status;
@@ -148,15 +157,33 @@ let dir = '';
 let dbPath = '';
 let llm: Awaited<ReturnType<typeof startMockLlm>>;
 
-async function boot(env: Record<string, string | undefined> = {}): Promise<Daemon> {
+async function boot(
+  env: Record<string, string | undefined> = {},
+  aiFetch?: typeof fetch,
+): Promise<Daemon> {
   const started = await startDaemon({
     dbPath,
     port: 0,
     now: () => '2026-11-19T09:30:00.000Z',
     env,
+    ...(aiFetch === undefined ? {} : { aiFetch }),
   });
   daemons.push(started);
   return started;
+}
+
+/**
+ * Keeps a request addressed to the provider's own host on this machine, so the
+ * "official endpoint" path can be exercised without the open internet. The URL
+ * the daemon decided to call is what travels here — the check under test runs
+ * before this function is reached.
+ */
+function officialEndpointOnThisMachine(mockUrl: string): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const match = /^https:\/\/api\.openai\.com(\/.*)?$/.exec(url);
+    return fetch(match === null ? url : `${mockUrl}${match[1] ?? ''}`, init);
+  }) as typeof fetch;
 }
 
 async function api<T>(
@@ -302,14 +329,51 @@ describe('the AI routes', () => {
     expect(llm.requests).toHaveLength(0);
   });
 
-  it('uses the daemon environment key when the panel leaves the field empty', async () => {
+  it('uses the daemon environment key on the provider\'s own endpoint', async () => {
+    const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' }, officialEndpointOnThisMachine(llm.url));
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'graph', provider: 'openai', model: 'mock-1' },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('llm');
+    expect(llm.requests[0]?.path).toBe('/v1/chat/completions');
+    expect(llm.requests[0]?.headers.authorization).toBe('Bearer sk-env-secret');
+  });
+
+  it('refuses to spend the daemon environment key on a custom endpoint', async () => {
     const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' });
     const { projectId } = await seedScreen(daemon);
     const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
       body: { mode: 'graph', provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1` },
     });
-    expect(proposal.status).toBe(200);
-    expect(proposal.body.source).toBe('llm');
+    expect(proposal.status).toBe(400);
+    expect(proposal.body.error?.code).toBe('endpoint_key_required');
+    expect(JSON.stringify(proposal.body)).not.toContain('sk-env-secret');
+    // Nothing was sent anywhere, and nothing was written.
+    expect(llm.requests).toHaveLength(0);
+    const detail = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
+    expect(detail.body.project?.graphProposal).toBeNull();
+  });
+
+  it('says the same thing on the connection probe, without sending the key', async () => {
+    const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' });
+    const probe = await api<AiEnvelope>(daemon, '/api/ai/test', {
+      body: { provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1` },
+    });
+    expect(probe.status).toBe(200);
+    expect(probe.body.result?.ok).toBe(false);
+    expect(probe.body.result?.message).toContain('직접 입력한 API 키');
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it('still sends a key the request carried to a custom endpoint', async () => {
+    const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' });
+    const probe = await api<AiEnvelope>(daemon, '/api/ai/test', {
+      body: { provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1`, apiKey: 'sk-own-key' },
+    });
+    expect(probe.body.result?.ok).toBe(true);
+    expect(llm.requests[0]?.headers.authorization).toBe('Bearer sk-own-key');
   });
 
   it('refuses an answer that is not a draft, without writing anything', async () => {

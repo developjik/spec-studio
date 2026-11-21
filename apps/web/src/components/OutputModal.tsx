@@ -113,10 +113,17 @@ export function OutputModal({ screen, pins, pinSeq, doc, onClose }: OutputModalP
             </figure>
           )}
           {active !== null && tab === 'spec-html' && active.text !== null && (
+            // `sandbox=""` is the strictest setting there is: the preview gets an
+            // opaque origin, no scripts, no forms, no navigation. The handoff
+            // document is static by design, so nothing it could do is lost — and
+            // an imported bundle cannot use this frame to reach the daemon or
+            // the window it is previewed in.
             <iframe
               className="preview-frame"
               title="정적 HTML 미리보기"
               srcDoc={active.text}
+              sandbox=""
+              referrerPolicy="no-referrer"
               data-testid="output-html-preview"
             />
           )}

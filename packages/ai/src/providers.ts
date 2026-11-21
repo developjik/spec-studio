@@ -7,7 +7,9 @@ import { AI_DEFAULT_ENDPOINTS, type AiRemoteProvider } from '@spec-studio/protoc
  * small bundle and a custom base URL (a local model server, a gateway, a test
  * double) is the same code path as the vendor's. The key is read from the
  * argument, put in a header, and forgotten — it is never stored, logged, or
- * echoed back in an error message.
+ * echoed back in an error message. Which key the argument may hold is decided
+ * one level up: `resolveApiKey` only spends the daemon's environment key on the
+ * provider's own host, never on a host a request body named.
  */
 
 export interface ModelCallInput {
@@ -60,6 +62,17 @@ function endpointFor(provider: AiRemoteProvider, endpoint: string | null | undef
   const base = endpoint === undefined || endpoint === null || endpoint.trim() === ''
     ? AI_DEFAULT_ENDPOINTS[provider]
     : endpoint.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new AiProviderError('network', 'Endpoint 주소를 읽지 못했습니다. http(s) 주소를 입력해 주세요.');
+  }
+  // `fetch` accepts more schemes than a model API should: keep it to the two
+  // that mean "a server over the network".
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new AiProviderError('network', 'Endpoint는 http(s) 주소여야 합니다.');
+  }
   return provider === 'anthropic' ? joinUrl(base, '/v1/messages') : joinUrl(base, '/chat/completions');
 }
 

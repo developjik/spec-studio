@@ -63,6 +63,20 @@ export const AI_SOURCE_LABEL: Record<AiProposalSource, string> = {
 };
 
 /**
+ * A base URL for a provider call. `null` means the provider default. Only
+ * http(s) is accepted: `fetch` would otherwise happily take `file:` or `data:`,
+ * and an endpoint is not the place to discover that.
+ */
+export const AiEndpointSchema = z
+  .string()
+  .trim()
+  .url()
+  .max(500)
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: 'endpoint must be an http(s) url',
+  });
+
+/**
  * Provider · model · endpoint. These are not secrets, but they are also not
  * written to the database: they live in the window for the session, like the
  * key does.
@@ -71,7 +85,7 @@ export const AiSettingsSchema = z.object({
   provider: AiProviderSchema.default('local'),
   model: z.string().trim().max(80).default(''),
   /** A custom base URL (local model server, gateway). `null` uses the default. */
-  endpoint: z.string().trim().url().max(500).nullable().default(null),
+  endpoint: AiEndpointSchema.nullable().default(null),
 });
 export type AiSettings = z.infer<typeof AiSettingsSchema>;
 
@@ -134,7 +148,7 @@ export const AiProposalRequestSchema = z.object({
   mode: AiProposalModeSchema,
   provider: AiProviderSchema.default('local'),
   model: z.string().trim().max(80).default(''),
-  endpoint: z.string().trim().url().max(500).nullable().optional(),
+  endpoint: AiEndpointSchema.nullable().optional(),
   /** Session memory only: the daemon forwards it and keeps no copy. */
   apiKey: z.string().max(400).nullable().optional(),
   /** Which document a `doc` proposal edits; defaults to the project's document. */
@@ -145,7 +159,7 @@ export type AiProposalRequest = z.infer<typeof AiProposalRequestSchema>;
 export const AiTestRequestSchema = z.object({
   provider: AiProviderSchema.default('local'),
   model: z.string().trim().max(80).default(''),
-  endpoint: z.string().trim().url().max(500).nullable().optional(),
+  endpoint: AiEndpointSchema.nullable().optional(),
   apiKey: z.string().max(400).nullable().optional(),
 });
 export type AiTestRequest = z.infer<typeof AiTestRequestSchema>;
