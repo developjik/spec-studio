@@ -2,6 +2,7 @@
   "name": "@spec-studio/store",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "SQLite schema and the future single writer — the source of truth",
   "exports": {

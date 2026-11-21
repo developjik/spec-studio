@@ -2,6 +2,7 @@
   "name": "@spec-studio/ai",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Model-facing half of the AI proposal layer: prompts, provider calls, strict draft parsing",
   "exports": {
