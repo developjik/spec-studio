@@ -2,6 +2,7 @@
   "name": "@spec-studio/publish",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Confluence REST v2 one-way publisher \u2014 the local spec is the only source of truth",
   "exports": {

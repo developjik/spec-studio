@@ -2,6 +2,7 @@
   "name": "@spec-studio/core",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Pure domain logic: numbered pins, gap-preserving deletion, command execution",
   "exports": {

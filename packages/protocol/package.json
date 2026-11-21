@@ -2,6 +2,7 @@
   "name": "@spec-studio/protocol",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Zod schemas for spec-studio objects, screen refs, commands and events",
   "exports": {
