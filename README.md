@@ -480,3 +480,9 @@ pnpm test:contract
 | `pnpm dep:check` | Boundary rules |
 | `pnpm test:contract` | SQLite schema contract |
 | `pnpm check` | Everything CI runs |
+
+## License
+
+코어는 Apache-2.0 (오픈코어)로 공개합니다. 전문은 [LICENSE](LICENSE)를 보세요.
+
+Copyright 2026 developjik — licensed under the [Apache License, Version 2.0](LICENSE).
