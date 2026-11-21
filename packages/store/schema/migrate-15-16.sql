@@ -25,10 +25,12 @@ PRAGMA foreign_keys = OFF;
 BEGIN IMMEDIATE;
 
 -- 1. doc 재빌드 (kind CHECK에 'backlog' 추가) ─────────────────────────
+-- 두 FK 동작은 신규 생성 경로(schema.sql)와 반드시 같아야 한다 — 이관 파일과
+-- 신규 파일의 삭제 동작이 갈리면 그 차이가 영구히 굳는다.
 CREATE TABLE doc_new (
   id          TEXT PRIMARY KEY,                 -- D_ + nanoid(12)
-  project_id  TEXT REFERENCES project(id) ON DELETE RESTRICT,
-  screen_id   TEXT REFERENCES obj(id) ON DELETE RESTRICT,
+  project_id  TEXT REFERENCES project(id) ON DELETE CASCADE,
+  screen_id   TEXT REFERENCES obj(id) ON DELETE SET NULL,
   title       TEXT NOT NULL,
   rev         INTEGER NOT NULL DEFAULT 0,       -- 커밋 단위로 증가
   created_at  TEXT NOT NULL,
@@ -36,7 +38,12 @@ CREATE TABLE doc_new (
   kind        TEXT NOT NULL DEFAULT 'spec' CHECK (kind IN ('spec','research','backlog')),
   deleted_at  TEXT
 );
-INSERT INTO doc_new SELECT * FROM doc;
+-- 컬럼을 양쪽 다 명시한다. 이관으로 올라온 doc은 ADD COLUMN이 뒤에 붙어
+-- (id,title,rev,created_at,project_id,screen_id,updated_at,kind,deleted_at)
+-- 신규 생성 순서와 다르다 — positional SELECT *는 NULL인 project_id를
+-- NOT NULL rev에 밀어 넣어 15→16이 실패했다 (검증자 Blocker 1).
+INSERT INTO doc_new (id, project_id, screen_id, title, rev, created_at, updated_at, kind, deleted_at)
+SELECT id, project_id, screen_id, title, rev, created_at, updated_at, kind, deleted_at FROM doc;
 DROP TABLE doc;
 PRAGMA legacy_alter_table = ON;
 ALTER TABLE doc_new RENAME TO doc;

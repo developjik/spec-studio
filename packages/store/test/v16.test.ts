@@ -9,6 +9,8 @@ import { hasFts5, openSqliteStore, splitSchema, type SqliteStore } from '../src'
 
 /** The v14 canon DDL, frozen as a fixture: this is what a real v14 file looks like. */
 const FIXTURE = fileURLToPath(new URL('./fixtures/schema-v14.sql', import.meta.url));
+/** The v11 canon DDL (git a9bb35f), frozen: real files that migrated since W2 carry it. */
+const FIXTURE_V11 = fileURLToPath(new URL('./fixtures/schema-v11.sql', import.meta.url));
 
 const AT = '2026-11-19T09:00:00.000Z';
 
@@ -48,6 +50,58 @@ function applyV14(path: string): void {
   const { core, search } = splitSchema(readFileSync(FIXTURE, 'utf8'));
   raw.exec(core);
   if (hasFts5(raw)) raw.exec(search);
+  raw.close();
+}
+
+function applyV11(path: string): void {
+  const raw = new DatabaseSync(path);
+  const { core, search } = splitSchema(readFileSync(FIXTURE_V11, 'utf8'));
+  raw.exec(core);
+  if (hasFts5(raw)) raw.exec(search);
+  raw.close();
+}
+
+/**
+ * One real-shaped v11 project. doc has only its four original columns — the
+ * project/screen/kind/tombstone ones arrive later by ALTER, appended at the
+ * end. That appended order is exactly what a positional `SELECT *` got wrong
+ * in 15→16 (검증자 Blocker 1).
+ */
+function seedV11(path: string): void {
+  const raw = new DatabaseSync(path);
+  raw.exec(`
+    INSERT INTO project(id,name,created_at,updated_at)
+      VALUES('PRJ_migrated11','주문 상세 기획','${AT}','${AT}');
+    INSERT INTO obj(id,project_id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at)
+      VALUES('S_migrated001','PRJ_migrated11','screen',NULL,'주문 상세',NULL,
+             '{"code":"SCR-110","ref":{"kind":"image","value":"data:image/svg+xml;charset=utf-8,%3Csvg%3E","label":"샘플 화면"},"figmaUrl":null,"viewport":{"width":1200,"height":800},"pinSeq":1}',
+             'linked',1,'h-screen','${AT}','${AT}');
+    INSERT INTO obj(id,project_id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at)
+      VALUES('P_migrated001','PRJ_migrated11','pin','policy','배송 시작 후 취소 불가','S_migrated001',
+             '{"number":1,"body":"배송 시작 전에만 취소 가능","anchor":{"x":0.5,"y":0.4}}',
+             'open',1,'h-pin','${AT}','${AT}');
+    INSERT INTO obj(id,project_id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at)
+      VALUES('N_migrated001','PRJ_migrated11','specnode','requirement','취소 요청',NULL,
+             '{"body":"배송 전 취소 요청을 받는다"}','draft',1,'h-req','${AT}','${AT}');
+    INSERT INTO doc(id,title,rev,created_at)
+      VALUES('D_migrated001','주문 상세 문서',2,'${AT}');
+    INSERT INTO block(id,doc_id,parent_id,idx,type,text,attrs,hash,state)
+      VALUES('B_migrated001','D_migrated001',NULL,'000000','paragraph',
+             '배송이 시작되기 전까지만 취소할 수 있다.','{"pinRefs":[]}','h-b1','live');
+    INSERT INTO link(id,type,src,dst,created_at)
+      VALUES('L_migrated001','expresses','N_migrated001','S_migrated001','${AT}');
+    INSERT INTO proposal(id,doc_id,origin,summary,base_rev,author_kind,risk,state,created_at)
+      VALUES('PR_migrated001','D_migrated001','pin','취소 문장을 좁힌다',2,'ai','low','open','${AT}');
+    INSERT INTO proposal_op(id,proposal_id,seq,kind,target_block,view,state)
+      VALUES('op_migrated001','PR_migrated001',1,'insert','B_migrated001',
+             '{"blockId":"B_migrated001","afterBlockId":null,"before":null,"after":{"type":"paragraph","text":"추가","pinRefs":[]}}','open');
+    INSERT INTO thread(id,kind,last_seq,created_at)
+      VALUES('project:PRJ_migrated11','project',0,'${AT}');
+    INSERT INTO event(thread_id,type,payload,at)
+      VALUES('project:PRJ_migrated11','pin.created','{"pinId":"P_migrated001"}','${AT}');
+    INSERT INTO op_log(at,actor,kind,target,before,after,payload)
+      VALUES('${AT}','person:owner','pin.create','P_migrated001',NULL,'{}','{}');
+  `);
   raw.close();
 }
 
@@ -147,6 +201,75 @@ describe('v14 → v15 → v16 migration chain', () => {
       docs: [{ id: 'D_migration0001', kind: 'spec', rev: 2 }],
       proposals: [{ id: 'PR_migration0001', ideaId: null }],
       graph: { nodes: [{ id: 'N_migration0001' }] },
+    });
+  });
+});
+
+describe('v11-origin migrated file → v16 (검증자 Blocker 1 회귀)', () => {
+  // A file that *migrated* since v11 has its doc columns in appended order —
+  // (id,title,rev,created_at,project_id,screen_id,updated_at,kind,deleted_at) —
+  // not the canonical order a fresh CREATE writes. A positional SELECT * in
+  // migrate-15-16 pushed NULL project_id into NOT NULL rev and the file died
+  // at user_version 15. This fixture is the real v11 DDL from git a9bb35f.
+  it('migrates a real v11 file all the way to 16 without losing a row', async () => {
+    applyV11(file);
+    seedV11(file);
+
+    const store = open();
+    expect(store.schema.actual).toBe(16);
+    expect(store.schema.created).toBe(false);
+
+    const db = store.database;
+    const count = (sql: string): number => {
+      const row = db.prepare(sql).get() as { c: number | bigint } | undefined;
+      return Number(row?.c ?? 0);
+    };
+    expect(count('SELECT count(*) c FROM obj')).toBe(3);
+    expect(count('SELECT count(*) c FROM doc')).toBe(1);
+    expect(count('SELECT count(*) c FROM block')).toBe(1);
+    expect(count('SELECT count(*) c FROM link')).toBe(1);
+    expect(count('SELECT count(*) c FROM proposal')).toBe(1);
+    expect(count('SELECT count(*) c FROM proposal_op')).toBe(1);
+    expect(count('SELECT count(*) c FROM op_log')).toBe(1);
+    expect(count('SELECT count(*) c FROM event')).toBe(1);
+
+    // The row crossed the doc rebuild with every column landing in the right
+    // place — title stays a title, rev stays a number, nothing moved.
+    const doc = db.prepare('SELECT title, rev, kind, deleted_at FROM doc').get() as {
+      title: string;
+      rev: number;
+      kind: string;
+      deleted_at: string | null;
+    };
+    expect(doc).toEqual({
+      title: '주문 상세 문서',
+      rev: 2,
+      kind: 'spec',
+      deleted_at: null,
+    });
+    const proposal = db.prepare('SELECT summary, idea_id FROM proposal').get() as {
+      summary: string;
+      idea_id: string | null;
+    };
+    expect(proposal.summary).toBe('취소 문장을 좁힌다');
+    expect(proposal.idea_id).toBeNull();
+
+    // Minor 2: the rebuilt doc's delete behaviour must match the canonical
+    // DDL (CASCADE / SET NULL), not drift to RESTRICT/RESTRICT.
+    const fks = db.prepare('PRAGMA foreign_key_list(doc)').all() as Array<{
+      table: string;
+      on_delete: string;
+    }>;
+    const onDelete = new Map(fks.map((fk) => [fk.table, fk.on_delete]));
+    expect(onDelete.get('project')).toBe('CASCADE');
+    expect(onDelete.get('obj')).toBe('SET NULL');
+
+    // The v11 doc predates doc.project_id, so it stays outside this project's
+    // doc list — the row-level checks above carry the preservation proof.
+    const project = await store.readProject('PRJ_migrated11');
+    expect(project).toMatchObject({
+      id: 'PRJ_migrated11',
+      graph: { nodes: [{ id: 'N_migrated001' }], links: [{ id: 'L_migrated001' }] },
     });
   });
 });
