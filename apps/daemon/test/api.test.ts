@@ -1,10 +1,11 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Screen } from '@spec-studio/protocol';
 import { startMockConfluence, type MockConfluence } from '@spec-studio/publish/testing';
-import { startDaemon, type Daemon } from '../src/server';
+import { startDaemon, hostnameOf, isLoopbackHostname, type Daemon } from '../src/server';
 
 /**
  * The whole W3 promise exercised through the daemon's own HTTP API, against a
@@ -58,6 +59,38 @@ async function api<T>(
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   return { status: response.status, body: (await response.json()) as T };
+}
+
+/**
+ * A request with a hand-written `Host`, which `fetch` will not let a caller set.
+ * This is the only way to ask the daemon the question DNS rebinding asks.
+ */
+function rawRequest(
+  target: Daemon,
+  path: string,
+  host?: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: target.port,
+        path,
+        method: 'GET',
+        headers: host === undefined ? {} : { host },
+        setHost: host !== undefined,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }),
+        );
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 interface Envelope {
@@ -144,6 +177,67 @@ describe('the daemon API', () => {
     const denied = await api<Envelope>(daemon, '/api/health', { origin: 'http://evil.example' });
     expect(denied.status).toBe(403);
     expect(denied.body.error?.code).toBe('origin_not_allowed');
+  });
+
+  it('answers to the loopback names and nothing else', async () => {
+    for (const host of [
+      `127.0.0.1:${daemon.port}`,
+      `localhost:${daemon.port}`,
+      `[::1]:${daemon.port}`,
+    ]) {
+      const answer = await rawRequest(daemon, '/api/health', host);
+      expect(answer.status).toBe(200);
+    }
+  });
+
+  it('refuses a Host that a rebinding page would send, before reading any project', async () => {
+    const answer = await rawRequest(daemon, '/api/projects', `evil.example:${daemon.port}`);
+    expect(answer.status).toBe(403);
+    expect((JSON.parse(answer.body) as Envelope).error?.code).toBe('host_not_allowed');
+    expect(answer.body).not.toContain('projects');
+  });
+
+  it('refuses a request that names no host at all', async () => {
+    // HTTP/1.1 without a Host header never reaches the handler: Node's parser
+    // answers 400 first. Our own answer for a missing or unusable name is the
+    // 403 path above, and the two helpers are asserted here directly.
+    const answer = await rawRequest(daemon, '/api/projects');
+    expect(answer.status).toBe(400);
+    expect(answer.body).not.toContain('projects');
+    expect(hostnameOf(undefined)).toBeNull();
+    expect(hostnameOf('')).toBeNull();
+    expect(isLoopbackHostname('evil.example')).toBe(false);
+    expect(isLoopbackHostname('127.0.0.5')).toBe(true);
+  });
+});
+
+describe('the import boundary', () => {
+  it('refuses a bundle whose screen image is not an image this app embeds', async () => {
+    const created = await api<Envelope>(daemon, '/api/projects', { body: { name: '주문 상세' } });
+    const projectId = created.body.project?.id as string;
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'screen.attach', screen: SCREEN } },
+    });
+    const exported = await api<Envelope>(daemon, `/api/projects/${projectId}/export`);
+    const bundle = exported.body.bundle as unknown as {
+      project: { screen: { ref: { kind: string; value: string } } };
+    };
+    const screenshot = bundle.project.screen.ref.value;
+
+    bundle.project.screen.ref.value = 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==';
+    const refused = await api<Envelope>(daemon, '/api/projects/import', { body: { bundle } });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error?.code).toBe('invalid_bundle');
+
+    bundle.project.screen.ref.value = 'data:image/png" onerror="alert(1);base64,AA==';
+    const injected = await api<Envelope>(daemon, '/api/projects/import', { body: { bundle } });
+    expect(injected.status).toBe(400);
+    expect(injected.body.error?.code).toBe('invalid_bundle');
+
+    // The same bundle with its ordinary screenshot still imports.
+    bundle.project.screen.ref.value = screenshot;
+    const accepted = await api<Envelope>(daemon, '/api/projects/import', { body: { bundle } });
+    expect(accepted.status).toBe(201);
   });
 });
 

@@ -43,6 +43,41 @@ export const DEFAULT_ORIGINS = [
 
 const BODY_LIMIT = 40 * 1024 * 1024;
 
+/**
+ * The names a loopback daemon may be called by. `Host` is checked against this
+ * list, not against the interface the socket happens to be bound to: DNS
+ * rebinding changes what a name *resolves to*, never what the browser sends in
+ * `Host`, so a page served from `evil.example:8787` and rebound to 127.0.0.1
+ * still announces `Host: evil.example:8787` and stops here.
+ */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '0:0:0:0:0:0:0:1']);
+
+export function isLoopbackHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (LOOPBACK_HOSTNAMES.has(lower)) return true;
+  // 127.0.0.0/8 is all loopback; `some-name.localhost` is loopback by spec.
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+  return lower.endsWith('.localhost');
+}
+
+/**
+ * The hostname a `Host` header names, or `null` when there is none to trust.
+ * Ports are dropped: the daemon may bind an ephemeral one, and the port is not
+ * what DNS rebinding forges.
+ */
+export function hostnameOf(hostHeader: string | undefined): string | null {
+  const raw = (hostHeader ?? '').trim();
+  if (raw === '') return null;
+  try {
+    const url = new URL(`http://${raw}`);
+    // `URL` keeps IPv6 literals in brackets; compare the bare address.
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    return hostname === '' ? null : hostname;
+  } catch {
+    return null;
+  }
+}
+
 export interface DaemonOptions {
   dbPath: string;
   host?: string;
@@ -228,6 +263,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> => {
+    // A request addressed to a name this daemon does not answer to is not from
+    // the app. Checked first, before anything reads the store.
+    const hostname = hostnameOf(req.headers.host);
+    if (hostname === null || !isLoopbackHostname(hostname)) {
+      throw new HttpError(403, 'host_not_allowed', '이 데몬이 응답하지 않는 주소로 요청이 왔습니다.');
+    }
+
     const origin = req.headers.origin;
     if (typeof origin === 'string' && !allowed.has(origin)) {
       throw new HttpError(403, 'origin_not_allowed', '허용되지 않은 출처입니다.');
