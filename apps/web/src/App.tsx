@@ -170,8 +170,12 @@ export default function App() {
   });
   const importInput = useRef<HTMLInputElement>(null);
   const fileHandler = useRef<(file: File) => void>(() => undefined);
-  /** ideaId → 브리프 카드 요약 — 승격 시 새 스펙 첫 문단의 씨앗 (MN-2). */
-  const briefSeeds = useRef(new Map<string, string>());
+  /**
+   * F-1: daemon commands run strictly in order. A blur-commit racing the
+   * click it was caused by must never answer after it — an older `project`
+   * landing last would erase the click's effect from the screen.
+   */
+  const commandQueue = useRef<Promise<void>>(Promise.resolve());
 
   /** On boot: if the loopback daemon answers, SQLite becomes the source of truth. */
   useEffect(() => {
@@ -312,9 +316,14 @@ export default function App() {
     if (project === null) return null;
     if (sqliteMode && daemonProjectId !== null) {
       try {
-        const outcome = await client.execute(daemonProjectId, command);
+        const queued = commandQueue.current.then(() => client.execute(daemonProjectId, command));
+        commandQueue.current = queued.then(() => undefined, () => undefined);
+        const outcome = await queued;
         const next = normalizeProject(outcome.project);
         setProject(next);
+        // F-2: the execute answer names the undo the ledger now offers, so
+        // the chip moves with the command instead of waiting for a reload.
+        setRevertable(outcome.revert);
         return {
           project: next,
           events: outcome.events as DomainEvent[],
@@ -567,6 +576,11 @@ export default function App() {
     });
   };
 
+  /** F-4 (v16): title edits ride the same `doc.update` the ledger undoes. */
+  const renameDoc = (docId: string, title: string) => {
+    void runDoc({ type: 'doc.update', docId, title });
+  };
+
   const addBlock = (afterBlockId: string | null) => {
     if (doc === null) return;
     void runDoc({
@@ -580,7 +594,10 @@ export default function App() {
 
   const updateBlockText = (blockId: string, text: string) => {
     if (doc === null) return;
-    void runDoc({ type: 'doc.block.update', docId: doc.id, blockId, text });
+    // F-1: the blur commit is invisible work — it must not flip the UI to
+    // busy, because the click that caused the blur would land on controls a
+    // frame later disabled, which is how the first interaction got eaten.
+    void applyCommand({ type: 'doc.block.update', docId: doc.id, blockId, text });
   };
 
   const changeBlockType = (blockId: string, blockType: BlockType) => {
@@ -662,12 +679,16 @@ export default function App() {
       const outcome = await client.revert(daemonProjectId, revertable.seq);
       setProject(normalizeProject(outcome.project));
       setRevertable(outcome.revert);
+      // F-3: the toast names the operation actually undone — an adopt
+      // message under a doc lifecycle revert was the wrong story.
       setNotice({
         tone: 'info',
         text:
           revertable.kind === 'graph'
             ? `그래프 채택 ${outcome.revertedSeq}번을 되돌렸습니다. 객체 ${revertable.nodes}개와 그 링크를 제거했습니다.`
-            : `채택 ${outcome.revertedSeq}번을 되돌렸습니다. 문단 ${outcome.blocks}개를 채택 직전 상태로 복원했습니다.`,
+            : revertable.op === 'proposal.adopt'
+              ? `채택 ${outcome.revertedSeq}번을 되돌렸습니다. 문단 ${outcome.blocks}개를 채택 직전 상태로 복원했습니다.`
+              : `${revertable.summary} — 되돌렸습니다.`,
       });
     } catch (error) {
       setNotice({
@@ -939,6 +960,7 @@ export default function App() {
         docId: mode === 'doc' && doc !== null ? doc.id : null,
       });
       setProject(normalizeProject(outcome.project));
+      setRevertable(outcome.revert);
       setAiSource(outcome.source);
       setAiResult({
         tone: outcome.source === 'llm' ? 'info' : 'error',
@@ -999,9 +1021,12 @@ export default function App() {
       const docCreated = created.events.find((event) => event.type === 'doc.created');
       await applyCommand({ type: 'idea.update', ideaId: idea.id, state: 'promoted' });
       if (docCreated !== undefined && docCreated.type === 'doc.created') {
-        // MN-2: a promoted spec never opens empty — the brief summary when
-        // this session ran one for the idea, else the idea's own text.
-        const seed = briefSeeds.current.get(idea.id) ?? idea.text;
+        // MN-A (v16): a promoted spec never opens empty — the summary of the
+        // brief that answered this idea, which `proposal.ideaId` carries
+        // across restarts, else the idea's own text.
+        const seed =
+          project?.proposals.filter((candidate) => candidate.ideaId === idea.id).at(-1)
+            ?.summary ?? idea.text;
         await applyCommand({
           type: 'doc.block.create',
           docId: docCreated.doc.id,
@@ -1049,14 +1074,11 @@ export default function App() {
       });
       const next = normalizeProject(outcome.project);
       setProject(next);
+      setRevertable(outcome.revert);
       setAiSource(outcome.source);
       const filed = next.proposals.filter((candidate) => candidate.docId === targetDocId).at(-1);
       if (filed !== undefined) {
         setAiCardSource({ proposalId: filed.id, source: outcome.source });
-        // MN-2: remember which idea this brief answered — 승격이 그 요약을
-        // 새 스펙의 첫 문단으로 씁니다. idea↔proposal의 영속 링크가 없어
-        // 세션 한정 기록입니다 (영속화는 proposal.idea_id 스키마 이월).
-        briefSeeds.current.set(ideaId, filed.summary);
       }
       setAiResult({
         tone: outcome.source === 'llm' ? 'info' : 'error',
@@ -1222,7 +1244,9 @@ export default function App() {
           busy={busy}
           selectedId={selectedGraphId}
           revertable={
-            revertable === null
+            // "채택 되돌리기" is only honest when the ledger's next undo is a
+            // graph adoption — every command refreshes this state now (F-2).
+            revertable === null || revertable.op !== 'graph.proposal.adopt'
               ? null
               : { seq: revertable.seq, summary: revertable.summary, nodes: revertable.nodes }
           }
@@ -1311,6 +1335,7 @@ export default function App() {
             onSwitchDoc={setActiveDocId}
             onCreateDoc={createDoc}
             onDeleteDoc={deleteDoc}
+            onRenameDoc={renameDoc}
             onAddBlock={addBlock}
             onUpdateText={updateBlockText}
             onChangeType={changeBlockType}

@@ -15,7 +15,11 @@ import { proseOf, staleForBlock, staleBadges } from '@spec-studio/core';
 export type DocMode = 'direct' | 'proposal';
 
 /** What the kind badge says; the schema holds the vocabulary, the panel the words. */
-const DOC_KIND_LABEL: Record<DocKind, string> = { spec: '스펙', research: '리서치' };
+const DOC_KIND_LABEL: Record<DocKind, string> = {
+  spec: '스펙',
+  research: '리서치',
+  backlog: '백로그',
+};
 
 export interface RevertableView {
   seq: number;
@@ -24,6 +28,8 @@ export interface RevertableView {
   blocks: number;
   /** The `op_log.kind` the undo would take back (proposal adopts or doc ops). */
   op: string;
+  /** For an adopt undo, which card it restores — null for doc lifecycle ops. */
+  proposalId: string | null;
 }
 
 interface DocPanelProps {
@@ -52,6 +58,7 @@ interface DocPanelProps {
   onSwitchDoc: (docId: string) => void;
   onCreateDoc: (title: string, kind: DocKind) => void;
   onDeleteDoc: (docId: string) => void;
+  onRenameDoc: (docId: string, title: string) => void;
   onAddBlock: (afterBlockId: string | null) => void;
   onUpdateText: (blockId: string, text: string) => void;
   onChangeType: (blockId: string, type: BlockType) => void;
@@ -76,6 +83,7 @@ interface DocTabsProps {
   onSwitch: (docId: string) => void;
   onCreate: (title: string, kind: DocKind) => void;
   onDelete: (docId: string) => void;
+  onRename: (docId: string, title: string) => void;
   onRevert: () => void;
 }
 
@@ -92,10 +100,14 @@ function DocTabs(props: DocTabsProps) {
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<DocKind>('spec');
   const [armed, setArmed] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
 
-  // An armed delete belongs to the tab it was pressed on, never the next one.
+  // An armed delete or an open rename belongs to the tab it was pressed on,
+  // never the next one.
   useEffect(() => {
     setArmed(false);
+    setRenaming(false);
   }, [props.activeDocId]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -106,6 +118,24 @@ function DocTabs(props: DocTabsProps) {
     setCreating(false);
     setTitle('');
     setKind('spec');
+  };
+
+  // F-4 (v16): rename is a registry move like delete — one button on the tab
+  // bar opens the inline form prefilled with the title on the doc.
+  const startRename = () => {
+    const active = props.docs.find((doc) => doc.id === props.activeDocId);
+    if (active === undefined) return;
+    setRenameTitle(active.title);
+    setRenaming(true);
+    setCreating(false);
+  };
+
+  const submitRename = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = renameTitle.trim();
+    if (trimmed === '' || props.activeDocId === null) return;
+    props.onRename(props.activeDocId, trimmed);
+    setRenaming(false);
   };
 
   const removeActive = () => {
@@ -151,6 +181,19 @@ function DocTabs(props: DocTabsProps) {
         >
           +
         </button>
+        {props.activeDocId !== null && (
+          <button
+            type="button"
+            className="doc-tab doc-tab--rename"
+            aria-label="문서 이름 변경"
+            title="현재 문서 이름 변경"
+            disabled={props.busy}
+            onClick={startRename}
+            data-testid="doc-rename"
+          >
+            ✎
+          </button>
+        )}
         {props.activeDocId !== null && (
           <button
             type="button"
@@ -212,6 +255,35 @@ function DocTabs(props: DocTabsProps) {
           </button>
         </form>
       )}
+      {renaming && (
+        <form className="doc-create-form" onSubmit={submitRename}>
+          <input
+            className="doc-create-title"
+            value={renameTitle}
+            onChange={(event) => setRenameTitle(event.target.value)}
+            placeholder="새 문서 제목"
+            aria-label="새 문서 제목"
+            autoFocus
+            data-testid="doc-rename-input"
+          />
+          <button
+            type="submit"
+            className="btn btn--primary btn--sm"
+            disabled={props.busy || renameTitle.trim() === ''}
+            data-testid="doc-rename-confirm"
+          >
+            변경
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => setRenaming(false)}
+            data-testid="doc-rename-cancel"
+          >
+            취소
+          </button>
+        </form>
+      )}
     </div>
   );
 }
@@ -253,6 +325,7 @@ export function DocPanel(props: DocPanelProps) {
           onSwitch={props.onSwitchDoc}
           onCreate={props.onCreateDoc}
           onDelete={props.onDeleteDoc}
+          onRename={props.onRenameDoc}
           onRevert={props.onRevert}
         />
         <p className="doc-empty">
@@ -288,6 +361,7 @@ export function DocPanel(props: DocPanelProps) {
         onSwitch={props.onSwitchDoc}
         onCreate={props.onCreateDoc}
         onDelete={props.onDeleteDoc}
+        onRename={props.onRenameDoc}
         onRevert={props.onRevert}
       />
 
@@ -454,22 +528,29 @@ export function DocPanel(props: DocPanelProps) {
           </section>
         )}
 
-        {ours !== null && ours.state === 'adopted' && revertable !== null && (
+        {ours !== null && ours.state === 'adopted' && (
           <div className="adopted-bar" data-testid="adopted-bar">
             <span className="adopted-text">
               채택됨 · {truncate(ours.summary, 48)}
               {props.sqliteMode ? '' : ' (데몬 연결 시 되돌리기 가능)'}
             </span>
-            <button
-              type="button"
-              className="btn btn--sm"
-              onClick={props.onRevert}
-              disabled={props.busy || !props.sqliteMode}
-              data-testid="proposal-revert"
-              title="op_log.before 스냅샷으로 채택 직전 문단 상태를 복원합니다"
-            >
-              되돌리기
-            </button>
+            {/* The button must restore *this* card: now that every command
+                refreshes `revertable`, a later op can sit on top — undo it
+                only when the ledger's next undo really is this adoption. */}
+            {revertable !== null &&
+              revertable.op === 'proposal.adopt' &&
+              revertable.proposalId === ours.id && (
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={props.onRevert}
+                  disabled={props.busy || !props.sqliteMode}
+                  data-testid="proposal-revert"
+                  title="op_log.before 스냅샷으로 채택 직전 문단 상태를 복원합니다"
+                >
+                  되돌리기
+                </button>
+              )}
           </div>
         )}
 

@@ -193,6 +193,7 @@ export interface AiProposalOutcomeView {
   provider: AiProvider;
   model: string;
   note: string;
+  revert: RevertableView | null;
 }
 
 export class DaemonError extends Error {
@@ -251,7 +252,7 @@ export class DaemonClient {
   async execute(
     projectId: string,
     command: Command,
-  ): Promise<{ project: Project; events: unknown[]; opSeq: number }> {
+  ): Promise<{ project: Project; events: unknown[]; opSeq: number; revert: RevertableView | null }> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/commands`, {
       method: 'POST',
       body: { command },
