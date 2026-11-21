@@ -15,6 +15,7 @@
     "test": "pnpm test:unit && pnpm eval",
     "dep:check": "depcruise apps packages --config .dependency-cruiser.cjs",
     "test:contract": "python3 test/contract/test_schema.py",
+    "journey:report": "node scripts/journey-report.mjs",
     "check": "pnpm typecheck && pnpm typecheck:eval && pnpm test && pnpm build && pnpm dep:check && pnpm test:contract",
     "daemon": "pnpm --filter @spec-studio/daemon start",
     "daemon:build": "pnpm --filter @spec-studio/daemon build",
