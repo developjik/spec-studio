@@ -16,6 +16,8 @@ import {
 import {
   AiDraftError,
   AiProviderError,
+  hasEnvKey,
+  isOfficialEndpoint,
   isRemote,
   probeProvider,
   requestDocDraft,
@@ -73,9 +75,36 @@ export function aiStatus(env: Record<string, string | undefined>): AiStatus {
   };
 }
 
-function requireApiKey(provider: AiProvider, requestKey: string | null | undefined, env: AiRuntime['env']): string | null {
-  return resolveApiKey(provider, requestKey, env);
+function requireApiKey(
+  provider: AiProvider,
+  requestKey: string | null | undefined,
+  env: AiRuntime['env'],
+  endpoint: string | null,
+): string | null {
+  return resolveApiKey(provider, requestKey, env, endpoint);
 }
+
+/**
+ * The one case `resolveApiKey` answers `null` for and the user did not cause:
+ * the daemon has a key, but this request pointed the call at another host.
+ * Saying so is better than silently answering from local rules — the person who
+ * typed that endpoint should learn that it cannot hold the environment key.
+ */
+function envKeyBlockedByEndpoint(
+  provider: AiProvider,
+  requestKey: string | null | undefined,
+  env: AiRuntime['env'],
+  endpoint: string | null,
+): boolean {
+  if ((requestKey ?? '').trim() !== '') return false;
+  if (endpoint === null || endpoint.trim() === '') return false;
+  if (!isRemote(provider)) return false;
+  if (!hasEnvKey(provider, env)) return false;
+  return !isOfficialEndpoint(provider, endpoint);
+}
+
+const ENDPOINT_KEY_REQUIRED_MESSAGE =
+  '사용자 지정 Endpoint에는 직접 입력한 API 키가 필요합니다. 데몬 환경변수 키는 프로바이더 공식 주소에만 쓰입니다.';
 
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
@@ -114,8 +143,11 @@ export async function planAiProposal(
     return localPlan(project, request, '로컬 규칙으로 만들었습니다. API 키는 쓰지 않았습니다.');
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env);
+  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env, request.endpoint ?? null);
   if (apiKey === null) {
+    if (envKeyBlockedByEndpoint(request.provider, request.apiKey, runtime.env, request.endpoint ?? null)) {
+      throw new AiRequestError(400, 'endpoint_key_required', ENDPOINT_KEY_REQUIRED_MESSAGE);
+    }
     return localPlan(
       project,
       request,
@@ -222,8 +254,17 @@ export async function testAiConnection(
     };
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env);
+  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env, request.endpoint ?? null);
   if (apiKey === null) {
+    if (envKeyBlockedByEndpoint(request.provider, request.apiKey, runtime.env, request.endpoint ?? null)) {
+      return {
+        ok: false,
+        provider: request.provider,
+        model,
+        latencyMs: 0,
+        message: ENDPOINT_KEY_REQUIRED_MESSAGE,
+      };
+    }
     return {
       ok: false,
       provider: request.provider,
