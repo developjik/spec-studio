@@ -1,9 +1,9 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Command, Screen } from '@spec-studio/protocol';
+import type { Command, CredentialPort, Screen } from '@spec-studio/protocol';
 import { startDaemon, type Daemon } from '../src/server';
 
 /**
@@ -36,6 +36,8 @@ interface MockLlm {
     path: string;
     headers: Record<string, string | string[] | undefined>;
     body: { model?: string; messages?: unknown[] };
+    /** The Bearer header the daemon sent — how each credential source is seen. */
+    authorization: string | null;
   }>;
   setReply(reply: () => string): void;
   close(): Promise<void>;
@@ -73,6 +75,7 @@ async function startMockLlm(): Promise<MockLlm> {
       path: string;
       headers: Record<string, string | string[] | undefined>;
       body: { model?: string; messages?: unknown[] };
+      authorization: string | null;
     }>,
   };
 
@@ -85,6 +88,10 @@ async function startMockLlm(): Promise<MockLlm> {
         path: request.url ?? '',
         headers: request.headers,
         body: raw === '' ? {} : (JSON.parse(raw) as { model?: string; messages?: unknown[] }),
+        authorization:
+          typeof request.headers.authorization === 'string'
+            ? request.headers.authorization
+            : null,
       });
       response.statusCode = state.status;
       response.setHeader('content-type', 'application/json');
@@ -124,13 +131,15 @@ async function startMockLlm(): Promise<MockLlm> {
 
 interface AiEnvelope {
   project?: {
-    id: string;
     pins: Array<{ id: string; number: number; title: string }>;
-    doc?: {
+    ideas?: Array<{ id: string; title: string; tags: string[]; state: string }>;
+    evidence?: Array<{ id: string; title: string; state: string }>;
+    docs: Array<{
       id: string;
+      kind: string;
       blocks: Array<{ id: string; text: string; pinRefs: Array<{ pinId: string }> }>;
-    } | null;
-    proposal?: { id: string; origin: string; state: string; patches: unknown[] } | null;
+    }>;
+    proposals?: Array<{ id: string; docId: string; origin: string; state: string; patches: unknown[] }>;
     graph?: { nodes: Array<{ id: string; type: string; title: string }>; links: unknown[] };
     graphProposal?: {
       id: string;
@@ -147,8 +156,13 @@ interface AiEnvelope {
   model?: string;
   note?: string;
   opSeq?: number;
-  status?: { providers: Array<{ provider: string; hasEnvKey: boolean }>; localAvailable: boolean };
-  result?: { ok: boolean; provider: string; message: string; latencyMs: number };
+  status?: {
+    providers: Array<{ provider: string; hasEnvKey: boolean }>;
+    localAvailable: boolean;
+    keychainAvailable?: boolean;
+    presets?: Array<{ id: string; hasKeychainKey: boolean }>;
+  };
+  result?: { ok: boolean; provider: string; message: string; latencyMs: number; source?: string | null };
   error?: { code: string; message: string };
 }
 
@@ -159,6 +173,7 @@ let llm: Awaited<ReturnType<typeof startMockLlm>>;
 
 async function boot(
   env: Record<string, string | undefined> = {},
+  keychain: CredentialPort | null = null,
   aiFetch?: typeof fetch,
 ): Promise<Daemon> {
   const started = await startDaemon({
@@ -166,6 +181,7 @@ async function boot(
     port: 0,
     now: () => '2026-11-19T09:30:00.000Z',
     env,
+    keychain,
     ...(aiFetch === undefined ? {} : { aiFetch }),
   });
   daemons.push(started);
@@ -330,7 +346,7 @@ describe('the AI routes', () => {
   });
 
   it('uses the daemon environment key on the provider\'s own endpoint', async () => {
-    const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' }, officialEndpointOnThisMachine(llm.url));
+    const daemon = await boot({ OPENAI_API_KEY: 'sk-env-secret' }, null, officialEndpointOnThisMachine(llm.url));
     const { projectId } = await seedScreen(daemon);
     const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
       body: { mode: 'graph', provider: 'openai', model: 'mock-1' },
@@ -416,7 +432,7 @@ describe('the AI routes', () => {
     const daemon = await boot();
     const { projectId, pins } = await seedScreen(daemon);
     const seeded = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
-    const docId = seeded.body.project?.doc?.id ?? '';
+    const docId = seeded.body.project?.docs[0]?.id ?? '';
     expect(docId).not.toBe('');
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: {
@@ -429,7 +445,7 @@ describe('the AI routes', () => {
       },
     });
     const withDoc = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
-    const block = withDoc.body.project?.doc?.blocks[0];
+    const block = withDoc.body.project?.docs[0]?.blocks[0];
     expect(block).toBeDefined();
 
     llm.setReply(() =>
@@ -448,22 +464,366 @@ describe('the AI routes', () => {
       body: { mode: 'doc', provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1`, apiKey: 'sk-doc' },
     });
     expect(proposal.status).toBe(200);
-    expect(proposal.body.project?.proposal?.origin).toBe('doc-chat');
+    expect(proposal.body.project?.proposals?.[0]?.origin).toBe('doc-chat');
 
     const adopted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: {
         command: {
           type: 'proposal.adopt',
           docId,
-          proposalId: proposal.body.project?.proposal?.id,
+          proposalId: proposal.body.project?.proposals?.[0]?.id,
         },
       },
     });
     expect(adopted.status).toBe(200);
-    expect(adopted.body.project?.doc?.blocks[0]?.text).toContain('배송이 시작되기 전까지만');
+    expect(adopted.body.project?.docs[0]?.blocks[0]?.text).toContain('배송이 시작되기 전까지만');
 
     const reverted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/revert`, { body: {} });
     expect(reverted.status).toBe(200);
-    expect(reverted.body.project?.doc?.blocks[0]?.text).toBe('취소는 언제든 가능하다.');
+    expect(reverted.body.project?.docs[0]?.blocks[0]?.text).toBe('취소는 언제든 가능하다.');
+  });
+
+  it('targets the doc the request names, and defaults to the spec doc', async () => {
+    const daemon = await boot();
+    const { projectId, pins } = await seedScreen(daemon);
+    const seeded = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
+    const specDocId = seeded.body.project?.docs[0]?.id ?? '';
+    const research = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: { type: 'doc.create', title: '리서치 노트', kind: 'research' },
+      },
+    });
+    const researchDocId = research.body.project?.docs[1]?.id ?? '';
+    expect(researchDocId).not.toBe('');
+
+    const blocks: Record<string, string> = {};
+    for (const [label, docId] of [
+      ['spec', specDocId],
+      ['research', researchDocId],
+    ] as const) {
+      const added = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+        body: {
+          command: {
+            type: 'doc.block.create',
+            docId,
+            blockType: 'paragraph',
+            text: label === 'spec' ? '취소는 언제든 가능하다.' : '경쟁 서비스는 취소가 하루만 가능했다.',
+          },
+        },
+      });
+      blocks[label] = added.body.project?.docs.find((doc) => doc.id === docId)?.blocks[0]?.id ?? '';
+    }
+
+    llm.setReply(() =>
+      JSON.stringify({
+        summary: '지정한 문서의 문단을 고친다',
+        patches: [
+          { blockId: blocks.research, text: '경쟁 서비스는 취소가 이틀까지 가능했다.', pins: [pins[0]?.number ?? 1] },
+        ],
+      }),
+    );
+    const targeted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'doc',
+        docId: researchDocId,
+        provider: 'openai',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+        apiKey: 'sk-doc',
+      },
+    });
+    expect(targeted.status).toBe(200);
+    const prompt = JSON.stringify(llm.requests.at(-1)?.body.messages ?? []);
+    expect(prompt).toContain(blocks.research);
+    expect(prompt).not.toContain(blocks.spec);
+    expect(prompt).toContain('리서치 노트');
+    expect(targeted.body.project?.proposals?.[0]?.docId).toBe(researchDocId);
+
+    // no docId → the first spec doc, not the newest doc. The research
+    // proposal leaves the table first, and the model now patches the spec.
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: {
+          type: 'proposal.reject',
+          docId: researchDocId,
+          proposalId: targeted.body.project?.proposals?.[0]?.id,
+        },
+      },
+    });
+    llm.setReply(() =>
+      JSON.stringify({
+        summary: '스펙 문서의 문단을 고친다',
+        patches: [
+          { blockId: blocks.spec, text: '취소는 배송 준비 중에만 가능하다.', pins: [pins[0]?.number ?? 1] },
+        ],
+      }),
+    );
+    const defaulted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'doc',
+        provider: 'openai',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+        apiKey: 'sk-doc',
+      },
+    });
+    expect(defaulted.status).toBe(200);
+    const defaultPrompt = JSON.stringify(llm.requests.at(-1)?.body.messages ?? []);
+    expect(defaultPrompt).toContain(blocks.spec);
+    expect(defaultPrompt).not.toContain(blocks.research);
+  });
+
+  it('builds a brief from real evidence with the rule fallback, and adopts it', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'doc.create', title: '취소 리서치', kind: 'research' } },
+    });
+    const idea = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'idea.capture', text: '주문 취소 UX 개선\n경쟁 정책을 조사한다.' } },
+    });
+    const ideaId = idea.body.project?.ideas?.[0]?.id ?? '';
+    const titles = ['경쟁사 A 취소 정책', '취소 사유 통계'];
+    const evidenceIds: string[] = [];
+    for (const [index, title] of titles.entries()) {
+      const captured = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+        body: {
+          command: {
+            type: 'evidence.capture',
+            url: `https://example.com/e/${index}`,
+            title,
+            excerpt: '결제 후 24시간 이내 무료 취소',
+            evidenceType: 'web',
+          },
+        },
+      });
+      evidenceIds.push(captured.body.project?.evidence?.[index]?.id ?? '');
+    }
+
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'brief', provider: 'local', ideaId, evidenceIds },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('rule');
+    expect(proposal.body.note).toContain('로컬 규칙');
+    const research = proposal.body.project?.docs.find((doc) => doc.kind === 'research');
+    expect(research?.id).toBeDefined();
+    const card = proposal.body.project?.proposals?.[0];
+    expect(card?.state).toBe('open');
+
+    const adopted = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'proposal.adopt', docId: research?.id, proposalId: card?.id } },
+    });
+    const blocks = adopted.body.project?.docs.find((doc) => doc.kind === 'research')?.blocks ?? [];
+    expect(blocks.map((block) => block.text)).toEqual([
+      '주문 취소 UX 개선',
+      '주문 취소 UX 개선',
+      `경쟁사 A 취소 정책 (출처: ${titles[0]})`,
+      `취소 사유 통계 (출처: ${titles[1]})`,
+      '기회: 주문 취소 UX 개선에서 증거 없이 가정한 기회이다. (근거 없음)',
+      '다음 질문: 주문 취소 UX 개선에서 다음에 확인해야 할 질문이다. (근거 없음)',
+    ]);
+    // only the two seeded titles are ever cited — no invented sources
+    const cited = blocks.filter((block) => block.text.includes('(출처:'));
+    expect(cited.every((block) => titles.some((title) => block.text.includes(title)))).toBe(true);
+  });
+
+  it('refuses a brief when the project has no research document', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'brief', provider: 'local' },
+    });
+    expect(proposal.status).toBe(400);
+    expect(proposal.body.error?.code).toBe('doc_missing');
+    expect(proposal.body.error?.message).toContain('리서치 문서를 먼저 만들어 주세요');
+    expect(llm.requests).toHaveLength(0);
+  });
+});
+
+/**
+ * The credential chain end to end (F1): request key → keychain → env → local
+ * rules. The keychain itself is a double — Electron's safeStorage lives in the
+ * desktop shell — but everything around it is the real HTTP API.
+ */
+describe('the credential chain', () => {
+  /** An in-memory port: what the tests use for ordering and status. */
+  const memoryKeychain = (entries: Record<string, string> = {}): CredentialPort => {
+    const map = new Map(Object.entries(entries));
+    return {
+      source: 'keychain',
+      async resolve(_provider, presetId) {
+        return map.get(presetId) ?? null;
+      },
+      async store(_provider, presetId, key) {
+        map.set(presetId, key);
+      },
+      async erase(_provider, presetId) {
+        map.delete(presetId);
+      },
+    };
+  };
+
+  /**
+   * A file-backed port mimicking safeStorage's contract: the disk holds
+   * ciphertext (base64 stands in for the encrypted blob), never the key
+   * string — so "restart" is just a new instance over the same file.
+   */
+  const fileKeychain = (file: string): CredentialPort => {
+    const read = (): Record<string, string> =>
+      existsSync(file)
+        ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>)
+        : {};
+    const write = (entries: Record<string, string>) =>
+      writeFileSync(file, JSON.stringify(entries), 'utf8');
+    return {
+      source: 'keychain',
+      async resolve(_provider, presetId) {
+        const encoded = read()[presetId];
+        return encoded === undefined ? null : Buffer.from(encoded, 'base64').toString('utf8');
+      },
+      async store(_provider, presetId, key) {
+        const entries = read();
+        entries[presetId] = Buffer.from(key, 'utf8').toString('base64');
+        write(entries);
+      },
+      async erase(_provider, presetId) {
+        const entries = read();
+        delete entries[presetId];
+        write(entries);
+      },
+    };
+  };
+
+  it('answers proposals with the keychain key when the request carries none', async () => {
+    const daemon = await boot({}, memoryKeychain({ openai: 'sk-keychain-secret' }), officialEndpointOnThisMachine(llm.url));
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'graph', provider: 'openai', presetId: 'openai', model: 'mock-1' },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('llm');
+    expect(llm.requests.at(-1)?.authorization).toBe('Bearer sk-keychain-secret');
+  });
+
+  it('prefers a request key over the keychain, and env over nothing', async () => {
+    const keychain = memoryKeychain({ openai: 'sk-keychain-secret' });
+    const daemon = await boot({}, keychain);
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'graph',
+        provider: 'openai',
+        presetId: 'openai',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+        apiKey: 'sk-request-wins',
+      },
+    });
+    expect(proposal.status).toBe(200);
+    expect(llm.requests.at(-1)?.authorization).toBe('Bearer sk-request-wins');
+  });
+
+  it('stores, reports as a boolean only, and erases', async () => {
+    const daemon = await boot({}, memoryKeychain());
+    const stored = await api<AiEnvelope>(daemon, '/api/ai/keychain/store', {
+      body: { presetId: 'openai', apiKey: 'sk-store-me' },
+    });
+    expect(stored.status).toBe(200);
+
+    const status = await api<AiEnvelope>(daemon, '/api/ai');
+    expect(status.body.status?.keychainAvailable).toBe(true);
+    const byPreset = Object.fromEntries(
+      (status.body.status?.presets ?? []).map((p) => [p.id, p.hasKeychainKey]),
+    );
+    expect(byPreset['openai']).toBe(true);
+    expect(byPreset['anthropic']).toBe(false);
+    // Write-only: nothing in the status answer is the key or shaped like it.
+    expect(JSON.stringify(status.body)).not.toContain('sk-store-me');
+
+    const erased = await api<AiEnvelope>(daemon, '/api/ai/keychain/erase', {
+      body: { presetId: 'openai' },
+    });
+    expect(erased.status).toBe(200);
+    const after = await api<AiEnvelope>(daemon, '/api/ai');
+    expect(
+      after.body.status?.presets?.find((p) => p.id === 'openai')?.hasKeychainKey,
+    ).toBe(false);
+  });
+
+  it('reports keychain_unavailable where there is no port (web mode)', async () => {
+    const daemon = await boot({}, null);
+    const status = await api<AiEnvelope>(daemon, '/api/ai');
+    expect(status.body.status?.keychainAvailable).toBe(false);
+    const stored = await api<AiEnvelope>(daemon, '/api/ai/keychain/store', {
+      body: { presetId: 'openai', apiKey: 'sk-nowhere' },
+    });
+    expect(stored.status).toBe(501);
+    expect(stored.body.error?.code).toBe('keychain_unavailable');
+  });
+
+  it('rejects a store for an unknown preset', async () => {
+    const daemon = await boot({}, memoryKeychain());
+    const stored = await api<AiEnvelope>(daemon, '/api/ai/keychain/store', {
+      body: { presetId: 'not-a-preset', apiKey: 'sk-x' },
+    });
+    expect(stored.status).toBe(404);
+    expect(stored.body.error?.code).toBe('preset_unknown');
+  });
+
+  it('calls a keyless local-server preset without a key (authMode none)', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'graph',
+        provider: 'openai',
+        presetId: 'ollama',
+        model: 'mock-1',
+        endpoint: `${llm.url}/v1`,
+      },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('llm');
+    // fetch normalises `Bearer ` (empty token) to a bare `Bearer` on the wire.
+    expect(llm.requests.at(-1)?.authorization).toBe('Bearer');
+  });
+
+  it('AC-6: a stored key survives a restart and is nowhere on disk as a string', async () => {
+    const sentinel = 'sk-keychain-W2-SENTINEL-7f3a';
+    const keychainFile = join(dir, 'keychain.json');
+
+    // First boot: store the key and use it once.
+    const first = await boot({}, fileKeychain(keychainFile), officialEndpointOnThisMachine(llm.url));
+    const { projectId } = await seedScreen(first);
+    const saved = await api<AiEnvelope>(first, '/api/ai/keychain/store', {
+      body: { presetId: 'openai', apiKey: sentinel },
+    });
+    expect(saved.status).toBe(200);
+    const proposal = await api<AiEnvelope>(first, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'graph', provider: 'openai', presetId: 'openai', model: 'mock-1' },
+    });
+    expect(proposal.body.source).toBe('llm');
+    expect(llm.requests.at(-1)?.authorization).toBe(`Bearer ${sentinel}`);
+
+    // "Restart": a new daemon, a new port instance, same backing file.
+    await first.close();
+    const second = await boot({}, fileKeychain(keychainFile), officialEndpointOnThisMachine(llm.url));
+    const restored = await api<AiEnvelope>(second, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'graph', provider: 'openai', presetId: 'openai', model: 'mock-1' },
+    });
+    expect(restored.status).toBe(200);
+    expect(restored.body.source).toBe('llm');
+    expect(llm.requests.at(-1)?.authorization).toBe(`Bearer ${sentinel}`);
+
+    // The sentinel is in no persisted surface — AC-6's grep check.
+    const db = readFileSync(dbPath); // SQLite
+    expect(db.includes(Buffer.from(sentinel))).toBe(false);
+    const bundle = await api<AiEnvelope>(second, `/api/projects/${projectId}/export`); // 번들
+    expect(JSON.stringify(bundle.body)).not.toContain(sentinel);
+    const backing = readFileSync(keychainFile); // keychain backing file: ciphertext only
+    expect(backing.includes(Buffer.from(sentinel))).toBe(false);
+    const status = await api<AiEnvelope>(second, '/api/ai'); // status answers booleans
+    expect(JSON.stringify(status.body)).not.toContain(sentinel);
   });
 });

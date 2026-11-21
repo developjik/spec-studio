@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -21,12 +21,20 @@ CREATE TABLE project (
   updated_at TEXT NOT NULL
 );
 
+-- 0b. 단일 행 메타 ────────────────────────────────────────────────
+-- device_id 보관처 (가정 A3). 데몬 DB 기동 시 — 스토어를 여는 것이 기동이다 —
+-- 최초 1회 발급하고 이후로는 읽기만 한다.
+CREATE TABLE meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 -- 1. 기획 객체 ─────────────────────────────────────────────────────
 CREATE TABLE obj (
-  id          TEXT PRIMARY KEY,                 -- G_/I_/N_/S_/P_/C_/V_ + nanoid(12)
+  id          TEXT PRIMARY KEY,                 -- G_/I_/N_/S_/P_/C_/V_/E_ + nanoid(12) · idea는 insight와 I_를 공유(§5.2, kind 컬럼이 구분자)
   project_id  TEXT REFERENCES project(id) ON DELETE RESTRICT,
   kind        TEXT NOT NULL
-              CHECK (kind IN ('goal','insight','specnode','screen','pin','contract','verification')),
+              CHECK (kind IN ('goal','insight','specnode','screen','pin','contract','verification','idea','evidence')),
   subtype     TEXT,   -- specnode: ia|requirement|policy · pin: function|policy|exception|state|data|permission · contract: api|state|event
   title       TEXT NOT NULL CHECK (length(title) > 0),
   parent_id   TEXT REFERENCES obj(id) ON DELETE RESTRICT,
@@ -42,7 +50,7 @@ CREATE TABLE obj (
   CHECK (kind <> 'specnode' OR coalesce(subtype IN ('ia','requirement','policy'), 0)),
   CHECK (kind <> 'pin'      OR coalesce(subtype IN ('function','policy','exception','state','data','permission'), 0)),
   CHECK (kind <> 'contract' OR coalesce(subtype IN ('api','state','event'), 0)),
-  CHECK (kind NOT IN ('goal','insight','screen','verification') OR subtype IS NULL),
+  CHECK (kind NOT IN ('goal','insight','screen','verification','idea','evidence') OR subtype IS NULL),
 
   -- kind별 상태 머신 (자유 문자열 금지)
   CHECK (kind <> 'goal'         OR coalesce(state IN ('proposed','active','done','dropped'), 0)),
@@ -51,6 +59,8 @@ CREATE TABLE obj (
   CHECK (kind <> 'pin'          OR coalesce(state IN ('open','resolved','orphan'), 0)),
   CHECK (kind <> 'contract'     OR coalesce(state IN ('draft','agreed','applied'), 0)),
   CHECK (kind <> 'verification' OR coalesce(state IN ('pass','fail','blocked'), 0)),
+  CHECK (kind <> 'idea'      OR coalesce(state IN ('captured','promoted','archived'), 0)),
+  CHECK (kind <> 'evidence'  OR coalesce(state IN ('captured','cited','dismissed'), 0)),
   CHECK (kind <> 'specnode' OR subtype <> 'requirement'
          OR coalesce(state IN ('draft','approved','building','verified'), 0)),
   CHECK (kind <> 'specnode' OR subtype <> 'policy'
@@ -77,7 +87,7 @@ BEGIN
     WHEN NEW.kind = 'specnode'
          AND (SELECT kind FROM obj WHERE id = NEW.parent_id) IS NOT 'specnode'
       THEN RAISE(ABORT, 'specnode_parent_must_be_specnode')
-    WHEN NEW.kind IN ('goal','insight','screen','contract','verification')
+    WHEN NEW.kind IN ('goal','insight','screen','contract','verification','idea','evidence')
          AND NEW.parent_id IS NOT NULL
       THEN RAISE(ABORT, 'kind_has_no_parent')
   END;
@@ -101,7 +111,9 @@ CREATE TABLE doc (
   title       TEXT NOT NULL,
   rev         INTEGER NOT NULL DEFAULT 0,       -- 커밋 단위로 증가
   created_at  TEXT NOT NULL,
-  updated_at  TEXT
+  updated_at  TEXT,
+  kind        TEXT NOT NULL DEFAULT 'spec' CHECK (kind IN ('spec','research')),
+  deleted_at  TEXT                              -- 소프트 삭제 툼스톤. block state='deleted'·obj.deleted_at과 같은 패턴
 );
 CREATE INDEX doc_project ON doc(project_id, screen_id);
 
@@ -202,9 +214,9 @@ INSERT INTO link_type (id, name, src_kinds, dst_kinds, v1) VALUES
   ('governs',      '규율한다',        '["specnode"]',                        '["screen","pin","specnode"]', 1),
   ('handles_edge', '예외를 처리한다', '["pin","screen","specnode"]',         '["specnode"]', 1),
   ('references',   '참조한다',        '["screen","pin","specnode","contract","verification"]',
-                                      '["screen","pin","specnode","contract","verification"]', 1),
+                                      '["screen","pin","specnode","contract","verification","evidence"]', 1),
   ('derived_from', '도출된다',        '["specnode","contract","verification"]',
-                                      '["specnode","contract","verification","pin"]', 1),
+                                      '["specnode","contract","verification","pin","idea"]', 1),
   ('blocks',       '막는다',          '["specnode","contract","verification","pin"]',
                                       '["specnode","contract","verification","pin"]', 1);
 
@@ -378,9 +390,14 @@ CREATE TABLE event (
   thread_id TEXT NOT NULL REFERENCES thread(id) ON DELETE CASCADE,
   type      TEXT NOT NULL,                      -- object.upsert / link.suspect / proposal.open …
   payload   TEXT NOT NULL CHECK (json_valid(payload)),
-  at        TEXT NOT NULL
+  at        TEXT NOT NULL,
+  device_id TEXT,                               -- F6: 쓴 디바이스. 과거 행은 NULL
+  uuid      TEXT                                -- 행별 uuid (수집 멱등 키)
 );
 CREATE INDEX event_thread ON event(thread_id, seq);
+-- (device_id, seq)가 이벤트의 전역 신원이다. 과거 NULL 행은 서로 중복으로 섞이지
+-- 않는다 — SQLite는 NULL을 서로 다른 값으로 본다 — 대신 사후 백필도 할 수 없다.
+CREATE UNIQUE INDEX event_device_seq ON event(device_id, seq);
 
 -- 스레드별 단조 증가를 DB가 보장한다 (B4: 문서에만 있던 규칙)
 CREATE TRIGGER event_bump AFTER INSERT ON event FOR EACH ROW
@@ -399,6 +416,7 @@ CREATE TABLE op_log (
   after    TEXT CHECK (after IS NULL OR json_valid(after)),
   payload  TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload)),
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+  device_id TEXT,                               -- F6: 쓴 디바이스. 과거 행은 NULL이며 백필하지 않는다
   CHECK (kind NOT IN ('block.update','block.delete','proposal.adopt') OR before IS NOT NULL)
 );
 CREATE INDEX op_log_target ON op_log(target, seq DESC);

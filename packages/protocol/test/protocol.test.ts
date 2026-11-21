@@ -4,6 +4,7 @@ import {
   AiTestRequestSchema,
   CommandSchema,
   ObjectSchema,
+  ProjectBundleSchema,
   ProjectSchema,
   ScreenRefSchema,
   ScreenSchema,
@@ -42,6 +43,21 @@ const pin = {
   updatedAt: AT,
 };
 
+// §5.2: idea shares I_ with insight; evidence takes E. Both stand alone.
+const idea = {
+  ...goal,
+  id: `I_${'d'.repeat(12)}`,
+  kind: 'idea' as const,
+  state: 'captured',
+};
+
+const evidence = {
+  ...goal,
+  id: `E_${'e'.repeat(12)}`,
+  kind: 'evidence' as const,
+  state: 'cited',
+};
+
 describe('objects mirror the database constraints', () => {
   it('accepts a well-formed goal and pin', () => {
     expect(ObjectSchema.safeParse(goal).success).toBe(true);
@@ -76,6 +92,25 @@ describe('objects mirror the database constraints', () => {
     expect(ObjectSchema.safeParse({ ...goal, state: 'in-progress' }).success).toBe(false);
     const policy = { ...pin, state: 'agreed' };
     expect(ObjectSchema.safeParse(policy).success).toBe(false);
+  });
+
+  it('accepts a captured idea and a cited evidence', () => {
+    expect(ObjectSchema.safeParse(idea).success).toBe(true);
+    expect(ObjectSchema.safeParse(evidence).success).toBe(true);
+  });
+
+  it('refuses a subtype or a parent on idea/evidence', () => {
+    expect(ObjectSchema.safeParse({ ...idea, subtype: 'policy' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, subtype: 'capture' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...idea, parentId: pin.parentId }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, parentId: pin.parentId }).success).toBe(false);
+  });
+
+  it('keeps idea/evidence state machines', () => {
+    expect(ObjectSchema.safeParse({ ...idea, state: 'promoted' }).success).toBe(true);
+    expect(ObjectSchema.safeParse({ ...idea, state: 'active' }).success).toBe(false);
+    expect(ObjectSchema.safeParse({ ...evidence, state: 'dismissed' }).success).toBe(true);
+    expect(ObjectSchema.safeParse({ ...evidence, state: 'open' }).success).toBe(false);
   });
 });
 
@@ -248,6 +283,85 @@ describe('ai endpoint', () => {
     for (const endpoint of ['file:///etc/passwd', 'data:text/plain,hello', 'ftp://example.com']) {
       expect(AiProposalRequestSchema.safeParse({ ...request, endpoint }).success).toBe(false);
       expect(AiTestRequestSchema.safeParse({ ...request, endpoint }).success).toBe(false);
+    }
+  });
+});
+
+describe('bundle (W3/F5)', () => {
+  const legacyDoc = {
+    id: `D_${'d'.repeat(12)}`,
+    title: '주문 상세 문서',
+    rev: 2,
+    blocks: [
+      {
+        id: `B_${'b'.repeat(12)}`,
+        type: 'paragraph' as const,
+        text: '배송이 시작되기 전까지만 취소할 수 있다.',
+        pinRefs: [],
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    ],
+    createdAt: AT,
+    updatedAt: AT,
+  };
+
+  it('reads a pre-registry bundle (one `doc`) as a one-doc registry', () => {
+    const bundle = {
+      format: 'spec-studio.bundle',
+      version: 1 as const,
+      exportedAt: AT,
+      project: {
+        version: 1 as const,
+        id: 'PRJ_000000000001',
+        name: '주문 취소 정책',
+        screen: null,
+        pins: [],
+        pinSeq: 0,
+        doc: legacyDoc,
+        proposal: null,
+        graph: { nodes: [], links: [] },
+        graphProposal: null,
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    };
+    const parsed = ProjectBundleSchema.safeParse(bundle);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.project.docs).toHaveLength(1);
+    expect(parsed.data.project.docs[0]).toMatchObject({
+      id: legacyDoc.id,
+      kind: 'spec',
+      deletedAt: null,
+    });
+    expect('doc' in parsed.data.project).toBe(false);
+  });
+
+  it('reads a registry bundle as-is, kinds and all', () => {
+    const bundle = {
+      format: 'spec-studio.bundle',
+      version: 1 as const,
+      exportedAt: AT,
+      project: {
+        version: 1 as const,
+        id: 'PRJ_000000000002',
+        name: '주문 취소 정책',
+        screen: null,
+        pins: [],
+        pinSeq: 0,
+        docs: [legacyDoc, { ...legacyDoc, id: `D_${'r'.repeat(12)}`, kind: 'research' }],
+        proposals: [],
+        graph: { nodes: [], links: [] },
+        graphProposal: null,
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    };
+    const parsed = ProjectBundleSchema.safeParse(bundle);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.project.docs.map((doc) => doc.kind)).toEqual(['spec', 'research']);
     }
   });
 });

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DatabaseSync as Database } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -21,13 +22,17 @@ import type {
   Project,
   Proposal,
 } from '@spec-studio/protocol';
-import { DocSnapshotSchema } from '@spec-studio/protocol';
+import { DocSnapshotSchema, DocSchema } from '@spec-studio/protocol';
 import {
   blockToRow,
   docFromRows,
+  evidenceToRow,
+  ideaToRow,
   newBlockId,
   newDocId,
   newOpId,
+  newEvidenceId,
+  newIdeaId,
   newGraphProposalId,
   newLinkId,
   newNodeId,
@@ -35,6 +40,7 @@ import {
   newProjectId,
   newProposalId,
   newScreenId,
+  newSuffix,
   graphNodeToRow,
   type GraphProposalRow,
   type LinkRow,
@@ -68,6 +74,13 @@ export interface SqliteStoreOptions {
   /** Supplied so tests get deterministic timestamps; the port itself has no clock rule. */
   clock?: () => string;
   newId?: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
+  /**
+   * Stamps every op_log/event row this store writes (F6). Given, it replaces
+   * the `meta` lookup — that is how a test simulates a second device on one file.
+   */
+  deviceId?: string;
+  /** The ledger actor when a call does not name one. E1 is a local one-person app, so 'person:owner'. */
+  actor?: string;
 }
 
 export type StoreIdKind =
@@ -79,7 +92,9 @@ export type StoreIdKind =
   | 'proposal'
   | 'node'
   | 'link'
-  | 'graphProposal';
+  | 'graphProposal'
+  | 'idea'
+  | 'evidence';
 
 interface ProjectRow {
   id: string;
@@ -113,6 +128,15 @@ function allRows<T>(db: DatabaseSync, sql: string, ...params: Array<string | num
  * the two apart is what lets the ledger's CHECK constraints mean something.
  */
 const OP_KIND: Readonly<Record<string, string>> = {
+  'idea.capture': 'idea.capture',
+  'idea.update': 'idea.update',
+  'idea.archive': 'idea.archive',
+  'evidence.capture': 'evidence.capture',
+  'evidence.update': 'evidence.update',
+  'evidence.dismiss': 'evidence.dismiss',
+  'doc.create': 'doc.create',
+  'doc.update': 'doc.update',
+  'doc.delete': 'doc.delete',
   'doc.block.create': 'block.create',
   'doc.block.update': 'block.update',
   'doc.block.delete': 'block.delete',
@@ -129,6 +153,7 @@ const OP_KIND: Readonly<Record<string, string>> = {
   'graph.proposal.create': 'graph.proposal.create',
   'graph.proposal.adopt': 'graph.proposal.adopt',
   'graph.proposal.reject': 'graph.proposal.reject',
+  'project.package.export': 'package.export',
 };
 
 const DEFAULT_IDS = {
@@ -141,6 +166,8 @@ const DEFAULT_IDS = {
   node: (nodeType: EditableNodeType) => newNodeId(nodeType),
   link: newLinkId,
   graphProposal: newGraphProposalId,
+  idea: newIdeaId,
+  evidence: newEvidenceId,
 } as const;
 
 /**
@@ -162,6 +189,8 @@ export class SqliteStore implements StorePort {
   readonly #clock: () => string;
   readonly #newId: (kind: StoreIdKind, nodeType?: EditableNodeType) => string;
   readonly #schema: SchemaInfo;
+  readonly #deviceId: string;
+  readonly #actor: string;
   #closed = false;
 
   private constructor(options: SqliteStoreOptions) {
@@ -174,6 +203,11 @@ export class SqliteStore implements StorePort {
     this.#db.exec('PRAGMA foreign_keys = ON');
     this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#schema = applySchema(this.#db, options.schemaPath);
+    // F6: 발급은 "데몬 DB 기동 시 최초 1회" — 데몬이 스토어를 여는 것이 DB 기동이다.
+    // 과거 행의 device_id는 NULL이며 백필하지 않는다: 어느 디바이스가 썼는지는
+    // 그 시점에만 알 수 있다.
+    this.#deviceId = options.deviceId ?? this.#issueDeviceId();
+    this.#actor = options.actor ?? 'person:owner';
   }
 
   static open(options: SqliteStoreOptions): SqliteStore {
@@ -187,6 +221,20 @@ export class SqliteStore implements StorePort {
   /** The id source the daemon uses when it has to name an object itself. */
   nextId(kind: StoreIdKind, nodeType?: EditableNodeType): string {
     return this.#newId(kind, nodeType);
+  }
+
+  /** The device this database writes as; every new op_log/event row carries it (F6). */
+  get deviceId(): string {
+    return this.#deviceId;
+  }
+
+  /** Reads `meta.device_id`, issuing it on the very first open of this file. */
+  #issueDeviceId(): string {
+    const row = oneRow<{ value: string }>(this.#db, "SELECT value FROM meta WHERE key = 'device_id'");
+    if (row !== undefined) return row.value;
+    const id = `dev_${newSuffix()}`;
+    this.#db.prepare("INSERT INTO meta(key, value) VALUES('device_id', ?)").run(id);
+    return id;
   }
 
   /** Escape hatch for the adapter's own tests; not part of `StorePort`. */
@@ -216,8 +264,10 @@ export class SqliteStore implements StorePort {
       screen: null,
       pins: [],
       pinSeq: 0,
-      doc: null,
-      proposal: null,
+      docs: [],
+      proposals: [],
+      ideas: [],
+      evidence: [],
       graph: { nodes: [], links: [] },
       graphProposal: null,
       createdAt: at,
@@ -250,13 +300,25 @@ export class SqliteStore implements StorePort {
             screen.id,
           );
 
-    const docRow = oneRow<DocRow>(
+    // E1 §4 F2·F3: the inbox and the evidence board, ordered by birth.
+    const ideaRows = allRows<ObjRow>(
       this.#db,
-      'SELECT * FROM doc WHERE project_id = ? ORDER BY coalesce(updated_at, created_at) DESC, rowid DESC LIMIT 1',
+      "SELECT * FROM obj WHERE project_id = ? AND kind = 'idea' AND deleted_at IS NULL ORDER BY created_at, rowid",
       projectId,
     );
-    const doc = docRow === undefined ? null : docFromRows(docRow, this.#readBlocks(docRow.id));
-    const proposal = doc === null ? null : this.#readProposal(doc.id);
+    const evidenceRows = allRows<ObjRow>(
+      this.#db,
+      "SELECT * FROM obj WHERE project_id = ? AND kind = 'evidence' AND deleted_at IS NULL ORDER BY created_at, rowid",
+      projectId,
+    );
+
+    const docRows = allRows<DocRow>(
+      this.#db,
+      'SELECT * FROM doc WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, rowid',
+      projectId,
+    );
+    const docs = docRows.map((row) => docFromRows(row, this.#readBlocks(row.id)));
+    const proposals = docs.length === 0 ? [] : this.#readProposals(projectId);
     const graphNodes = allRows<ObjRow>(
       this.#db,
       `SELECT * FROM obj WHERE project_id = ? AND deleted_at IS NULL AND (
@@ -287,10 +349,12 @@ export class SqliteStore implements StorePort {
         updatedAt: row.updated_at,
         screen,
         pins,
-        doc,
-        proposal,
+        docs,
+        proposals,
         graphNodes,
         links,
+        ideas: ideaRows,
+        evidence: evidenceRows,
         graphProposal: graphProposalRow ?? null,
       }),
     );
@@ -317,7 +381,11 @@ export class SqliteStore implements StorePort {
     return rows.map((row) => row.id);
   }
 
-  async execute(projectId: string, command: Command): Promise<ExecuteOutcome> {
+  async execute(
+    projectId: string,
+    command: Command,
+    context?: { actor?: string },
+  ): Promise<ExecuteOutcome> {
     const before = await this.readProject(projectId);
     if (before === null) throw new Error(`no project ${projectId} in this database`);
 
@@ -326,12 +394,17 @@ export class SqliteStore implements StorePort {
       at,
       nextId: (kind, nodeType) => this.#newId(kind, nodeType),
     });
-    const after: Project = { ...result.project, updatedAt: at };
+    // An export is a read of the project, not a write — stamping updatedAt
+    // would claim a change that never happened and break re-export idempotence.
+    const isExport = command.type === 'project.package.export';
+    const after: Project = isExport ? result.project : { ...result.project, updatedAt: at };
 
     return transaction(this.#db, () => {
-      this.#writeProject(before, after, at);
+      // Nothing to write: the event and the op row ARE the export's trace, and
+      // #writeDoc would restamp every block's updated_at with this `at`.
+      if (!isExport) this.#writeProject(before, after, at);
       this.#appendEvents(projectId, result.events, at);
-      const opSeq = this.#appendLog(before, after, command, result.events, at);
+      const opSeq = this.#appendLog(before, after, command, result.events, at, context?.actor);
       return {
         project: after,
         seq: this.#lastSeq(projectId),
@@ -346,11 +419,15 @@ export class SqliteStore implements StorePort {
    * store itself wrote into `op_log.before`. The revert is a write like any
    * other: it appends its own `op_log` row, so the undo has an undo.
    */
-  async revert(projectId: string, seq?: number): Promise<RevertOutcome> {
+  async revert(
+    projectId: string,
+    seq?: number,
+    context?: { actor?: string },
+  ): Promise<RevertOutcome> {
     const project = await this.readProject(projectId);
     if (project === null) throw new Error(`no project ${projectId} in this database`);
 
-    const adopt = this.#findAdoptable(projectId, project.doc?.id ?? null, seq);
+    const adopt = this.#findAdoptable(projectId, seq);
     if (adopt === null) {
       throw new DomainError(
         'invalid_input',
@@ -359,22 +436,65 @@ export class SqliteStore implements StorePort {
     }
 
     const at = this.#clock();
+    const actor = context?.actor;
     if (adopt.kind === 'graph.proposal.adopt') {
-      return this.#revertGraph(project, adopt, at);
+      return this.#revertGraph(project, adopt, at, actor);
     }
-    if (project.doc === null) {
+    if (adopt.kind === 'doc.delete') {
+      return this.#revertDocDelete(projectId, project, adopt, at, actor);
+    }
+    if (adopt.kind === 'doc.create') {
+      return this.#revertDocCreate(projectId, project, adopt, at, actor);
+    }
+    if (adopt.kind === 'doc.update') {
+      return this.#revertDocUpdate(projectId, project, adopt, at, actor);
+    }
+    // The adopt row's target (and the snapshot's docId) names the doc it
+    // touched; with a registry that doc has to be found, not assumed.
+    const snapshot = DocSnapshotSchema.parse(JSON.parse(adopt.before ?? '{}'));
+    const current = project.docs.find((doc) => doc.id === snapshot.docId);
+    if (current === undefined) {
       throw new DomainError('doc_missing', '이 프로젝트에는 되돌릴 문서가 없습니다');
     }
-    const snapshot = DocSnapshotSchema.parse(JSON.parse(adopt.before ?? '{}'));
-    const currentSnapshot = snapshotOfBlocks(project.doc, snapshot.entries.map((entry) => entry.blockId), project.doc.rev);
-    const doc = restoreSnapshot(project.doc, snapshot, at);
-    // The decision was undone: the proposal is no longer adopted, and the
-    // revert row below is what says it was an undo rather than a refusal.
-    const proposal: Proposal | null =
-      project.proposal === null || project.proposal.state !== 'adopted'
-        ? project.proposal
-        : { ...project.proposal, state: 'rejected', decidedAt: at };
-    const next: Project = { ...project, doc, proposal, updatedAt: at };
+    const currentSnapshot = snapshotOfBlocks(
+      current,
+      snapshot.entries.map((entry) => entry.blockId),
+      current.rev,
+    );
+    const doc = restoreSnapshot(current, snapshot, at);
+    // The decision was undone: the adopted proposal of that doc is no longer
+    // adopted, and the revert row below is what says it was an undo rather
+    // than a refusal.
+    // The adopt row already names its card; resolve by id like every other
+    // proposal lookup, not by whichever adopted row the array happens to
+    // hold first for this doc.
+    const adoptPayload = JSON.parse(adopt.payload) as { proposalId?: string };
+    const adopted =
+      (adoptPayload.proposalId === undefined
+        ? null
+        : (project.proposals.find(
+            (candidate) => candidate.id === adoptPayload.proposalId,
+          ) ?? null)) ??
+      project.proposals
+        .filter(
+          (candidate) => candidate.docId === snapshot.docId && candidate.state === 'adopted',
+        )
+        .at(-1) ??
+      null;
+    const proposals =
+      adopted === null
+        ? project.proposals
+        : project.proposals.map((candidate) =>
+            candidate.id === adopted.id
+              ? { ...adopted, state: 'rejected' as const, decidedAt: at }
+              : candidate,
+          );
+    const next: Project = {
+      ...project,
+      docs: project.docs.map((candidate) => (candidate.id === doc.id ? doc : candidate)),
+      proposals,
+      updatedAt: at,
+    };
 
     transaction(this.#db, () => {
       this.#writeProject(project, next, at);
@@ -385,11 +505,12 @@ export class SqliteStore implements StorePort {
       );
       this.#insertLog({
         at,
+        actor,
         kind: 'proposal.revert',
         target: doc.id,
         before: currentSnapshot,
         after: snapshot,
-        payload: { revertedSeq: adopt.seq, proposalId: proposal?.id ?? null },
+        payload: { revertedSeq: adopt.seq, proposalId: adopted?.id ?? null },
       });
     });
 
@@ -403,12 +524,7 @@ export class SqliteStore implements StorePort {
 
   /** What a revert button would undo, or null when there is nothing to undo. */
   lastRevertable(projectId: string): RevertableOp | null {
-    const docRow = oneRow<DocRow>(
-      this.#db,
-      'SELECT * FROM doc WHERE project_id = ? ORDER BY coalesce(updated_at, created_at) DESC, rowid DESC LIMIT 1',
-      projectId,
-    );
-    const adopt = this.#findAdoptable(projectId, docRow?.id ?? null, undefined);
+    const adopt = this.#findAdoptable(projectId, undefined);
     if (adopt === null) return null;
     const payload = JSON.parse(adopt.payload) as { summary?: string; proposalId?: string };
     if (adopt.kind === 'graph.proposal.adopt') {
@@ -420,7 +536,41 @@ export class SqliteStore implements StorePort {
         proposalId: payload.proposalId ?? null,
         blocks: 0,
         kind: 'graph',
+        op: adopt.kind,
         nodes: before.nodes?.length ?? 0,
+      };
+    }
+    if (adopt.kind === 'doc.delete') {
+      const before = JSON.parse(adopt.before ?? 'null') as {
+        title?: string;
+        blocks?: unknown[];
+      } | null;
+      return {
+        seq: adopt.seq,
+        at: adopt.at,
+        summary: before?.title === undefined ? '문서 삭제' : `문서 삭제: ${before.title}`,
+        proposalId: null,
+        blocks: before?.blocks?.length ?? 0,
+        kind: 'doc',
+        op: adopt.kind,
+        nodes: 0,
+      };
+    }
+    if (adopt.kind === 'doc.create' || adopt.kind === 'doc.update') {
+      // Lifecycle rows carry the doc itself, not a block snapshot.
+      const raw = adopt.kind === 'doc.create' ? adopt.after : adopt.before;
+      const doc = JSON.parse(raw ?? '{}') as { doc?: { title?: string } } | null;
+      const title = doc?.doc?.title;
+      const verb = adopt.kind === 'doc.create' ? '문서 생성' : '문서 이름 변경';
+      return {
+        seq: adopt.seq,
+        at: adopt.at,
+        summary: title === undefined ? verb : `${verb}: ${title}`,
+        proposalId: null,
+        blocks: 0,
+        kind: 'doc',
+        op: adopt.kind,
+        nodes: 0,
       };
     }
     const snapshot = DocSnapshotSchema.safeParse(JSON.parse(adopt.before ?? '{}'));
@@ -431,6 +581,7 @@ export class SqliteStore implements StorePort {
       proposalId: payload.proposalId ?? null,
       blocks: snapshot.success ? snapshot.data.entries.length : 0,
       kind: 'doc',
+      op: adopt.kind,
       nodes: 0,
     };
   }
@@ -487,7 +638,12 @@ export class SqliteStore implements StorePort {
    * the ones that already existed stay. Written as its own `op_log` row, so the
    * undo has an undo.
    */
-  #revertGraph(project: Project, adopt: OpLogRow & { kind: string }, at: string): RevertOutcome {
+  #revertGraph(
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
     const before = JSON.parse(adopt.before ?? '{}') as {
       nodes?: string[];
       links?: string[];
@@ -522,6 +678,7 @@ export class SqliteStore implements StorePort {
       );
       this.#insertLog({
         at,
+        actor,
         kind: 'graph.proposal.revert',
         target: project.id,
         before: currentSnapshot,
@@ -540,6 +697,157 @@ export class SqliteStore implements StorePort {
       blocks: 0,
       nodes: createdNodes.size,
       seq: this.#lastSeq(project.id),
+    };
+  }
+
+  /**
+   * Puts a deleted document back: the `doc` row loses its tombstone and every
+   * block the tombstone took with it returns as it was. The deletion's
+   * `op_log.before` holds the whole document, so nothing is rebuilt from
+   * memory. Written as its own `op_log` row, so the undo has an undo.
+   */
+  #revertDocDelete(
+    projectId: string,
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
+    const deleted = DocSchema.safeParse(JSON.parse(adopt.before ?? 'null'));
+    if (
+      !deleted.success ||
+      project.docs.some((doc) => doc.id === deleted.data.id)
+    ) {
+      throw new DomainError('invalid_input', '되돌릴 삭제 기록을 찾지 못했습니다');
+    }
+    const doc = deleted.data;
+    const next: Project = { ...project, docs: [...project.docs, doc], updatedAt: at };
+
+    transaction(this.#db, () => {
+      this.#writeProject(project, next, at);
+      this.#appendEvents(
+        projectId,
+        [{ type: 'doc.reverted', docId: doc.id, revertedSeq: adopt.seq, blocks: doc.blocks.length }],
+        at,
+      );
+      this.#insertLog({
+        at,
+        actor,
+        kind: 'doc.revert',
+        target: doc.id,
+        before: null,
+        after: doc,
+        payload: { revertedSeq: adopt.seq },
+      });
+    });
+
+    return {
+      project: next,
+      revertedSeq: adopt.seq,
+      blocks: doc.blocks.length,
+      seq: this.#lastSeq(projectId),
+    };
+  }
+
+  /**
+   * Undoes a `doc.create`: the created doc takes the same tombstone a delete
+   * would leave, so a later open finds no document and the ledger still has
+   * every row. `after` — not the live read — names what was created.
+   */
+  #revertDocCreate(
+    projectId: string,
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
+    const raw = JSON.parse(adopt.after ?? '{}') as { doc?: unknown };
+    const created = DocSchema.safeParse(raw.doc ?? null);
+    const doc = project.docs.find((candidate) => candidate.id === adopt.target);
+    if (!created.success || doc === undefined || doc.id !== created.data.id) {
+      throw new DomainError('invalid_input', '되돌릴 생성 기록을 찾지 못했습니다');
+    }
+    const next: Project = {
+      ...project,
+      docs: project.docs.filter((candidate) => candidate.id !== doc.id),
+      updatedAt: at,
+    };
+
+    transaction(this.#db, () => {
+      this.#writeProject(project, next, at);
+      this.#retireDoc(doc.id, at);
+      this.#appendEvents(
+        projectId,
+        [{ type: 'doc.reverted', docId: doc.id, revertedSeq: adopt.seq, blocks: 0 }],
+        at,
+      );
+      this.#insertLog({
+        at,
+        actor,
+        kind: 'doc.revert',
+        target: doc.id,
+        before: doc,
+        after: null,
+        payload: { revertedSeq: adopt.seq },
+      });
+    });
+
+    return {
+      project: next,
+      revertedSeq: adopt.seq,
+      blocks: 0,
+      seq: this.#lastSeq(projectId),
+    };
+  }
+
+  /**
+   * Undoes a `doc.update`: only the title rolls back. The `before` doc is the
+   * title's source of truth, but the blocks stay exactly as they are — a
+   * rename undo must not resurrect or drop paragraphs edited since.
+   */
+  #revertDocUpdate(
+    projectId: string,
+    project: Project,
+    adopt: OpLogRow & { kind: string },
+    at: string,
+    actor?: string,
+  ): RevertOutcome {
+    const raw = JSON.parse(adopt.before ?? '{}') as { doc?: unknown };
+    const before = DocSchema.safeParse(raw.doc ?? null);
+    const current = project.docs.find((doc) => doc.id === adopt.target);
+    if (!before.success || current === undefined || current.id !== before.data.id) {
+      throw new DomainError('invalid_input', '되돌릴 이름 변경 기록을 찾지 못했습니다');
+    }
+    const restored: Doc = { ...current, title: before.data.title, updatedAt: at };
+    const next: Project = {
+      ...project,
+      docs: project.docs.map((doc) => (doc.id === restored.id ? restored : doc)),
+      updatedAt: at,
+    };
+
+    transaction(this.#db, () => {
+      this.#writeProject(project, next, at);
+      this.#appendEvents(
+        projectId,
+        [{ type: 'doc.reverted', docId: restored.id, revertedSeq: adopt.seq, blocks: 0 }],
+        at,
+      );
+      this.#insertLog({
+        at,
+        actor,
+        kind: 'doc.revert',
+        target: restored.id,
+        before: { doc: current },
+        after: { doc: before.data },
+        payload: { revertedSeq: adopt.seq },
+      });
+    });
+
+    return {
+      project: next,
+      revertedSeq: adopt.seq,
+      blocks: 0,
+      seq: this.#lastSeq(projectId),
     };
   }
 
@@ -564,52 +872,72 @@ export class SqliteStore implements StorePort {
     );
   }
 
-  #readProposal(docId: string): Proposal | null {
-    const row = oneRow<ProposalRow>(
+  /**
+   * The proposal on the table per doc: whichever each of the project's docs
+   * produced most recently. Decided ones stay until a newer one replaces
+   * them, exactly like the single slot did.
+   */
+  #readProposals(projectId: string): Proposal[] {
+    const rows = allRows<ProposalRow>(
       this.#db,
-      'SELECT * FROM proposal WHERE doc_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
-      docId,
+      `SELECT p.* FROM proposal p JOIN doc d ON d.id = p.doc_id
+        WHERE d.project_id = ?
+          AND p.rowid = (SELECT MAX(rowid) FROM proposal WHERE doc_id = p.doc_id)
+        ORDER BY p.created_at, p.rowid`,
+      projectId,
     );
-    if (row === undefined) return null;
-    const ops = allRows<ProposalOpRow>(
-      this.#db,
-      'SELECT id, proposal_id, seq, kind, view, state FROM proposal_op WHERE proposal_id = ? ORDER BY seq',
-      row.id,
-    );
-    if (ops.length === 0) return null;
-    return proposalFromRows(
-      {
-        ...row,
-        state: row.state === 'reviewing' ? 'open' : row.state,
-      },
-      ops,
-    );
+    const proposals: Proposal[] = [];
+    for (const row of rows) {
+      const ops = allRows<ProposalOpRow>(
+        this.#db,
+        'SELECT id, proposal_id, seq, kind, view, state FROM proposal_op WHERE proposal_id = ? ORDER BY seq',
+        row.id,
+      );
+      if (ops.length === 0) continue;
+      proposals.push(
+        proposalFromRows(
+          {
+            ...row,
+            state: row.state === 'reviewing' ? 'open' : row.state,
+          },
+          ops,
+        ),
+      );
+    }
+    return proposals;
   }
 
   /**
-   * The most recent adoption of either kind that has not been reverted yet.
-   * Both the document proposal and the graph proposal are decisions a person
-   * can take back; the ledger, not the proposal table, is what says which is
-   * still undoable.
+   * The most recent decision a person can take back: an adoption of either
+   * kind, or a document deletion. The ledger, not the proposal table, is what
+   * says which is still undoable. Targets name the project or any of its docs
+   * — tombstoned ones too, or a deletion could never be found again.
    */
   #findAdoptable(
     projectId: string,
-    docId: string | null,
     seq: number | undefined,
   ): (OpLogRow & { kind: string }) | null {
+    const targets = new Set(
+      [
+        projectId,
+        ...allRows<{ id: string }>(this.#db, 'SELECT id FROM doc WHERE project_id = ?', projectId).map(
+          (row) => row.id,
+        ),
+      ],
+    );
     const rows = allRows<OpLogRow>(
       this.#db,
       `SELECT * FROM op_log
-        WHERE kind IN ('proposal.adopt','graph.proposal.adopt')
+        WHERE kind IN ('proposal.adopt','graph.proposal.adopt','doc.delete','doc.create','doc.update')
         ORDER BY seq DESC`,
     );
     for (const row of rows) {
-      if (row.target !== projectId && (docId === null || row.target !== docId)) continue;
+      if (row.target === null || !targets.has(row.target)) continue;
       if (seq !== undefined && row.seq !== seq) continue;
       const reverted = oneRow<{ seq: number }>(
         this.#db,
         `SELECT seq FROM op_log
-          WHERE kind IN ('proposal.revert','graph.proposal.revert')
+          WHERE kind IN ('proposal.revert','graph.proposal.revert','doc.revert')
             AND json_extract(payload,'\$.revertedSeq') = ? LIMIT 1`,
         row.seq,
       );
@@ -625,9 +953,12 @@ export class SqliteStore implements StorePort {
       .prepare("INSERT OR IGNORE INTO thread(id,kind,last_seq,created_at) VALUES(?,'project',0,?)")
       .run(threadId, at);
     const insert = this.#db.prepare(
-      'INSERT INTO event(thread_id,type,payload,at) VALUES(?,?,?,?)',
+      'INSERT INTO event(thread_id,type,payload,at,device_id,uuid) VALUES(?,?,?,?,?,?)',
     );
-    for (const event of events) insert.run(threadId, event.type, JSON.stringify(event), at);
+    // F6: 매 행에 device_id·uuid를 적는다 — 수집 쪽은 (device_id, seq)로 멱등을 잡는다.
+    for (const event of events) {
+      insert.run(threadId, event.type, JSON.stringify(event), at, this.#deviceId, randomUUID());
+    }
   }
 
   #insertLog(input: {
@@ -637,13 +968,16 @@ export class SqliteStore implements StorePort {
     before: unknown;
     after: unknown;
     payload: unknown;
-    actor?: string;
+    actor?: string | undefined;
   }): number {
     const result = this.#db
-      .prepare('INSERT INTO op_log(at,actor,kind,target,before,after,payload) VALUES(?,?,?,?,?,?,?)')
+      .prepare(
+        'INSERT INTO op_log(at,actor,device_id,kind,target,before,after,payload) VALUES(?,?,?,?,?,?,?,?)',
+      )
       .run(
         input.at,
-        input.actor ?? 'person:owner',
+        input.actor ?? this.#actor,
+        this.#deviceId,
         input.kind,
         input.target,
         JSON.stringify(input.before),
@@ -664,21 +998,24 @@ export class SqliteStore implements StorePort {
     command: Command,
     events: readonly DomainEvent[],
     at: string,
+    actor?: string,
   ): number {
     if (command.type === 'proposal.adopt') {
-      const doc = before.doc;
-      const proposal = after.proposal;
-      if (doc === null || proposal === null) {
+      const doc = before.docs.find((candidate) => candidate.id === command.docId);
+      const proposal = after.proposals.find((candidate) => candidate.id === command.proposalId);
+      if (doc === undefined || proposal === undefined) {
         throw new Error('an adopted proposal needs the document it was built on');
       }
+      const adopted = after.docs.find((candidate) => candidate.id === doc.id) ?? doc;
       const beforeSnapshot = snapshotForPatches(doc, proposal.patches);
       const afterSnapshot = snapshotOfBlocks(
-        { ...doc, blocks: after.doc?.blocks ?? doc.blocks },
+        adopted,
         proposal.patches.map((patch) => patch.blockId),
-        after.doc?.rev ?? doc.rev,
+        adopted.rev,
       );
       return this.#insertLog({
         at,
+        actor,
         kind: 'proposal.adopt',
         target: doc.id,
         before: beforeSnapshot,
@@ -696,6 +1033,7 @@ export class SqliteStore implements StorePort {
       const createdLinks = after.graph.links.filter((link) => !beforeLinks.has(link.id)).map((link) => link.id);
       return this.#insertLog({
         at,
+        actor,
         kind: 'graph.proposal.adopt',
         target: before.id,
         before: {
@@ -714,12 +1052,54 @@ export class SqliteStore implements StorePort {
 
     const kind = OP_KIND[command.type] ?? command.type;
     if (command.type.startsWith('doc.') || command.type.startsWith('proposal.')) {
+      // A deletion's undo needs the whole document, not one block, so the
+      // tombstone row carries the doc it removed as its `before`.
+      if (command.type === 'doc.delete') {
+        const removed = before.docs.find((candidate) => candidate.id === command.docId) ?? null;
+        return this.#insertLog({
+          at,
+          actor,
+          kind,
+          target: command.docId,
+          before: removed,
+          after: null,
+          payload: { events: events.map((event) => event.type) },
+        });
+      }
       const blockId = 'blockId' in command ? command.blockId : null;
-      const target = blockId ?? after.doc?.id ?? before.doc?.id ?? null;
-      const snapshotBefore = blockId === null ? null : findBlockBefore(before.doc, blockId);
-      const snapshotAfter = blockId === null ? null : findBlockBefore(after.doc, blockId);
+      const commandDocId = 'docId' in command ? command.docId : undefined;
+      const beforeDoc =
+        commandDocId === undefined
+          ? undefined
+          : before.docs.find((candidate) => candidate.id === commandDocId);
+      const afterDoc =
+        commandDocId === undefined
+          ? undefined
+          : after.docs.find((candidate) => candidate.id === commandDocId);
+      const created = events.find(
+        (event): event is Extract<DomainEvent, { type: 'doc.created' }> =>
+          event.type === 'doc.created',
+      );
+      const target = blockId ?? created?.doc.id ?? afterDoc?.id ?? beforeDoc?.id ?? null;
+      if (command.type === 'doc.create' || command.type === 'doc.update') {
+        // Lifecycle ops get an undo, which needs the whole doc — like the
+        // tombstone a delete carries — not one block's text. A create names
+        // no docId, so its snapshot comes from the doc.created event.
+        return this.#insertLog({
+          at,
+          actor,
+          kind,
+          target,
+          before: { doc: beforeDoc ?? null },
+          after: { doc: created?.doc ?? afterDoc ?? null },
+          payload: { events: events.map((event) => event.type) },
+        });
+      }
+      const snapshotBefore = blockId === null ? null : findBlockBefore(beforeDoc ?? null, blockId);
+      const snapshotAfter = blockId === null ? null : findBlockBefore(afterDoc ?? null, blockId);
       return this.#insertLog({
         at,
+        actor,
         kind,
         target,
         before: { block: snapshotBefore },
@@ -727,6 +1107,38 @@ export class SqliteStore implements StorePort {
         payload: { events: events.map((event) => event.type) },
       });
     }
+
+    if (command.type.startsWith('idea.') || command.type.startsWith('evidence.')) {
+      // The ledger names the object, the way node.* rows do: captures take
+      // the id from their event, the rest from the command itself.
+      const capturedIdea = events.find(
+        (event): event is Extract<DomainEvent, { type: 'idea.captured' }> =>
+          event.type === 'idea.captured',
+      );
+      const capturedEvidence = events.find(
+        (event): event is Extract<DomainEvent, { type: 'evidence.captured' }> =>
+          event.type === 'evidence.captured',
+      );
+      const commandId =
+        command.type === 'idea.update' || command.type === 'idea.archive'
+          ? command.ideaId
+          : command.type === 'evidence.update' || command.type === 'evidence.dismiss'
+            ? command.evidenceId
+            : null;
+      const target = capturedIdea?.idea.id ?? capturedEvidence?.evidence.id ?? commandId;
+      const beforeRow = before.ideas.find((row) => row.id === target) ?? before.evidence.find((row) => row.id === target) ?? null;
+      const afterRow = after.ideas.find((row) => row.id === target) ?? after.evidence.find((row) => row.id === target) ?? null;
+      return this.#insertLog({
+        at,
+        actor,
+        kind,
+        target,
+        before: { object: beforeRow },
+        after: { object: afterRow },
+        payload: { events: events.map((event) => event.type) },
+      });
+    }
+
 
     if (command.type.startsWith('node.') || command.type.startsWith('link.') || command.type.startsWith('graph.')) {
       const nodeId =
@@ -743,11 +1155,25 @@ export class SqliteStore implements StorePort {
             : null;
       return this.#insertLog({
         at,
+        actor,
         kind,
         target: nodeId ?? linkId ?? before.id,
         before: nodeId === null ? null : { node: before.graph.nodes.find((node) => node.id === nodeId) ?? null },
         after: nodeId === null ? null : { node: after.graph.nodes.find((node) => node.id === nodeId) ?? null },
         payload: { events: events.map((event) => event.type), projectId: before.id },
+      });
+    }
+
+    if (command.type === 'project.package.export') {
+      // An export touches no row — the ledger row IS the export.
+      return this.#insertLog({
+        at,
+        actor,
+        kind,
+        target: before.id,
+        before: null,
+        after: null,
+        payload: { files: command.files, events: events.map((event) => event.type) },
       });
     }
 
@@ -760,6 +1186,7 @@ export class SqliteStore implements StorePort {
 
     return this.#insertLog({
       at,
+      actor,
       kind,
       target,
       before: objectOf(before, target),
@@ -792,14 +1219,35 @@ export class SqliteStore implements StorePort {
       if (!kept.has(old.id)) this.#tombstone(old.id, at);
     }
 
-    if (project.doc !== null) {
-      this.#writeDoc(project.doc, project.id, project.screen?.id ?? null, at);
-      if (before !== null && before.doc !== null && before.doc.id !== project.doc.id) {
-        this.#retireDoc(before.doc, at);
-      }
+    // E1 §4 F2·F3: same contract as pins — upsert what the state holds,
+    // tombstone what the previous read had and the new state dropped.
+    for (const idea of project.ideas) {
+      this.#upsertObj(ideaToRow(idea, project.id));
+    }
+    const keptIdeas = new Set(project.ideas.map((idea) => idea.id));
+    for (const old of before?.ideas ?? []) {
+      if (!keptIdeas.has(old.id)) this.#tombstone(old.id, at);
     }
 
-    if (project.proposal !== null) this.#writeProposal(project.proposal);
+    for (const evidence of project.evidence) {
+      this.#upsertObj(evidenceToRow(evidence, project.id));
+    }
+    const keptEvidence = new Set(project.evidence.map((row) => row.id));
+    for (const old of before?.evidence ?? []) {
+      if (!keptEvidence.has(old.id)) this.#tombstone(old.id, at);
+    }
+
+    for (const doc of project.docs) {
+      this.#writeDoc(doc, project.id, project.screen?.id ?? null, at);
+    }
+    // A doc the read had but the new state does not is a deletion: tombstone
+    // the row, never remove it.
+    const keptDocs = new Set(project.docs.map((doc) => doc.id));
+    for (const old of before?.docs ?? []) {
+      if (!keptDocs.has(old.id)) this.#retireDoc(old.id, at);
+    }
+
+    for (const proposal of project.proposals) this.#writeProposal(proposal);
 
     for (const node of project.graph.nodes) {
       this.#upsertObj(graphNodeToRow(node, project.id));
@@ -874,16 +1322,21 @@ export class SqliteStore implements StorePort {
   #writeDoc(doc: Doc, projectId: string, screenId: string | null, at: string): void {
     this.#db
       .prepare(
-        `INSERT INTO doc(id, project_id, screen_id, title, rev, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO doc(id, project_id, screen_id, title, rev, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            screen_id  = excluded.screen_id,
            title      = excluded.title,
            rev        = excluded.rev,
+           kind       = excluded.kind,
+           deleted_at = NULL,
            updated_at = excluded.updated_at`,
       )
-      .run(doc.id, projectId, screenId, doc.title, doc.rev, doc.createdAt, at);
+      // `doc.updatedAt`, not `at`: the row records when the document last
+      // changed, not when a command happened to touch its project — a
+      // re-read otherwise drifts from the entity the writer returned.
+      .run(doc.id, projectId, screenId, doc.title, doc.rev, doc.kind, doc.createdAt, doc.updatedAt);
 
     const live = allRows<{ id: string }>(
       this.#db,
@@ -925,15 +1378,18 @@ export class SqliteStore implements StorePort {
         row.attrs,
         row.hash,
         row.created_at ?? at,
-        at,
+        row.updated_at ?? at,
       );
     });
   }
 
-  #retireDoc(doc: Doc, at: string): void {
+  #retireDoc(docId: string, at: string): void {
     this.#db
       .prepare("UPDATE block SET state = 'deleted', updated_at = ? WHERE doc_id = ? AND state = 'live'")
-      .run(at, doc.id);
+      .run(at, docId);
+    this.#db
+      .prepare('UPDATE doc SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL')
+      .run(at, docId);
   }
 
   #writeProposal(proposal: Proposal): void {

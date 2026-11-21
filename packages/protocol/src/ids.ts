@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * The seven object kinds a project is made of. The kind is immutable:
+ * The nine object kinds a project is made of. The kind is immutable:
  * changing it means creating a new object and linking with `supersedes`.
  */
 export const OBJECT_KINDS = [
@@ -12,6 +12,8 @@ export const OBJECT_KINDS = [
   'pin',
   'contract',
   'verification',
+  'idea',
+  'evidence',
 ] as const;
 
 export const ObjectKindSchema = z.enum(OBJECT_KINDS);
@@ -26,6 +28,9 @@ export const ID_PREFIX: Record<ObjectKind, string> = {
   pin: 'P',
   contract: 'C',
   verification: 'V',
+  // idea는 insight와 I_ 접두를 공유한다(§5.2 확정). kind 컬럼이 실제 구분자다.
+  idea: 'I',
+  evidence: 'E',
 };
 
 const SUFFIX = '[A-Za-z0-9_-]{8,24}';

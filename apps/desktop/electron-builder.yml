@@ -1,0 +1,23 @@
+# D4 wires signing, notarisation and auto-update on top of this file. D1 only
+# uses `electron-builder --dir` to prove a double-clickable .app builds.
+appId: io.github.developjik.spec-studio
+productName: spec-studio
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+# The daemon bundle (dist/daemon.mjs + dist/schema) and the web build travel as
+# extraResources so the same paths work inside and outside the asar.
+extraResources:
+  - from: ../../apps/daemon/dist
+    to: daemon
+  - from: ../../apps/web/dist
+    to: web
+mac:
+  target:
+    - target: dir
+      arch:
+        - arm64
+  category: public.app-category.developer-tools

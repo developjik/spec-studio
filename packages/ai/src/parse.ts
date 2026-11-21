@@ -1,6 +1,8 @@
 import {
+  AiBriefDraftSchema,
   AiDocDraftSchema,
   AiGraphDraftSchema,
+  type AiBriefDraft,
   type AiDocDraft,
   type AiGraphDraft,
 } from '@spec-studio/protocol';
@@ -63,6 +65,15 @@ export function parseGraphDraft(text: string): AiGraphDraft {
 
 export function parseDocDraft(text: string): AiDocDraft {
   const parsed = AiDocDraftSchema.safeParse(extractJsonObject(text));
+  if (!parsed.success) {
+    const issues = issuesOf(parsed.error);
+    throw new AiDraftError(`모델 응답이 초안 스키마와 맞지 않습니다. ${issues.join(' / ')}`, issues);
+  }
+  return parsed.data;
+}
+
+export function parseBriefDraft(text: string): AiBriefDraft {
+  const parsed = AiBriefDraftSchema.safeParse(extractJsonObject(text));
   if (!parsed.success) {
     const issues = issuesOf(parsed.error);
     throw new AiDraftError(`모델 응답이 초안 스키마와 맞지 않습니다. ${issues.join(' / ')}`, issues);

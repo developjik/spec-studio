@@ -1,10 +1,12 @@
 import { z } from 'zod';
-import { AiDocDraftSchema, AiGraphDraftSchema, AiProposalSourceSchema } from './ai';
-import { BlockIdSchema, BlockTypeSchema, DocIdSchema, ProposalIdSchema } from './doc';
+import { AiBriefDraftSchema, AiDocDraftSchema, AiGraphDraftSchema, AiProposalSourceSchema } from './ai';
+import { BlockIdSchema, BlockTypeSchema, DocIdSchema, DocKindSchema, ProposalIdSchema } from './doc';
+import { EvidenceIdSchema, EvidenceTypeSchema, EVIDENCE_EXCERPT_MAX } from './evidence';
 import {
   EditableNodeTypeSchema,
   GraphLinkTypeSchema,
 } from './graph';
+import { IdeaIdSchema, IdeaStateSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { AnchorSchema, PinTypeSchema, PinTypeSchema as TypeSchema } from './pin';
 import { ScreenSchema } from './screen';
@@ -53,6 +55,54 @@ export const CommandSchema = z.discriminatedUnion('type', [
     screenId: ScreenIdSchema,
     pinId: PinIdSchema,
   }),
+
+  // ── idea inbox · research board (E1 §4 F2·F3) ────────────────────────
+  /** `tags` are classified by rule and `title` is the first line of `text`. */
+  z.object({
+    type: z.literal('idea.capture'),
+    text: z.string().trim().min(1).max(8000),
+    url: z.string().url().max(2048).optional(),
+    image: z.string().max(500).optional(),
+  }),
+  /** State moves only `captured → promoted | archived`; text edits are free. */
+  z.object({
+    type: z.literal('idea.update'),
+    ideaId: IdeaIdSchema,
+    text: z.string().trim().min(1).max(8000).optional(),
+    url: z.string().url().max(2048).optional(),
+    image: z.string().max(500).optional(),
+    state: IdeaStateSchema.optional(),
+  }),
+  z.object({ type: z.literal('idea.archive'), ideaId: IdeaIdSchema }),
+  /** Excerpt ceiling is R6's 짧은 인용 원칙, enforced at the schema. */
+  z.object({
+    type: z.literal('evidence.capture'),
+    url: z.string().url().max(2048),
+    title: z.string().trim().min(1).max(200).optional(),
+    excerpt: z.string().max(EVIDENCE_EXCERPT_MAX),
+    evidenceType: EvidenceTypeSchema,
+  }),
+  z.object({
+    type: z.literal('evidence.update'),
+    evidenceId: EvidenceIdSchema,
+    title: z.string().trim().min(1).max(200).optional(),
+    excerpt: z.string().max(EVIDENCE_EXCERPT_MAX).optional(),
+    url: z.string().url().max(2048).optional(),
+  }),
+  z.object({ type: z.literal('evidence.dismiss'), evidenceId: EvidenceIdSchema }),
+
+  // ── document registry (W3/F5) ─────────────────────────────────────────
+  z.object({
+    type: z.literal('doc.create'),
+    title: z.string().trim().min(1).max(120),
+    kind: DocKindSchema.default('spec'),
+  }),
+  z.object({
+    type: z.literal('doc.update'),
+    docId: DocIdSchema,
+    title: z.string().trim().min(1).max(120),
+  }),
+  z.object({ type: z.literal('doc.delete'), docId: DocIdSchema }),
 
   // ── document blocks (W4) ─────────────────────────────────────────────
   z.object({
@@ -112,11 +162,13 @@ export const CommandSchema = z.discriminatedUnion('type', [
     docId: DocIdSchema,
     /**
      * A draft produced outside core — by a model — already validated against
-     * `AiDocDraftSchema`. Absent, the rule-based builder runs as before. The
-     * daemon never passes a model's prose through: only this shape reaches the
-     * store, and the store still writes `op_log.before` when it is adopted.
+     * its draft schema. `claims` means a research brief (F3-2), which the
+     * store turns into insert patches; `patches` rewrite existing blocks.
+     * Absent, the rule-based builder runs as before. The daemon never passes
+     * a model's prose through: only these shapes reach the store, and the
+     * store still writes `op_log.before` when it is adopted.
      */
-    draft: AiDocDraftSchema.optional(),
+    draft: z.union([AiDocDraftSchema, AiBriefDraftSchema]).optional(),
     source: AiProposalSourceSchema.optional(),
     provider: z.string().max(40).nullable().optional(),
     model: z.string().max(80).nullable().optional(),
@@ -182,6 +234,13 @@ export const CommandSchema = z.discriminatedUnion('type', [
     type: z.literal('graph.proposal.reject'),
     proposalId: z.string().min(1),
   }),
+
+  // ── handoff package (F4) ─────────────────────────────────────────────
+  z.object({
+    type: z.literal('project.package.export'),
+    /** The file names the package wrote — the ledger says what shipped. */
+    files: z.array(z.string().min(1).max(120)).min(1).max(16),
+  }),
 ]);
 
 export type Command = z.infer<typeof CommandSchema>;
@@ -190,6 +249,12 @@ export type PinUpdateCommand = Extract<Command, { type: 'pin.update' }>;
 export type PinDeleteCommand = Extract<Command, { type: 'pin.delete' }>;
 export type ScreenAttachCommand = Extract<Command, { type: 'screen.attach' }>;
 export type ScreenUpdateCommand = Extract<Command, { type: 'screen.update' }>;
+export type DocCreateCommand = Extract<Command, { type: 'doc.create' }>;
+export type DocUpdateCommand = Extract<Command, { type: 'doc.update' }>;
+export type DocDeleteCommand = Extract<Command, { type: 'doc.delete' }>;
+export type IdeaCaptureCommand = Extract<Command, { type: 'idea.capture' }>;
+export type IdeaUpdateCommand = Extract<Command, { type: 'idea.update' }>;
+export type EvidenceCaptureCommand = Extract<Command, { type: 'evidence.capture' }>;
 export type DocBlockCreateCommand = Extract<Command, { type: 'doc.block.create' }>;
 export type DocBlockUpdateCommand = Extract<Command, { type: 'doc.block.update' }>;
 export type ProposalCreateCommand = Extract<Command, { type: 'proposal.create' }>;

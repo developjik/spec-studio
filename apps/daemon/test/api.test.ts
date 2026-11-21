@@ -98,7 +98,7 @@ interface Envelope {
     id: string;
     pins: Array<{ id: string; number: number; title: string }>;
     screen: { id: string; figmaUrl?: string | null } | null;
-    doc?: {
+    docs: Array<{
       id: string;
       rev: number;
       blocks: Array<{
@@ -106,8 +106,8 @@ interface Envelope {
         text: string;
         pinRefs: Array<{ pinId: string }>;
       }>;
-    } | null;
-    proposal?: { id: string; state: string; summary: string; patches: unknown[] } | null;
+    }>;
+    proposals?: Array<{ id: string; state: string; summary: string; patches: unknown[] }>;
     graph?: {
       nodes: Array<{ id: string; type: string; title: string; state: string }>;
       links: Array<{ id: string; type: string; src: string; dst: string; suspectSince: string | null }>;
@@ -166,7 +166,7 @@ describe('the daemon API', () => {
   it('reports health and names SQLite as the canonical store', async () => {
     const health = await api<{ ok: boolean; schemaVersion: number; mode: string }>(daemon, '/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ ok: true, schemaVersion: 14, mode: 'sqlite' });
+    expect(health.body).toMatchObject({ ok: true, schemaVersion: 15, mode: 'sqlite' });
   });
 
   it('serves only the app origins', async () => {
@@ -441,8 +441,8 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
   it('links a paragraph to a pin, marks it stale, adopts one card and reverts it', async () => {
     const projectId = await project();
     const opened = await api<Envelope>(daemon, `/api/projects/${projectId}`);
-    const docId = opened.body.project?.doc?.id as string;
-    expect(opened.body.project?.doc?.blocks).toEqual([]);
+    const docId = opened.body.project?.docs[0]?.id as string;
+    expect(opened.body.project?.docs[0]?.blocks).toEqual([]);
     expect(opened.body.revert).toBeNull();
 
     const added = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
@@ -455,22 +455,22 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
         },
       },
     });
-    const blockId = added.body.project?.doc?.blocks[0]?.id as string;
+    const blockId = added.body.project?.docs[0]?.blocks[0]?.id as string;
     const pinId = opened.body.project?.pins[0]?.id as string;
 
     const linked = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'doc.pin.link', docId, blockId, pinId } },
     });
-    expect(linked.body.project?.doc?.blocks[0]?.pinRefs).toHaveLength(1);
-    expect(linked.body.project?.doc?.blocks[0]?.text).toContain('[핀] #1 취소 요청');
-    const originalText = linked.body.project?.doc?.blocks[0]?.text as string;
+    expect(linked.body.project?.docs[0]?.blocks[0]?.pinRefs).toHaveLength(1);
+    expect(linked.body.project?.docs[0]?.blocks[0]?.text).toContain('[핀] #1 취소 요청');
+    const originalText = linked.body.project?.docs[0]?.blocks[0]?.text as string;
 
     // a pin edit makes the paragraph stale; a move does not
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, anchor: { x: 0.3, y: 0.4 } } },
     });
     const moved = await api<Envelope>(daemon, `/api/projects/${projectId}`);
-    expect(moved.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(moved.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
 
     await api(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'pin.update', screenId: SCREEN.id, pinId, title: '취소 요청 버튼' } },
@@ -480,7 +480,7 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     const created = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
       body: { command: { type: 'proposal.create', docId } },
     });
-    const proposal = created.body.project?.proposal;
+    const proposal = created.body.project?.proposals?.[0];
     expect(proposal?.state).toBe('open');
     expect(proposal?.patches).toHaveLength(1);
     expect(proposal?.summary).toContain('#1');
@@ -489,8 +489,8 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
       body: { command: { type: 'proposal.adopt', docId, proposalId: proposal?.id } },
     });
     expect(adopted.body.opSeq).toBeGreaterThan(0);
-    expect(adopted.body.project?.doc?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
-    expect(adopted.body.project?.proposal?.state).toBe('adopted');
+    expect(adopted.body.project?.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
+    expect(adopted.body.project?.proposals?.[0]?.state).toBe('adopted');
 
     const beforeRevert = await api<Envelope>(daemon, `/api/projects/${projectId}`);
     expect(beforeRevert.body.revert).toMatchObject({ seq: adopted.body.opSeq, blocks: 1 });
@@ -501,15 +501,15 @@ describe('W4: document ↔ pin, one proposal, op_log.before revert', () => {
     });
     expect(reverted.status).toBe(200);
     expect(reverted.body.revertedSeq).toBe(adopted.body.opSeq);
-    expect(reverted.body.project?.doc?.blocks[0]?.text).toBe(originalText);
+    expect(reverted.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
     expect(reverted.body.revert).toBeNull();
 
     // survives a restart: same blocks, same text, nothing left to undo
     await daemon.close();
     const reopened = await boot();
     const after = await api<Envelope>(reopened, `/api/projects/${projectId}`);
-    expect(after.body.project?.doc?.blocks[0]?.text).toBe(originalText);
-    expect(after.body.project?.proposal?.state).toBe('rejected');
+    expect(after.body.project?.docs[0]?.blocks[0]?.text).toBe(originalText);
+    expect(after.body.project?.proposals?.[0]?.state).toBe('rejected');
     expect(after.body.revert).toBeNull();
   });
 
@@ -645,5 +645,54 @@ describe('v1: six node types, seven links, export/import and backup', () => {
     expect(reverted.status).toBe(200);
     expect(reverted.body.project!.graph!.nodes).toHaveLength(0);
     expect(reverted.body.project!.graphProposal?.state).toBe('reverted');
+  });
+});
+
+describe('daemon session token (desktop shell)', () => {
+  it('serves requests as before when no token is configured', async () => {
+    const open = await boot();
+    const response = await fetch(`${open.url}/api/health`);
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects a missing or wrong token with 401 and accepts the right one', async () => {
+    const guarded = await startDaemon({
+      dbPath: join(dir, 'guarded.db'),
+      port: 0,
+      authToken: 's3cret',
+    });
+    daemons.push(guarded);
+
+    const missing = await fetch(`${guarded.url}/api/health`);
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toMatchObject({ error: { code: 'daemon_unauthorized' } });
+
+    const wrong = await fetch(`${guarded.url}/api/health`, { headers: { 'x-daemon-token': 'nope' } });
+    expect(wrong.status).toBe(401);
+
+    const right = await fetch(`${guarded.url}/api/health`, { headers: { 'x-daemon-token': 's3cret' } });
+    expect(right.status).toBe(200);
+  });
+
+  it('answers preflight without a token so the browser can ask first', async () => {
+    const guarded = await startDaemon({
+      dbPath: join(dir, 'preflight.db'),
+      port: 0,
+      authToken: 's3cret',
+      allowedOrigins: ['app://specstudio'],
+    });
+    daemons.push(guarded);
+
+    const preflight = await fetch(`${guarded.url}/api/health`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'app://specstudio',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'content-type, x-daemon-token',
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('app://specstudio');
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-daemon-token');
   });
 });

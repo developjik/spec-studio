@@ -16,10 +16,14 @@ export function remapProject(project: Project, nextId: RemapId): Project {
   for (const pin of project.pins) pinIds.set(pin.id, nextId('pin'));
   const nodeIds = new Map<string, string>();
   for (const node of project.graph.nodes) nodeIds.set(node.id, nextId('node', node.type));
+  const ideaIds = new Map<string, string>();
+  for (const idea of project.ideas) ideaIds.set(idea.id, nextId('idea'));
+  const evidenceIds = new Map<string, string>();
+  for (const evidence of project.evidence) evidenceIds.set(evidence.id, nextId('evidence'));
 
   const mapRef = (id: string): string | null => {
     if (screenId !== null && project.screen?.id === id) return screenId;
-    return pinIds.get(id) ?? nodeIds.get(id) ?? null;
+    return pinIds.get(id) ?? nodeIds.get(id) ?? ideaIds.get(id) ?? evidenceIds.get(id) ?? null;
   };
 
   const pins: Pin[] = project.pins.map((pin) => ({
@@ -42,7 +46,9 @@ export function remapProject(project: Project, nextId: RemapId): Project {
     links.push({ ...link, id: nextId('link'), src, dst });
   }
 
-  const doc = project.doc === null ? null : remapDoc(project.doc, nextId, pinIds);
+  const ideas = project.ideas.map((idea) => ({ ...idea, id: ideaIds.get(idea.id)! }));
+  const evidence = project.evidence.map((row) => ({ ...row, id: evidenceIds.get(row.id)! }));
+  const docs = project.docs.map((doc) => remapDoc(doc, nextId, pinIds));
 
   return {
     ...project,
@@ -52,8 +58,10 @@ export function remapProject(project: Project, nextId: RemapId): Project {
         ? null
         : { ...project.screen, id: screenId!, createdAt: project.screen.createdAt },
     pins,
-    doc,
-    proposal: null,
+    docs,
+    proposals: [],
+    ideas,
+    evidence,
     graph: { nodes, links },
     graphProposal: null,
     updatedAt: project.updatedAt,

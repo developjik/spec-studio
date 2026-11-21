@@ -8,6 +8,8 @@ mock, then drives the browser at 1440×900:
   2. daemon restart + reload → the same pins and link come back
   3. publishing creates one page and three attachments, shown in the UI history
   4. publishing the same spec again creates no second page
+  5. AC-4: a research doc beside the spec — tabs, a block in the new doc, the
+     URL naming the open doc, a reload keeping both, and a delete falling back
 
 Environment (set by the runner):
   SPEC_STUDIO_DB   the SQLite file the daemon owns
@@ -212,6 +214,60 @@ def main() -> int:
             check("publish_record 1건", len(state["publishes"]) == 1, str(state["publishes"]))
             check("publish_record 상태 ok", state["publishes"][0][0] == "ok")
 
+            # ── 5. AC-4: a research doc beside the spec ────────────────
+            page.locator("[data-testid=publish-close]").click()
+            page.wait_for_timeout(300)
+
+            research = "경쟁 서비스는 배송 취소를 24시간까지 허용한다."
+            page.locator("[data-testid=doc-create]").click()
+            page.locator("[data-testid=doc-create-title]").fill("경쟁 리서치")
+            page.locator("[data-testid=doc-create-kind]").select_option("research")
+            page.locator("[data-testid=doc-create-confirm]").click()
+            page.wait_for_selector(
+                "[data-testid=doc-tab][data-kind=research][aria-selected=true]",
+                timeout=8000,
+            )
+            check("리서치 문서 탭이 만들어지고 활성", True)
+            check("탭 2개(스펙·리서치)", page.locator("[data-testid=doc-tab]").count() == 2)
+            badge = page.locator(
+                "[data-testid=doc-tab][data-kind=research] [data-testid=doc-kind]"
+            ).inner_text()
+            check("종류 배지", badge == "리서치", badge)
+
+            page.locator("[data-testid=doc-add]").click()
+            page.wait_for_selector("[data-testid=doc-block-1]", timeout=5000)
+            page.locator("[data-testid=doc-text-1]").fill(research)
+            page.locator("[data-testid=doc-text-1]").press("Tab")
+            page.wait_for_timeout(400)
+            check("URL이 활성 문서를 가리킴", "doc=" in page.url, page.url)
+            page.screenshot(path=str(OUT_DIR / "spec-studio-w3-docs.png"))
+
+            page.locator("[data-testid=doc-tab][data-kind=spec]").click()
+            page.wait_for_selector(
+                "[data-testid=doc-tab][data-kind=spec][aria-selected=true]", timeout=5000
+            )
+            check("스펙 탭으로 전환", page.locator("[data-testid=doc-block-1]").count() == 0)
+
+            page.reload(wait_until="networkidle")
+            page.wait_for_selector("[data-testid=daemon-status][data-status=connected]", timeout=20000)
+            page.wait_for_selector(
+                "[data-testid=doc-tab][data-kind=spec][aria-selected=true]", timeout=8000
+            )
+            check("새로고침 후 문서 2개 유지", page.locator("[data-testid=doc-tab]").count() == 2)
+
+            page.locator("[data-testid=doc-tab][data-kind=research]").click()
+            page.wait_for_selector("[data-testid=doc-block-1]", timeout=5000)
+            kept = page.locator("[data-testid=doc-text-1]").input_value()
+            check("새로고침 후 리서치 문단 유지", kept == research, kept)
+
+            page.locator("[data-testid=doc-delete]").click()
+            armed = page.locator("[data-testid=doc-delete]").inner_text()
+            check("삭제는 한 번 더 누르게 확인", armed == "삭제?", armed)
+            page.locator("[data-testid=doc-delete]").click()
+            page.wait_for_selector(
+                "[data-testid=doc-tab][data-kind=spec][aria-selected=true]", timeout=8000
+            )
+            check("삭제 후 스펙 문서로 돌아옴", page.locator("[data-testid=doc-tab]").count() == 1)
             check("콘솔 오류 0건", console_errors == [], " | ".join(console_errors[:3]))
             browser.close()
     finally:

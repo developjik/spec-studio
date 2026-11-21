@@ -1,9 +1,19 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { execute, type IdKind } from '@spec-studio/core';
-import { AiDraftError, AiProviderError, requestGraphDraft } from '@spec-studio/ai';
-import type { EditableNodeType, GraphProposal } from '@spec-studio/protocol';
+import { AiDraftError, AiProviderError, requestBriefDraft, requestGraphDraft } from '@spec-studio/ai';
+import type { AiBriefDraft, EditableNodeType, GraphProposal } from '@spec-studio/protocol';
 import { loadGoldenCases, projectFor, type GoldenCase, type LoadedCase } from './cases.js';
+import {
+  briefProject,
+  briefTotalsOf,
+  evidenceIdsOf,
+  fallbackBrief,
+  loadBriefCases,
+  scoreBriefCase,
+  briefFailuresOf,
+  type BriefCaseScore,
+} from './brief.js';
 import { failuresOf, scoreProposal, totalsOf, type CaseScore } from './score.js';
 
 /**
@@ -76,6 +86,10 @@ function idFactory(): (kind: IdKind, nodeType?: EditableNodeType) => string {
         return `L_${suffix}`;
       case 'graphProposal':
         return `GP_${suffix}`;
+      case 'idea':
+        return `I_${suffix}`;
+      case 'evidence':
+        return `E_${suffix}`;
     }
   };
 }
@@ -136,6 +150,61 @@ function printTable(scores: readonly CaseScore[]): void {
   }
 }
 
+function printBriefTable(scores: readonly BriefCaseScore[]): void {
+  console.log(
+    `\n${pad('id', 9)}${pad('분류', 12)}${pad('스키마', 8)}${pad('주장', 7)}${pad('근거', 7)}${pad('근거없음', 11)}${pad('인용정확', 10)}${pad('마커정확', 10)}`,
+  );
+  console.log('─'.repeat(72));
+  for (const score of scores) {
+    const cites = score.claims === 0 ? 0 : score.citesProvided / score.claims;
+    const markers = score.claims === 0 ? 0 : score.honestMarkers / score.claims;
+    console.log(
+      `${pad(score.id, 9)}${pad(score.group, 12)}${pad(score.schemaValid ? 'OK' : '실패', 8)}` +
+        `${pad(String(score.claims), 7)}${pad(String(score.grounded), 7)}${pad(String(score.ungrounded), 11)}` +
+        `${pad(pct(cites), 10)}${pad(pct(markers), 10)}`,
+    );
+  }
+}
+
+/**
+ * The brief set (§7-B-3). Mock grades the fallback the daemon ships; live
+ * asks the real model the same question and is 참고치 — the gates stay the
+ * same so a regression is visible either way.
+ */
+async function runBriefSet(options: Options): Promise<{ scores: BriefCaseScore[]; detail: string[] }> {
+  const briefCases = loadBriefCases(GOLDEN_DIR);
+  const scores: BriefCaseScore[] = [];
+  const detail: string[] = [];
+  for (const testCase of briefCases) {
+    const providedIds = evidenceIdsOf(testCase);
+    let draft: AiBriefDraft | null = null;
+    try {
+      if (options.mode === 'live') {
+        const { project, ideaId } = briefProject(testCase);
+        const answer = await requestBriefDraft({
+          provider: options.provider,
+          apiKey: options.apiKey ?? '',
+          model: options.model,
+          endpoint: options.endpoint,
+          project,
+          brief: { ideaId, evidenceIds: providedIds },
+        });
+        draft = answer.draft;
+      } else {
+        draft = fallbackBrief(testCase);
+      }
+    } catch (error) {
+      if (error instanceof AiDraftError || error instanceof AiProviderError) {
+        detail.push(`${testCase.id}: ${error.message}`);
+      } else {
+        detail.push(`${testCase.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    scores.push(scoreBriefCase(testCase, providedIds, draft));
+  }
+  return { scores, detail };
+}
+
 async function main(): Promise<number> {
   const options = parseOptions(process.argv.slice(2));
   const cases = loadGoldenCases(GOLDEN_DIR);
@@ -193,11 +262,24 @@ async function main(): Promise<number> {
     `${pad('임계치', 20)}${pad('100%', 8)}${pad('≥85%', 7)}${pad('≥85%', 7)}${pad('≥90%', 8)}${pad('≥90%', 10)}`,
   );
 
+  // ── the brief set (§7-B-3) ──────────────────────────────────────────
+  const brief = await runBriefSet(options);
+  printBriefTable(brief.scores);
+  const briefTotals = briefTotalsOf(brief.scores);
+  for (const line of brief.detail) console.log(`  ! ${line.slice(0, 140)}`);
+  console.log('─'.repeat(72));
+  console.log(
+    `${pad('브리프 합계', 20)}${pad(`주장 ${briefTotals.claims}개`, 15)}${pad(pct(briefTotals.precision), 20)}` +
+      pct(briefTotals.markerAccuracy),
+  );
+  console.log(`${pad('임계치', 20)}${pad('', 15)}${pad('100%', 20)}≥90%`);
+  failures.push(...briefFailuresOf(briefTotals));
+
   if (failures.length > 0) {
     console.log(`\nFAIL — ${failures.join(' · ')}`);
     return 1;
   }
-  console.log(`\nPASS — ${totals.cases}건이 임계치를 넘었습니다.`);
+  console.log(`\nPASS — 골든 ${totals.cases}건 · 브리프 ${briefTotals.cases}건이 임계치를 넘었습니다.`);
   return 0;
 }
 

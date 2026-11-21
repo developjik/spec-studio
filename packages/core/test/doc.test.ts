@@ -57,6 +57,10 @@ function context(): ExecuteContext {
           return `L_${String(n).padStart(12, '0')}`;
         case 'graphProposal':
           return `GP_${String(n).padStart(12, '0')}`;
+        case 'idea':
+          return `I_${String(n).padStart(12, '0')}`;
+        case 'evidence':
+          return `E_${String(n).padStart(12, '0')}`;
       }
     },
   };
@@ -105,9 +109,9 @@ const pin2 = `P_${String(3).padStart(12, '0')}`;
 describe('a document beside the screen', () => {
   it('is created with the screen and survives a pin edit as prose', () => {
     const { project } = seeded();
-    expect(project.doc).not.toBeNull();
-    expect(project.doc?.id).toBe(docId);
-    expect(project.doc?.blocks).toHaveLength(0);
+    expect(project.docs[0]).not.toBeUndefined();
+    expect(project.docs[0]?.id).toBe(docId);
+    expect(project.docs[0]?.blocks).toHaveLength(0);
   });
 
   it('adds, edits, moves and deletes blocks by stable id', () => {
@@ -122,22 +126,22 @@ describe('a document beside the screen', () => {
       { type: 'doc.block.create', docId, blockType: 'paragraph', text: '둘째 문단' },
       ctx,
     );
-    expect(next.doc?.blocks.map((block) => block.text)).toEqual(['첫 문단', '둘째 문단']);
+    expect(next.docs[0]?.blocks.map((block) => block.text)).toEqual(['첫 문단', '둘째 문단']);
 
-    const second = next.doc?.blocks[1] as { id: string };
+    const second = next.docs[0]?.blocks[1] as { id: string };
     next = run(
       next,
       { type: 'doc.block.update', docId, blockId: second.id, text: '고친 둘째 문단' },
       ctx,
     );
-    expect(next.doc?.blocks[1]?.text).toBe('고친 둘째 문단');
+    expect(next.docs[0]?.blocks[1]?.text).toBe('고친 둘째 문단');
 
     next = run(next, { type: 'doc.block.move', docId, blockId: second.id, afterBlockId: null }, ctx);
-    expect(next.doc?.blocks.map((block) => block.text)).toEqual(['고친 둘째 문단', '첫 문단']);
+    expect(next.docs[0]?.blocks.map((block) => block.text)).toEqual(['고친 둘째 문단', '첫 문단']);
 
     next = run(next, { type: 'doc.block.delete', docId, blockId: second.id }, ctx);
-    expect(next.doc?.blocks.map((block) => block.text)).toEqual(['첫 문단']);
-    expect(next.doc?.rev).toBe(5);
+    expect(next.docs[0]?.blocks.map((block) => block.text)).toEqual(['첫 문단']);
+    expect(next.docs[0]?.rev).toBe(5);
   });
 });
 
@@ -161,11 +165,11 @@ describe('paragraph ↔ pin linking', () => {
 
   it('records the pin on the block and writes its citation into the text', () => {
     const { project } = withLinkedBlock();
-    const block = project.doc?.blocks[0];
+    const block = project.docs[0]?.blocks[0];
     expect(block?.pinRefs.map((ref) => ref.pinId)).toEqual([pin1, pin2]);
     expect(block?.text).toContain('[핀] #1 취소 요청');
     expect(block?.text).toContain('[핀] #2 배송 시작 후 취소 불가');
-    expect(staleBadges(project.doc!, project.pins)).toEqual([]);
+    expect(staleBadges(project.docs[0]!, project.pins)).toEqual([]);
   });
 
   it('marks the block stale when a linked pin changes, but not when it merely moves', () => {
@@ -175,14 +179,14 @@ describe('paragraph ↔ pin linking', () => {
       { type: 'pin.update', screenId: SCREEN.id, pinId: pin1, anchor: { x: 0.4, y: 0.4 } },
       ctx,
     );
-    expect(staleBadges(moved.doc!, moved.pins)).toEqual([]);
+    expect(staleBadges(moved.docs[0]!, moved.pins)).toEqual([]);
 
     const edited = run(
       moved,
       { type: 'pin.update', screenId: SCREEN.id, pinId: pin1, title: '취소 요청 버튼' },
       ctx,
     );
-    expect(staleBadges(edited.doc!, edited.pins)).toEqual([
+    expect(staleBadges(edited.docs[0]!, edited.pins)).toEqual([
       { blockId, pinId: pin1, reason: 'pin-changed' },
     ]);
   });
@@ -190,7 +194,7 @@ describe('paragraph ↔ pin linking', () => {
   it('marks the block stale when a linked pin is deleted', () => {
     const { project, ctx } = withLinkedBlock();
     const deleted = run(project, { type: 'pin.delete', screenId: SCREEN.id, pinId: pin2 }, ctx);
-    expect(staleBadges(deleted.doc!, deleted.pins)).toEqual([
+    expect(staleBadges(deleted.docs[0]!, deleted.pins)).toEqual([
       { blockId, pinId: pin2, reason: 'pin-missing' },
     ]);
   });
@@ -207,9 +211,9 @@ describe('paragraph ↔ pin linking', () => {
       { type: 'doc.stale.clear', docId, blockId, pinId: pin1 },
       ctx,
     );
-    expect(staleBadges(cleared.doc!, cleared.pins)).toEqual([]);
+    expect(staleBadges(cleared.docs[0]!, cleared.pins)).toEqual([]);
     // the sentence keeps the pin, and the text now cites the new body-free spec
-    expect(cleared.doc?.blocks[0]?.pinRefs.map((ref) => ref.pinId)).toEqual([pin1, pin2]);
+    expect(cleared.docs[0]?.blocks[0]?.pinRefs.map((ref) => ref.pinId)).toEqual([pin1, pin2]);
   });
 });
 
@@ -237,38 +241,38 @@ describe('one proposal, one decision, one revert', () => {
 
   it('carries the change as one card and leaves the text alone until adopted', () => {
     const { project, ctx } = staleDocument();
-    const before = project.doc?.blocks[0]?.text;
+    const before = project.docs[0]?.blocks[0]?.text;
     const created = run(project, { type: 'proposal.create', docId }, ctx);
 
-    expect(created.proposal?.state).toBe('open');
-    expect(created.proposal?.patches).toHaveLength(1);
-    expect(created.proposal?.summary).toContain('#1');
-    expect(created.doc?.blocks[0]?.text).toBe(before);
+    expect(created.proposals[0]?.state).toBe('open');
+    expect(created.proposals[0]?.patches).toHaveLength(1);
+    expect(created.proposals[0]?.summary).toContain('#1');
+    expect(created.docs[0]?.blocks[0]?.text).toBe(before);
   });
 
   it('adopts the patch, then restores op_log.before exactly', () => {
     const { project, ctx } = staleDocument();
-    const beforeDoc = project.doc!;
+    const beforeDoc = project.docs[0]!;
     const beforeText = beforeDoc.blocks[0]?.text as string;
 
     const created = run(project, { type: 'proposal.create', docId }, ctx);
-    const proposal = created.proposal!;
+    const proposal = created.proposals[0]!;
     const adopted = run(
       created,
       { type: 'proposal.adopt', docId, proposalId: proposal.id },
       ctx,
     );
 
-    expect(adopted.proposal?.state).toBe('adopted');
-    expect(adopted.doc?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
-    expect(staleBadges(adopted.doc!, adopted.pins)).toEqual([]);
+    expect(adopted.proposals[0]?.state).toBe('adopted');
+    expect(adopted.docs[0]?.blocks[0]?.text).toContain('#1 취소 요청 버튼');
+    expect(staleBadges(adopted.docs[0]!, adopted.pins)).toEqual([]);
 
     // The store keeps exactly this value in op_log.before.
     const snapshot = snapshotForPatches(beforeDoc, proposal.patches);
     expect(snapshot.entries).toHaveLength(1);
     expect(snapshot.entries[0]).toMatchObject({ blockId, existed: true, text: beforeText });
 
-    const reverted = restoreSnapshot(adopted.doc!, snapshot, AT);
+    const reverted = restoreSnapshot(adopted.docs[0]!, snapshot, AT);
     expect(reverted.blocks[0]?.text).toBe(beforeText);
     expect(reverted.blocks[0]?.pinRefs).toEqual(beforeDoc.blocks[0]?.pinRefs);
     // ...and the pin is still changed, so the block is honestly stale again.
@@ -280,16 +284,16 @@ describe('one proposal, one decision, one revert', () => {
   it('proposes an insert when nothing is stale, and a revert removes it again', () => {
     const { project, ctx } = seeded();
     const created = run(project, { type: 'proposal.create', docId }, ctx);
-    const proposal = created.proposal!;
+    const proposal = created.proposals[0]!;
     expect(proposal.patches).toHaveLength(1);
     expect(proposal.patches[0]?.before).toBeNull();
     expect(proposal.patches[0]?.after.text).toContain('이 화면에서 확인할 것');
 
-    const applied = applyPatches(created.doc!, proposal.patches, AT);
+    const applied = applyPatches(created.docs[0]!, proposal.patches, AT);
     expect(applied.doc.blocks).toHaveLength(1);
     expect(applied.created).toEqual([proposal.patches[0]?.blockId]);
 
-    const snapshot = snapshotForPatches(created.doc!, proposal.patches);
+    const snapshot = snapshotForPatches(created.docs[0]!, proposal.patches);
     const reverted = restoreSnapshot(applied.doc, snapshot, AT);
     expect(reverted.blocks).toHaveLength(0);
   });
@@ -305,7 +309,7 @@ describe('one proposal, one decision, one revert', () => {
     next = run(next, { type: 'doc.pin.link', docId, blockId, pinId: pin2 }, ctx);
     next = run(next, { type: 'pin.delete', screenId: SCREEN.id, pinId: pin2 }, ctx);
     const created = run(next, { type: 'proposal.create', docId }, ctx);
-    const patch = created.proposal?.patches[0];
+    const patch = created.proposals[0]?.patches[0];
     expect(patch?.after.text).not.toContain('배송 시작 후 취소 불가');
     expect(patch?.after.pinRefs.map((ref) => ref.pinId)).toEqual([pin1]);
   });
@@ -313,14 +317,14 @@ describe('one proposal, one decision, one revert', () => {
   it('rejects a proposal without touching the document', () => {
     const { project, ctx } = staleDocument();
     const created = run(project, { type: 'proposal.create', docId }, ctx);
-    const text = created.doc?.blocks[0]?.text;
+    const text = created.docs[0]?.blocks[0]?.text;
     const rejected = run(
       created,
-      { type: 'proposal.reject', docId, proposalId: created.proposal!.id },
+      { type: 'proposal.reject', docId, proposalId: created.proposals[0]!.id },
       ctx,
     );
-    expect(rejected.proposal?.state).toBe('rejected');
-    expect(rejected.doc?.blocks[0]?.text).toBe(text);
+    expect(rejected.proposals[0]?.state).toBe('rejected');
+    expect(rejected.docs[0]?.blocks[0]?.text).toBe(text);
   });
 
   it('fingerprints only what makes a sentence false', () => {
@@ -329,7 +333,7 @@ describe('one proposal, one decision, one revert', () => {
     const movedPin = { ...pin, anchor: { x: 0.9, y: 0.9 } };
     expect(pinFingerprint(pin)).toBe(pinFingerprint(movedPin));
     expect(pinFingerprint(pin)).not.toBe(pinFingerprint({ ...pin, body: '다른 설명' }));
-    expect(buildProposal({ id: `PR_${'q'.repeat(12)}`, doc: project.doc!, pins: project.pins, at: AT }))
+    expect(buildProposal({ id: `PR_${'q'.repeat(12)}`, doc: project.docs[0]!, pins: project.pins, at: AT }))
       .toHaveProperty('patches');
   });
 });

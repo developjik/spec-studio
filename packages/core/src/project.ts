@@ -1,7 +1,6 @@
 import {
   PinSchema,
   ScreenSchema,
-  linkEndsAllow,
   type Command,
   type DomainEvent,
   type Anchor,
@@ -17,6 +16,7 @@ import {
 import {
   applyPatches,
   buildProposal,
+  buildProposalFromBrief,
   buildProposalFromDraft,
   confirmRef,
   createDoc,
@@ -38,6 +38,7 @@ import {
   normalizeGraph,
   resolveProposalRef,
 } from './graph';
+import { executeInbox, linkKindAllowed, markEvidenceCited, objectKindOf } from './ideas';
 import { filterPins, findPin, nextPinNumber, resolvePinSeq, sortPinsByNumber } from './pins';
 
 export { DomainError, type DomainErrorCode } from './errors';
@@ -51,7 +52,9 @@ export type IdKind =
   | 'proposal'
   | 'node'
   | 'link'
-  | 'graphProposal';
+  | 'graphProposal'
+  | 'idea'
+  | 'evidence';
 
 export interface ExecuteContext {
   /** Passed in, never read from the clock — core stays pure. */
@@ -94,8 +97,10 @@ export function createProject(input: { id: string; name: string; at: string }): 
     screen: null,
     pins: [],
     pinSeq: 0,
-    doc: null,
-    proposal: null,
+    docs: [],
+    proposals: [],
+    ideas: [],
+    evidence: [],
     graph: { nodes: [], links: [] },
     graphProposal: null,
     createdAt: input.at,
@@ -128,13 +133,9 @@ function requireGraphNode(project: Project, nodeId: string): GraphNode {
   return node;
 }
 
-/** The type a link endpoint stands for, or null when the id is not in the project. */
-export function graphNodeType(project: Project, id: string) {
-  if (project.screen !== null && project.screen.id === id) return 'screen' as const;
-  if (project.pins.some((pin) => pin.id === id)) return 'pin' as const;
-  const node = findGraphNode(project, id);
-  return node === undefined ? null : node.type;
-}
+// `objectKindOf` (./ideas) is the endpoint resolver `link.create` validates
+// against; the canvas-type view of the same question is `graphTypeOfId`
+// (./graph).
 
 export function pinsForScreen(project: Project, screenId: string): Pin[] {
   return project.pins.filter((pin) => pin.screenId === screenId);
@@ -149,17 +150,19 @@ function requireScreen(project: Project, screenId: string): Screen {
   return screen;
 }
 
+/**
+ * The registry lookup every doc command starts from. There is one registry, so
+ * "another document" and "no such document" are the same failure.
+ */
 function requireDoc(project: Project, docId: string): Doc {
-  if (project.doc === null) throw new DomainError('doc_missing', '문서가 아직 없습니다');
-  if (project.doc.id !== docId) {
-    throw new DomainError('doc_mismatch', 'the command targets a different document');
-  }
-  return project.doc;
+  const doc = project.docs.find((candidate) => candidate.id === docId);
+  if (doc === undefined) throw new DomainError('doc_missing', `문서가 없습니다: ${docId}`);
+  return doc;
 }
 
 function requireOpenProposal(project: Project, proposalId: string): Proposal {
-  const proposal = project.proposal;
-  if (proposal === null || proposal.id !== proposalId) {
+  const proposal = project.proposals.find((candidate) => candidate.id === proposalId);
+  if (proposal === undefined) {
     throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
   }
   if (proposal.state !== 'open') {
@@ -181,43 +184,28 @@ export function execute(
     case 'screen.attach': {
       const screen = command.screen;
       const differentScreen = project.screen !== null && project.screen.id !== screen.id;
-      if (differentScreen) {
-        // A new screen is a new numbering space; the previous pins stay with
-        // the previous screen and are not renumbered into this one. Its
-        // document is new too — the prose described that screen, not this one.
-        const doc = createDoc({
-          id: ctx.nextId('doc'),
-          title: `${screen.title} 문서`,
-          at: ctx.at,
-        });
+      const carried = differentScreen
+        ? // A new screen is a new numbering space: the previous pins stay with
+          // the previous screen and are not renumbered into this one, and
+          // proposals built on those pins leave the table. The document
+          // registry survives — its docs never belonged to one screen only.
+          { ...project, screen, pins: [], pinSeq: 0, proposals: [] }
+        : { ...project, screen };
+      // A screen only brings its own auto-doc when the registry is empty; the
+      // v1 flow (attach → a document exists) still holds.
+      if (project.docs.length > 0) {
         return {
-          project: {
-            ...project,
-            screen,
-            pins: [],
-            pinSeq: 0,
-            doc,
-            proposal: null,
-            updatedAt: ctx.at,
-          },
-          events: [
-            { type: 'screen.attached', screen },
-            { type: 'doc.attached', doc },
-          ],
+          project: { ...carried, updatedAt: ctx.at },
+          events: [{ type: 'screen.attached', screen }],
         };
       }
-      const doc =
-        project.doc ??
-        createDoc({ id: ctx.nextId('doc'), title: `${screen.title} 문서`, at: ctx.at });
+      const doc = createDoc({ id: ctx.nextId('doc'), title: `${screen.title} 문서`, at: ctx.at });
       return {
-        project: { ...project, screen, doc, updatedAt: ctx.at },
-        events:
-          project.doc === null
-            ? [
-                { type: 'screen.attached', screen },
-                { type: 'doc.attached', doc },
-              ]
-            : [{ type: 'screen.attached', screen }],
+        project: { ...carried, docs: [...project.docs, doc], updatedAt: ctx.at },
+        events: [
+          { type: 'screen.attached', screen },
+          { type: 'doc.attached', doc },
+        ],
       };
     }
 
@@ -316,6 +304,64 @@ export function execute(
       };
     }
 
+    // ── idea inbox · research board (E1 §4 F2·F3) ─────────────────────
+    case 'idea.capture':
+    case 'idea.update':
+    case 'idea.archive':
+    case 'evidence.capture':
+    case 'evidence.update':
+    case 'evidence.dismiss':
+      return executeInbox(project, command, ctx);
+
+    // ── document registry (W3/F5) ──────────────────────────────────────
+    case 'doc.create': {
+      const doc = createDoc({
+        id: ctx.nextId('doc'),
+        title: command.title,
+        kind: command.kind,
+        at: ctx.at,
+      });
+      return {
+        project: { ...project, docs: [...project.docs, doc], updatedAt: ctx.at },
+        events: [{ type: 'doc.created', doc }],
+      };
+    }
+
+    case 'doc.update': {
+      const doc = requireDoc(project, command.docId);
+      const title = command.title.trim();
+      if (title === '') throw new DomainError('invalid_input', '문서에는 제목이 필요합니다');
+      const next: Doc = { ...doc, title, updatedAt: ctx.at };
+      return {
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) => (candidate.id === doc.id ? next : candidate)),
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'doc.renamed', docId: doc.id, title }],
+      };
+    }
+
+    case 'doc.delete': {
+      const doc = requireDoc(project, command.docId);
+      // A proposal still on the table for this doc cannot outlive it; the
+      // decision is recorded the same way a refusal records it.
+      const proposals = project.proposals.map((candidate) =>
+        candidate.docId === doc.id && candidate.state === 'open'
+          ? { ...candidate, state: 'rejected' as const, decidedAt: ctx.at }
+          : candidate,
+      );
+      return {
+        project: {
+          ...project,
+          docs: project.docs.filter((candidate) => candidate.id !== doc.id),
+          proposals,
+          updatedAt: ctx.at,
+        },
+        events: [{ type: 'doc.deleted', docId: doc.id }],
+      };
+    }
+
     // ── document blocks ────────────────────────────────────────────────
     case 'doc.block.create': {
       const doc = requireDoc(project, command.docId);
@@ -332,7 +378,13 @@ export function execute(
           : command.afterBlockId;
       const blocks = insertBlock(doc, block, after);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.created', block }],
       };
     }
@@ -354,7 +406,13 @@ export function execute(
         candidate.id === block.id ? block : candidate,
       );
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.updated', block }],
       };
     }
@@ -366,7 +424,13 @@ export function execute(
       }
       const blocks = doc.blocks.filter((block) => block.id !== command.blockId);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'block.deleted', docId: doc.id, blockId: command.blockId }],
       };
     }
@@ -375,7 +439,13 @@ export function execute(
       const doc = requireDoc(project, command.docId);
       const blocks = moveBlock(doc, command.blockId, command.afterBlockId, ctx.at);
       return {
-        project: { ...project, doc: withBlocks(doc, blocks, ctx.at), updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? withBlocks(doc, blocks, ctx.at) : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [
           {
             type: 'block.moved',
@@ -406,10 +476,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -441,10 +515,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -484,10 +562,14 @@ export function execute(
       return {
         project: {
           ...project,
-          doc: withBlocks(
-            doc,
-            doc.blocks.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
-            ctx.at,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id
+              ? withBlocks(
+                  doc,
+                  doc.blocks.map((entry) => (entry.id === updated.id ? updated : entry)),
+                  ctx.at,
+                )
+              : candidate,
           ),
           updatedAt: ctx.at,
         },
@@ -513,16 +595,50 @@ export function execute(
               pins: project.pins,
               at: ctx.at,
             })
-          : buildProposalFromDraft({
-              id: ctx.nextId('proposal'),
-              doc,
-              pins: project.pins,
-              draft: command.draft,
-              at: ctx.at,
-            });
+          : 'claims' in command.draft
+            ? // A brief (F3-2) becomes insert patches: heading, summary, one
+              // paragraph per claim. The trust boundary stays here — an id
+              // the evidence board does not have is rejected before 채택.
+              buildProposalFromBrief({
+                id: ctx.nextId('proposal'),
+                doc,
+                evidence: project.evidence,
+                draft: command.draft,
+                at: ctx.at,
+              })
+            : buildProposalFromDraft({
+                id: ctx.nextId('proposal'),
+                doc,
+                pins: project.pins,
+                draft: command.draft,
+                at: ctx.at,
+              });
+      // One open proposal per doc: a new card retires the one still on the
+      // table for the same doc, the same way a refusal would.
+      const retired = project.proposals.filter(
+        (candidate) => candidate.docId === doc.id && candidate.state === 'open',
+      );
       return {
-        project: { ...project, proposal, updatedAt: ctx.at },
-        events: [{ type: 'proposal.created', proposal }],
+        project: {
+          ...project,
+          proposals: [
+            ...project.proposals.map((candidate) =>
+              candidate.docId === doc.id && candidate.state === 'open'
+                ? { ...candidate, state: 'rejected' as const, decidedAt: ctx.at }
+                : candidate,
+            ),
+            proposal,
+          ],
+          updatedAt: ctx.at,
+        },
+        events: [
+          ...retired.map((candidate) => ({
+            type: 'proposal.rejected' as const,
+            docId: doc.id,
+            proposalId: candidate.id,
+          })),
+          { type: 'proposal.created' as const, proposal },
+        ],
       };
     }
 
@@ -530,15 +646,21 @@ export function execute(
       const doc = requireDoc(project, command.docId);
       const proposal = requireOpenProposal(project, command.proposalId);
       if (proposal.docId !== doc.id) {
-        throw new DomainError('doc_mismatch', '이 제안은 다른 문서의 것입니다');
+        // One registry: a proposal naming another doc is the same failure as
+        // naming none.
+        throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       }
       const applied = applyPatches(doc, proposal.patches, ctx.at);
       const decided: Proposal = { ...proposal, state: 'adopted', decidedAt: ctx.at };
       return {
         project: {
           ...project,
-          doc: applied.doc,
-          proposal: decided,
+          docs: project.docs.map((candidate) =>
+            candidate.id === doc.id ? applied.doc : candidate,
+          ),
+          proposals: project.proposals.map((candidate) =>
+            candidate.id === proposal.id ? decided : candidate,
+          ),
           updatedAt: ctx.at,
         },
         events: [
@@ -557,7 +679,13 @@ export function execute(
       const proposal = requireOpenProposal(project, command.proposalId);
       const decided: Proposal = { ...proposal, state: 'rejected', decidedAt: ctx.at };
       return {
-        project: { ...project, proposal: decided, updatedAt: ctx.at },
+        project: {
+          ...project,
+          proposals: project.proposals.map((candidate) =>
+            candidate.id === proposal.id ? decided : candidate,
+          ),
+          updatedAt: ctx.at,
+        },
         events: [
           { type: 'proposal.rejected', docId: doc.id, proposalId: proposal.id },
         ],
@@ -637,18 +765,21 @@ export function execute(
     }
 
     case 'link.create': {
-      const srcType = graphNodeType(project, command.src);
-      const dstType = graphNodeType(project, command.dst);
-      if (srcType === null || dstType === null) {
+      // A1: validation runs at `obj`-kind level against the same registry
+      // rows the store's triggers hold, so an idea or an evidence row can be
+      // an endpoint without becoming a canvas node type.
+      const srcKind = objectKindOf(project, command.src);
+      const dstKind = objectKindOf(project, command.dst);
+      if (srcKind === null || dstKind === null) {
         throw new DomainError('node_not_found', '링크의 한쪽 객체를 찾지 못했습니다');
       }
       if (command.src === command.dst) {
         throw new DomainError('invalid_input', '같은 객체로는 링크할 수 없습니다');
       }
-      if (!linkEndsAllow(command.linkType, srcType, dstType)) {
+      if (!linkKindAllowed(project, command.linkType, command.src, command.dst)) {
         throw new DomainError(
           'invalid_input',
-          `${command.linkType} 링크는 ${srcType} → ${dstType} 를 연결할 수 없습니다`,
+          `${command.linkType} 링크는 ${srcKind} → ${dstKind} 를 연결할 수 없습니다`,
         );
       }
       const exists = project.graph.links.some(
@@ -665,13 +796,26 @@ export function execute(
         suspectWhy: null,
         createdAt: ctx.at,
       };
+      // F3-3: citing evidence is what moves it to `cited` — the link and the
+      // state change are one write. A dismissed row stays dismissed.
+      const cited =
+        command.linkType === 'references' && dstKind === 'evidence'
+          ? markEvidenceCited(project, [command.dst], ctx.at)
+          : project;
+      const events: DomainEvent[] = [{ type: 'link.created', link }];
+      const citedRow =
+        cited.evidence === project.evidence
+          ? null
+          : (cited.evidence.find((row) => row.id === command.dst && row.updatedAt === ctx.at) ??
+            null);
+      if (citedRow !== null) events.push({ type: 'evidence.updated', evidence: citedRow });
       return {
         project: {
-          ...project,
+          ...cited,
           graph: { ...project.graph, links: [...project.graph.links, link] },
           updatedAt: ctx.at,
         },
-        events: [{ type: 'link.created', link }],
+        events,
       };
     }
 
@@ -752,10 +896,14 @@ export function execute(
           makeGraphNode({ id, type: draft.type, title: draft.title, body: draft.body, at: ctx.at }),
         );
       }
+      // An idea ref only counts when the inbox still has it; the whole adopt
+      // fails rather than half-landing, the same all-or-nothing an unknown
+      // pin or node ref already gets.
+      const ideaIds = new Set(project.ideas.map((idea) => idea.id));
       const links: GraphLink[] = [...project.graph.links];
       for (const draft of proposal.links) {
-        const src = resolveProposalRef(draft.src, created);
-        const dst = resolveProposalRef(draft.dst, created);
+        const src = resolveProposalRef(draft.src, created, ideaIds);
+        const dst = resolveProposalRef(draft.dst, created, ideaIds);
         if (src === null || dst === null) {
           throw new DomainError('invalid_input', '제안 링크의 대상을 풀지 못했습니다');
         }
@@ -769,10 +917,19 @@ export function execute(
           createdAt: ctx.at,
         });
       }
+      // Evidence the adopted card cites becomes `cited`, the same write it
+      // would get from a hand-made `references` link.
+      const citedIds = links
+        .filter((link) => link.createdAt === ctx.at && link.type === 'references')
+        .map((link) => link.dst);
+      const cited = markEvidenceCited(project, citedIds, ctx.at);
+      const citedEvents: DomainEvent[] = cited.evidence
+        .filter((row) => row.updatedAt === ctx.at && row.state === 'cited')
+        .map((row) => ({ type: 'evidence.updated' as const, evidence: row }));
       const decided = { ...proposal, state: 'adopted' as const, decidedAt: ctx.at };
       return {
         project: {
-          ...project,
+          ...cited,
           graph: { nodes, links },
           graphProposal: decided,
           updatedAt: ctx.at,
@@ -784,6 +941,7 @@ export function execute(
             nodes: proposal.nodes.length,
             links: proposal.links.length,
           },
+          ...citedEvents,
         ],
       };
     }
@@ -802,6 +960,14 @@ export function execute(
         events: [{ type: 'graph.proposal.rejected', proposalId: proposal.id }],
       };
     }
+
+    // ── handoff package (F4) ───────────────────────────────────────────
+    case 'project.package.export':
+      // Writing files changes no project state; the event is the record.
+      return {
+        project,
+        events: [{ type: 'package.exported', files: command.files }],
+      };
 
     default: {
       const exhaustive: never = command;

@@ -1,7 +1,15 @@
-import { buildTextOutputs, outputFileName, type OutputKind } from '@spec-studio/core';
-import type { Doc, Pin, Screen } from '@spec-studio/protocol';
+import {
+  buildSpecSummaryMd,
+  buildTasksMd,
+  buildTextOutputs,
+  outputFileName,
+  type OutputKind,
+} from '@spec-studio/core';
+import type { Doc, Pin, Project, Screen } from '@spec-studio/protocol';
 import { formatBytes } from './downloads';
 import { renderOverlayPng } from './overlay';
+import { bundleOf } from './storage';
+import type { ZipEntry } from './zip';
 
 export interface BuiltOutput {
   kind: OutputKind;
@@ -81,4 +89,51 @@ function countCsvRows(csv: string): number {
 
 export function outputDetailSize(output: BuiltOutput): string {
   return formatBytes(output.bytes);
+}
+
+/** The six files a handoff package carries (F4 · AC-8), in zip order. */
+export const PACKAGE_FILE_COUNT = 6;
+
+export function packageZipName(screen: Screen): string {
+  return `spec-studio-${screen.code.toLowerCase()}-handoff.zip`;
+}
+
+/**
+ * One read of the project → the six files of one zip. Deterministic on
+ * purpose: the stamp is `project.updatedAt`, not the wall clock, so a
+ * re-export of an untouched project writes the same bytes (멱등 — AC-8).
+ */
+export async function buildPackageFiles(input: {
+  project: Project;
+  screen: Screen;
+  pins: readonly Pin[];
+  pinSeq: number;
+  doc?: Doc | null;
+}): Promise<ZipEntry[]> {
+  const { project, screen, pins } = input;
+  const generatedAt = project.updatedAt;
+  const encoder = new TextEncoder();
+  const text = (value: string) => encoder.encode(value);
+
+  const overlay = await renderOverlayPng(screen, pins);
+  const outputs = buildTextOutputs({
+    screen,
+    pins,
+    pinSeq: input.pinSeq,
+    doc: input.doc ?? null,
+    generatedAt,
+  });
+  const bundle = JSON.stringify(bundleOf(project, generatedAt), null, 2);
+
+  return [
+    { name: 'spec-summary.md', data: text(buildSpecSummaryMd({ project, generatedAt })) },
+    {
+      name: outputFileName(screen, 'overlay-png'),
+      data: new Uint8Array(await overlay.blob.arrayBuffer()),
+    },
+    { name: outputFileName(screen, 'spec-html'), data: text(outputs.html) },
+    { name: outputFileName(screen, 'qa-csv'), data: text(outputs.csv) },
+    { name: 'tasks.md', data: text(buildTasksMd({ project, generatedAt })) },
+    { name: 'bundle.json', data: text(bundle) },
+  ];
 }

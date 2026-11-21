@@ -44,7 +44,7 @@ const AT = '2026-11-19T09:00:00.000Z';
 
 export function loadGoldenCases(dir: string): LoadedCase[] {
   const files = readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
+    .filter((name) => name.endsWith('.json') && name !== 'brief.json')
     .sort();
   const cases: LoadedCase[] = [];
   for (const file of files) {
@@ -93,6 +93,10 @@ function idFactory(): (kind: IdKind, nodeType?: EditableNodeType) => string {
         return `L_${suffix}`;
       case 'graphProposal':
         return `GP_${suffix}`;
+      case 'idea':
+        return `I_${suffix}`;
+      case 'evidence':
+        return `E_${suffix}`;
     }
   };
 }

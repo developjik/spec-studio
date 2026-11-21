@@ -3,9 +3,11 @@
 
 It is not a model: it reads the pins out of the prompt and drafts what a
 careful person would draft from them — a policy for a policy pin, a contract
-for a data pin, a requirement and a QA case for an exception. That is enough
-to exercise the whole wire: request shape, JSON-in-prose parsing, schema
-validation, pin citation, the decision card, adopt and revert.
+for a data pin, a requirement and a QA case for an exception. For a brief
+prompt it cites the first clip and marks one claim ungrounded, so both sides
+of the F3-2 disjunction show on the card. That is enough to exercise the
+whole wire: request shape, JSON-in-prose parsing, schema validation, pin and
+evidence citation, the decision card, adopt and revert.
 
 Two endpoints, because the daemon supports two providers:
   POST /v1/chat/completions   OpenAI-compatible
@@ -23,6 +25,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PIN_LINE = re.compile(r"^#(\d+) \[([a-z_]+)\] (.+)$", re.MULTILINE)
 BLOCK_LINE = re.compile(r"^- (B_[A-Za-z0-9_-]{8,24}) · ([a-z]+) · (.+)$", re.MULTILINE)
+# The brief prompt lists its citation universe as "- E_… · 제목 · 발췌".
+EVIDENCE_LINE = re.compile(r"^- (E_[A-Za-z0-9_-]{8,24}) · (.+?) · ", re.MULTILINE)
 
 
 def numbered_links(counter: list[int]) -> str:
@@ -158,6 +162,34 @@ def doc_draft(prompt: str) -> dict:
     }
 
 
+def brief_draft(prompt: str) -> dict:
+    # Cite the first clip honestly, then make one claim no source can carry —
+    # both sides of the disjunction have to show up on the card.
+    refs = EVIDENCE_LINE.findall(prompt)
+    claims: list[dict] = []
+    if refs:
+        evidence_id, title = refs[0]
+        claims.append(
+            {
+                "text": f"{title.strip()}에서 확인한 사실을 브리프 주장으로 옮긴다.",
+                "evidenceRefs": [evidence_id],
+                "ungrounded": False,
+            }
+        )
+    claims.append(
+        {
+            "text": "사용자 반응은 출시 후 지표로 확인한다.",
+            "evidenceRefs": [],
+            "ungrounded": True,
+        }
+    )
+    return {
+        "title": "리서치 브리프 초안",
+        "summary": f"증거 {len(refs)}개 위에 주장 {len(claims)}개를 놓았습니다.",
+        "claims": claims,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -186,6 +218,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if "health check" in system:
             content = '{"ok":true}'
+        elif "claims은 1~12개" in prompt:
+            content = json.dumps(brief_draft(prompt), ensure_ascii=False)
         elif "문단 (id · 타입 · 본문)" in prompt:
             content = json.dumps(doc_draft(prompt), ensure_ascii=False)
         else:

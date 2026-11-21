@@ -1,12 +1,15 @@
 import {
   BlockSchema,
+  type AiBriefDraft,
   type AiDocDraft,
   type Block,
   type BlockPinRef,
   type BlockSnapshotEntry,
   type BlockStale,
   type Doc,
+  type DocKind,
   type DocSnapshot,
+  type Evidence,
   type Pin,
   type Proposal,
   type ProposalPatch,
@@ -39,7 +42,13 @@ export function pinFingerprint(pin: Pick<Pin, 'type' | 'title' | 'body'>): strin
   return hash.toString(16).padStart(8, '0');
 }
 
-export function createDoc(input: { id: string; title: string; at: string }): Doc {
+export function createDoc(input: {
+  id: string;
+  title: string;
+  at: string;
+  /** Registry kind; a screen's auto-doc and W4-era docs are specs. */
+  kind?: DocKind;
+}): Doc {
   const title = input.title.trim();
   if (title === '') throw new DomainError('invalid_input', '문서에는 제목이 필요합니다');
   return {
@@ -47,6 +56,8 @@ export function createDoc(input: { id: string; title: string; at: string }): Doc
     title: title.slice(0, 120),
     rev: 0,
     blocks: [],
+    kind: input.kind ?? 'spec',
+    deletedAt: null,
     createdAt: input.at,
     updatedAt: input.at,
   };
@@ -341,6 +352,74 @@ export function buildProposalFromDraft(input: {
     summary: draft.summary.trim().slice(0, 300),
     // `doc-chat` is the origin that already means "a sentence proposed outside
     // the pin extractor"; the card reads it as an LLM 제안.
+    origin: 'doc-chat',
+    baseRev: doc.rev,
+    state: 'open',
+    patches,
+    createdAt: input.at,
+    decidedAt: null,
+  };
+}
+
+/**
+ * Turns a research brief (F3-2) into the same card a person already decides
+ * on — here every patch inserts a block at the end of the document: the
+ * title as a heading, the summary, then one paragraph per claim with its
+ * sources spelled out (`(출처: …)`) or the honest `(근거 없음)` marker.
+ *
+ * The trust boundary is the first loop: a claim citing an evidence id the
+ * board does not have is rejected here, before any card exists — 채택 전
+ * 거부, the same rule the pin verifier already follows.
+ */
+export function buildProposalFromBrief(input: {
+  id: string;
+  doc: Doc;
+  evidence: readonly Evidence[];
+  draft: AiBriefDraft;
+  at: string;
+}): Proposal {
+  const { doc, draft } = input;
+  const byId = new Map(input.evidence.map((row) => [row.id, row] as const));
+  for (const claim of draft.claims) {
+    for (const ref of claim.evidenceRefs) {
+      if (!byId.has(ref)) {
+        throw new DomainError('invalid_input', `없는 근거를 인용했습니다: ${ref}`);
+      }
+    }
+  }
+
+  const claimText = (claim: AiBriefDraft['claims'][number]): string => {
+    if (claim.evidenceRefs.length === 0) return `${claim.text} (근거 없음)`;
+    const titles = claim.evidenceRefs.map((ref) => byId.get(ref)?.title ?? ref);
+    return `${claim.text} (출처: ${titles.join(', ')})`;
+  };
+
+  const blocks: Array<{ type: Block['type']; text: string }> = [
+    { type: 'heading', text: draft.title },
+    { type: 'paragraph', text: draft.summary },
+    ...draft.claims.map((claim) => ({ type: 'paragraph' as const, text: claimText(claim) })),
+  ];
+  const suffix = input.id.replace(/^PR_/, '').slice(0, 12).padEnd(12, '0');
+  let anchor = doc.blocks.at(-1)?.id ?? null;
+  const patches: ProposalPatch[] = blocks.map((block, index) => {
+    const blockId = `B_${suffix}${String(index).padStart(2, '0')}`;
+    const patch: ProposalPatch = {
+      blockId,
+      afterBlockId: anchor,
+      before: null,
+      after: { type: block.type, text: block.text, pinRefs: [] },
+    };
+    anchor = blockId;
+    return patch;
+  });
+
+  return {
+    id: input.id,
+    docId: doc.id,
+    summary: `${draft.title} — 브리프 주장 ${draft.claims.length}개`.slice(0, 300),
+    // `doc-chat` remains the origin for anything proposed outside the pin
+    // extractor; the brief's insert-only patches and 출처 markers are what
+    // the card reads. (The proposal table's origin CHECK has no 'brief'.)
     origin: 'doc-chat',
     baseRev: doc.rev,
     state: 'open',

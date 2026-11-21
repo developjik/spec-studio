@@ -34,6 +34,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 NODE = os.environ.get("SPEC_STUDIO_NODE", "node")
 DB = os.environ["SPEC_STUDIO_DB"]
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "8787"))
 WEB_URL = os.environ.get("WEB_URL", "http://127.0.0.1:5173")
 MOCK_LLM_URL = os.environ.get("MOCK_LLM_URL", "http://127.0.0.1:8799")
 OUT_DIR = Path(os.environ.get("OUT_DIR", ROOT / "downloads"))
@@ -48,7 +49,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def start_daemon() -> subprocess.Popen:
     env = os.environ.copy()
-    env["SPEC_STUDIO_PORT"] = "8787"
+    env["SPEC_STUDIO_PORT"] = str(DAEMON_PORT)
     env["SPEC_STUDIO_DB"] = DB
     # No keys in the environment: the browser supplies one, which is the path
     # that must not persist. (The env fallback is covered by unit tests.)
@@ -65,7 +66,7 @@ def start_daemon() -> subprocess.Popen:
     )
     for _ in range(100):
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8787/api/health", timeout=0.5):
+            with urllib.request.urlopen(f"http://127.0.0.1:{DAEMON_PORT}/api/health", timeout=0.5):
                 return process
         except Exception:
             time.sleep(0.1)
@@ -118,7 +119,7 @@ def main() -> int:
             page.on("pageerror", lambda error: console_errors.append(str(error)))
 
             # ── 0. the daemon knows it has no key of its own ────────────
-            with urllib.request.urlopen("http://127.0.0.1:8787/api/ai", timeout=5) as response:
+            with urllib.request.urlopen(f"http://127.0.0.1:{DAEMON_PORT}/api/ai", timeout=5) as response:
                 status = json.loads(response.read())["status"]
             env_keys = {
                 entry["provider"]: entry["hasEnvKey"] for entry in status["providers"]

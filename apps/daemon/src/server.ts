@@ -2,12 +2,16 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
+  AiKeychainEraseSchema,
+  AiKeychainRequestSchema,
   CommandSchema,
+  findPreset,
   ProjectBundleSchema,
+  type CredentialPort,
   type Project,
   type ProjectBundle,
 } from '@spec-studio/protocol';
-import { DomainError, remapProject } from '@spec-studio/core';
+import { DomainError, remapProject, ungroundedRequirements } from '@spec-studio/core';
 import {
   openSqliteStore,
   SCHEMA_VERSION,
@@ -23,6 +27,7 @@ import {
   type PublishRecordPort,
 } from '@spec-studio/publish';
 import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
+import { createIpcKeychainPort } from './keychain.js';
 
 /**
  * The local daemon: a loopback-only HTTP API in front of the SQLite store.
@@ -93,6 +98,18 @@ export interface DaemonOptions {
   env?: Record<string, string | undefined>;
   /** Injected in tests so the AI routes never leave the machine. */
   aiFetch?: typeof fetch;
+  /**
+   * The OS keychain port. `undefined` auto-detects: a daemon forked as the
+   * desktop's utility process gets one over `process.parentPort`, a standalone
+   * daemon gets `null`. Tests pass a double — or `null` to force "no keychain".
+   */
+  keychain?: CredentialPort | null;
+  /**
+   * Set by the desktop shell: every /api request must then carry this value in
+   * `x-daemon-token`. A browser vouches for its Origin header; a local process
+   * does not — the token is the real gate for the sidecar daemon.
+   */
+  authToken?: string;
 }
 
 export interface Daemon {
@@ -129,9 +146,15 @@ function projectSummary(project: Project): Record<string, unknown> {
     screenCode: project.screen?.code ?? null,
     pins: project.pins.length,
     figmaUrl: project.screen?.figmaUrl ?? null,
-    docTitle: project.doc?.title ?? null,
-    blocks: project.doc?.blocks.length ?? 0,
-    proposalState: project.proposal?.state ?? null,
+    docs: project.docs.map((doc) => ({
+      id: doc.id,
+      title: doc.title,
+      kind: doc.kind,
+      blocks: doc.blocks.length,
+    })),
+    proposalState: project.proposals.at(-1)?.state ?? null,
+    /** F3-3: requirements with no evidence behind them — the spec sidepanel's 미근거 list. */
+    ungroundedReqs: ungroundedRequirements(project).map((node) => node.id),
     graphNodes: project.graph.nodes.length,
     graphLinks: project.graph.links.length,
     graphProposalState: project.graphProposal?.state ?? null,
@@ -253,8 +276,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // Opening the store creates the file; the directory has to exist first.
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
-  const store = options.store ?? openSqliteStore({ file: options.dbPath });
+  const store = options.store ?? openSqliteStore({ file: options.dbPath, actor: 'person:owner' });
   const env = options.env ?? process.env;
+  const keychain = options.keychain === undefined ? createIpcKeychainPort() : options.keychain;
   const backupDir =
     options.backupDir ??
     (options.dbPath === ':memory:' ? `${process.cwd()}/backups` : `${dirname(options.dbPath)}/backups`);
@@ -286,11 +310,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     if (segments[0] !== 'api') throw new HttpError(404, 'not_found', '없는 경로입니다.');
 
+    // Preflight answers above carry no custom headers by design; every real
+    // request below must prove it belongs to this desktop session.
+    if (options.authToken !== undefined) {
+      const presented = req.headers['x-daemon-token'];
+      if (presented !== options.authToken) {
+        throw new HttpError(401, 'daemon_unauthorized', '데몬 세션 토큰이 없거나 일치하지 않습니다.');
+      }
+    }
+
     // GET /api/ai — which providers have a key in the daemon's environment.
     // It answers with booleans: the key itself never leaves the process.
     if (segments[1] === 'ai' && segments.length === 2) {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
-      return send(res, 200, { status: aiStatus(env) });
+      return send(res, 200, { status: await aiStatus(env, keychain) });
     }
 
     // POST /api/ai/test — one small call, for the settings panel's badge.
@@ -299,9 +332,56 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       const body = asObject(await readBody(req));
       const result = await testAiConnection(body, {
         env,
+        keychain,
         ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
       });
       return send(res, 200, { result });
+    }
+
+    // POST /api/ai/keychain/store|erase — the desktop shell's safeStorage, via
+    // IPC. A stored key is write-only: these routes take it in or drop it, and
+    // never hand it back.
+    if (segments[1] === 'ai' && segments[2] === 'keychain' && segments.length === 4) {
+      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      const body = asObject(await readBody(req));
+      if (keychain === null) {
+        throw new HttpError(
+          501,
+          'keychain_unavailable',
+          '키체인은 데스크톱 앱에서만 사용할 수 있습니다. 이 창의 메모리나 환경변수를 쓰세요.',
+        );
+      }
+      if (segments[3] === 'store') {
+        const { presetId, apiKey } = AiKeychainRequestSchema.parse(body);
+        const preset = findPreset(presetId);
+        if (preset === undefined) {
+          throw new HttpError(404, 'preset_unknown', '알 수 없는 프리셋입니다.');
+        }
+        try {
+          await keychain.store?.(preset.provider, presetId, apiKey);
+        } catch (error) {
+          throw new HttpError(
+            503,
+            'keychain_write_failed',
+            `키체인에 저장하지 못했습니다. ${error instanceof Error ? error.message : ''}`.trim(),
+          );
+        }
+        return send(res, 200, { saved: true, presetId });
+      }
+      if (segments[3] === 'erase') {
+        const { presetId } = AiKeychainEraseSchema.parse(body);
+        const preset = findPreset(presetId);
+        if (preset === undefined) {
+          throw new HttpError(404, 'preset_unknown', '알 수 없는 프리셋입니다.');
+        }
+        try {
+          await keychain.erase?.(preset.provider, presetId);
+        } catch {
+          throw new HttpError(503, 'keychain_erase_failed', '키체인에서 삭제하지 못했습니다.');
+        }
+        return send(res, 200, { erased: true, presetId });
+      }
+      throw new HttpError(404, 'not_found', '없는 경로입니다.');
     }
 
     // GET /api/health
@@ -381,6 +461,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       const body = await readBody(req);
       const plan = await planAiProposal(project, body, {
         env,
+        keychain,
         ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
       });
       const outcome = await store.execute(projectId, plan.command);
@@ -479,7 +560,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           pins: project.pins,
           pinSeq: project.pinSeq,
           figmaUrl: figmaUrlOf(project),
-          doc: project.doc,
+          // Publishing prints the spec; research notes stay in the project.
+          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           target: { space },
@@ -504,7 +586,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           pins: project.pins,
           pinSeq: project.pinSeq,
           figmaUrl: figmaUrlOf(project),
-          doc: project.doc,
+          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           overlayPng: decodeOverlay(body.overlayPng),
@@ -533,7 +615,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       typeof origin === 'string' && allowed.has(origin) ? origin : 'null',
     );
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
-    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-allow-headers', 'content-type, x-daemon-token');
     res.setHeader('vary', 'origin');
 
     if (typeof origin === 'string' && !allowed.has(origin)) {

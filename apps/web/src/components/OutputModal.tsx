@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react';
 import { OUTPUT_SPECS, buildSpecOverview, type OutputKind } from '@spec-studio/core';
-import type { Doc, Pin, Screen } from '@spec-studio/protocol';
+import type { Doc, Pin, Project, Screen } from '@spec-studio/protocol';
 import { downloadBlob, downloadMany, formatBytes } from '../model/downloads';
-import { buildOutputSet, type BuiltOutput } from '../model/outputs';
+import {
+  buildOutputSet,
+  buildPackageFiles,
+  packageZipName,
+  type BuiltOutput,
+} from '../model/outputs';
+import { buildZip } from '../model/zip';
 
 interface OutputModalProps {
   screen: Screen;
   pins: readonly Pin[];
   pinSeq: number;
   doc?: Doc | null;
+  /** The package's source of truth — summary, tasks and bundle all read it. */
+  project: Project;
+  /** F4: the export is a ledger entry; the app records it through the command path. */
+  onExportPackage: (files: string[]) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -31,10 +41,31 @@ function localStamp(date = new Date()): string {
  * Preview and download in one place: the three outputs come from one build,
  * so what the preview shows is byte-for-byte what the download writes.
  */
-export function OutputModal({ screen, pins, pinSeq, doc, onClose }: OutputModalProps) {
+export function OutputModal({ screen, pins, pinSeq, doc, project, onExportPackage, onClose }: OutputModalProps) {
   const [files, setFiles] = useState<BuiltOutput[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<OutputKind>('overlay-png');
+  const [packing, setPacking] = useState(false);
+  const [exportedOnce, setExportedOnce] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  // F4: one click → one zip of six files. A repeat asks first, because it
+  // writes the same name again — the spec's 폴더 덮어쓰기 confirmation.
+  const exportPackage = async () => {
+    setPacking(true);
+    setError(null);
+    try {
+      const entries = await buildPackageFiles({ project, screen, pins, pinSeq, doc: doc ?? null });
+      downloadBlob(packageZipName(screen), new Blob([buildZip(entries).buffer as ArrayBuffer], { type: 'application/zip' }));
+      await onExportPackage(entries.map((entry) => entry.name));
+      setExportedOnce(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '패키지를 만들지 못했습니다.');
+    } finally {
+      setPacking(false);
+      setConfirming(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -171,7 +202,40 @@ export function OutputModal({ screen, pins, pinSeq, doc, onClose }: OutputModalP
             >
               3종 한 번에
             </button>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              disabled={packing}
+              onClick={() => {
+                if (exportedOnce) setConfirming(true);
+                else void exportPackage();
+              }}
+              data-testid="package-export"
+            >
+              {packing ? '패키지 만드는 중…' : '전달 패키지 (6종)'}
+            </button>
           </div>
+          {confirming && (
+            <div className="modal-confirm" data-testid="package-confirm">
+              <span>같은 이름으로 다시 내보냅니다. 이전 패키지를 덮어씁니다.</span>
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={() => void exportPackage()}
+                data-testid="package-confirm-submit"
+              >
+                덮어쓰기
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => setConfirming(false)}
+                data-testid="package-confirm-cancel"
+              >
+                취소
+              </button>
+            </div>
+          )}
         </footer>
       </section>
     </div>

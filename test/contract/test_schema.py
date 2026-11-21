@@ -126,7 +126,17 @@ def main() -> int:
         {"created_at", "updated_at"} <= block_columns,
         ", ".join(sorted(block_columns)),
     )
-    record("DDL executes", "schema", objects == 85, f"{objects} objects in sqlite_master")
+    record("DDL executes", "schema", objects == 88, f"{objects} objects in sqlite_master")
+
+    # v15: documents carry a kind, events and ledger rows carry a device (F6).
+    record("doc carries kind and deleted_at", "schema",
+           {"kind", "deleted_at"} <= doc_columns, ", ".join(sorted(doc_columns)))
+    event_columns = {row[1] for row in conn.execute("PRAGMA table_info(event)").fetchall()}
+    record("event carries device_id and uuid", "schema",
+           {"device_id", "uuid"} <= event_columns, ", ".join(sorted(event_columns)))
+    op_log_columns = {row[1] for row in conn.execute("PRAGMA table_info(op_log)").fetchall()}
+    record("op_log carries device_id", "schema",
+           "device_id" in op_log_columns, ", ".join(sorted(op_log_columns)))
 
     # v1: six node types are the existing kinds (req/policy are specnode
     # subtypes, QA is verification), and the seven named links are registered.
@@ -390,6 +400,50 @@ def main() -> int:
         "VALUES('GP_300000000002','PRJ_000000000001','adopted','t','{\"summary\":\"초안\"}')",
     )
 
+    # ── v15: idea · evidence · doc kinds · event identity ────────────────
+    expect_accept(conn, "idea captured",
+        "INSERT INTO obj(id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at) "
+        "VALUES('I_500000000001','idea',NULL,'회의에서 나온 취소 아이디어',NULL,'{}','captured',1,'h-idea','t','t')")
+    expect_accept(conn, "idea promoted",
+        "INSERT INTO obj(id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at) "
+        "VALUES('I_500000000002','idea',NULL,'두 번째 아이디어',NULL,'{}','promoted',1,'h-idea2','t','t')")
+    expect_accept(conn, "evidence dismissed",
+        "INSERT INTO obj(id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at) "
+        "VALUES('E_500000000001','evidence',NULL,'CS 인용 원문',NULL,'{}','dismissed',1,'h-ev','t','t')")
+    obj_insert(conn, "idea with a subtype", kind="idea", subtype="policy", state="captured")
+    obj_insert(conn, "evidence with a subtype", kind="evidence", subtype="capture", state="captured")
+    obj_insert(conn, "idea with a parent", kind="idea", state="captured",
+               parent_id="S_cccccccccccc")
+    obj_insert(conn, "evidence with a parent", kind="evidence", state="captured",
+               parent_id="S_cccccccccccc")
+    obj_insert(conn, "idea state typo", kind="idea", state="active")
+    obj_insert(conn, "evidence state typo", kind="evidence", state="open")
+    expect_accept(conn, "specnode derived_from an idea",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_500000000002','derived_from','N_300000000001','I_500000000001','t')")
+    expect_accept(conn, "pin references an evidence",
+        "INSERT INTO link(id,type,src,dst,created_at) "
+        "VALUES('L_500000000003','references','P_dddddddddddd','E_500000000001','t')")
+    expect_accept(conn, "research document",
+        "INSERT INTO doc(id,project_id,screen_id,title,rev,created_at,updated_at,kind) "
+        "VALUES('D_500000000001','PRJ_000000000001','S_cccccccccccc','리서치 노트',0,'t','t','research')")
+    expect_reject(conn, "doc kind not registered",
+        "INSERT INTO doc(id,project_id,screen_id,title,rev,created_at,updated_at,kind) "
+        "VALUES('D_500000000002','PRJ_000000000001','S_cccccccccccc','이상한 문서',0,'t','t','bogus')")
+    expect_accept(conn, "meta holds the device id",
+        "INSERT INTO meta(key,value) VALUES('device_id','dev_contract01')")
+    expect_reject(conn, "meta device_id is a single row",
+        "INSERT INTO meta(key,value) VALUES('device_id','dev_contract02')")
+    expect_accept(conn, "event stamped with a device",
+        "INSERT INTO event(thread_id,type,payload,at,device_id,uuid) "
+        "VALUES('doc:D_aaaaaaaaaaaa','object.upsert','{}','t','dev_a','u1')")
+    expect_accept(conn, "another device stamps its own event",
+        "INSERT INTO event(thread_id,type,payload,at,device_id,uuid) "
+        "VALUES('doc:D_aaaaaaaaaaaa','object.upsert','{}','t','dev_b','u2')")
+    expect_accept(conn, "legacy NULL device row still coexists",
+        "INSERT INTO event(thread_id,type,payload,at) "
+        "VALUES('doc:D_aaaaaaaaaaaa','object.upsert','{}','t')")
+
     # ── query plans: the indexes the design promises ───────────────────────
     plan_link = " | ".join(r[3] for r in conn.execute(
         "EXPLAIN QUERY PLAN SELECT * FROM link WHERE src='N_bbbbbbbbbbbb'"))
@@ -405,7 +459,8 @@ def main() -> int:
     record("sibling idx uses block_doc", "plan", "block_doc" in plan_block, plan_block)
 
     last_seq = conn.execute("SELECT last_seq FROM thread WHERE id='doc:D_aaaaaaaaaaaa'").fetchone()[0]
-    record("thread.last_seq advances with events", "plan", last_seq == 1, f"last_seq={last_seq}")
+    # 1 seeded event + 3 stamped ones (2 devices + 1 legacy NULL) above.
+    record("thread.last_seq advances with events", "plan", last_seq == 4, f"last_seq={last_seq}")
 
     # ── Korean search: trigram for 3+ syllables, bigram as the fallback ─────
     def bigrams(text: str) -> str:

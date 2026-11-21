@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   BLOCK_TYPES,
   BLOCK_TYPE_LABEL,
@@ -6,6 +6,7 @@ import {
   type Block,
   type BlockType,
   type Doc,
+  type DocKind,
   type Pin,
   type Proposal,
 } from '@spec-studio/protocol';
@@ -13,24 +14,44 @@ import { proseOf, staleForBlock, staleBadges } from '@spec-studio/core';
 
 export type DocMode = 'direct' | 'proposal';
 
+/** What the kind badge says; the schema holds the vocabulary, the panel the words. */
+const DOC_KIND_LABEL: Record<DocKind, string> = { spec: '스펙', research: '리서치' };
+
 export interface RevertableView {
   seq: number;
   at: string;
   summary: string;
   blocks: number;
+  /** The `op_log.kind` the undo would take back (proposal adopts or doc ops). */
+  op: string;
 }
 
 interface DocPanelProps {
   doc: Doc | null;
+  /** The registry; one tab each, the active one is `doc`. */
+  docs: Doc[];
   pins: Pin[];
   proposal: Proposal | null;
   mode: DocMode;
   selectedPinId: string | null;
   focusBlockId: string | null;
   revertable: RevertableView | null;
+  /**
+   * F3-3's research-side warning on the spec view: requirement nodes no
+   * `references` link grounds with evidence. Empty list renders nothing.
+   */
+  ungrounded: Array<{ id: string; title: string }>;
+  /**
+   * The source of the card the last AI request filed, when that card is the
+   * one on the table — doc proposals carry no llm/rule flag of their own.
+   */
+  sourceHint: { proposalId: string; source: 'llm' | 'rule' } | null;
   sqliteMode: boolean;
   busy: boolean;
   onMode: (mode: DocMode) => void;
+  onSwitchDoc: (docId: string) => void;
+  onCreateDoc: (title: string, kind: DocKind) => void;
+  onDeleteDoc: (docId: string) => void;
   onAddBlock: (afterBlockId: string | null) => void;
   onUpdateText: (blockId: string, text: string) => void;
   onChangeType: (blockId: string, type: BlockType) => void;
@@ -45,6 +66,154 @@ interface DocPanelProps {
   onReject: () => void;
   onRevert: () => void;
   onFocusHandled: () => void;
+}
+
+interface DocTabsProps {
+  docs: Doc[];
+  activeDocId: string | null;
+  busy: boolean;
+  revertable: RevertableView | null;
+  onSwitch: (docId: string) => void;
+  onCreate: (title: string, kind: DocKind) => void;
+  onDelete: (docId: string) => void;
+  onRevert: () => void;
+}
+
+/** Doc lifecycle ops the tab bar can hand back to the ledger as an undo. */
+const DOC_UNDO_OPS = new Set(['doc.create', 'doc.update', 'doc.delete']);
+
+/**
+ * One tab per document, plus the two registry moves the bar owns: make a doc,
+ * delete the open one. Delete asks twice — the button arms itself first — so a
+ * stray click cannot drop a document.
+ */
+function DocTabs(props: DocTabsProps) {
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
+  const [kind, setKind] = useState<DocKind>('spec');
+  const [armed, setArmed] = useState(false);
+
+  // An armed delete belongs to the tab it was pressed on, never the next one.
+  useEffect(() => {
+    setArmed(false);
+  }, [props.activeDocId]);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = title.trim();
+    if (trimmed === '') return;
+    props.onCreate(trimmed, kind);
+    setCreating(false);
+    setTitle('');
+    setKind('spec');
+  };
+
+  const removeActive = () => {
+    if (props.activeDocId === null) return;
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setArmed(false);
+    props.onDelete(props.activeDocId);
+  };
+
+  return (
+    <div className="doc-tabs-wrap">
+      <div className="doc-tabs" role="tablist" aria-label="문서" data-testid="doc-tabs">
+        {props.docs.map((doc) => (
+          <button
+            key={doc.id}
+            type="button"
+            role="tab"
+            className={`doc-tab${doc.id === props.activeDocId ? ' is-active' : ''}`}
+            aria-selected={doc.id === props.activeDocId}
+            onClick={() => props.onSwitch(doc.id)}
+            data-testid="doc-tab"
+            data-id={doc.id}
+            data-kind={doc.kind}
+            title={doc.title}
+          >
+            <span className="doc-tab-title">{doc.title}</span>
+            <span className={`doc-kind doc-kind--${doc.kind}`} data-testid="doc-kind">
+              {DOC_KIND_LABEL[doc.kind]}
+            </span>
+          </button>
+        ))}
+        <button
+          type="button"
+          className="doc-tab doc-tab--add"
+          aria-label="문서 추가"
+          title="새 문서"
+          disabled={props.busy}
+          onClick={() => setCreating((open) => !open)}
+          data-testid="doc-create"
+        >
+          +
+        </button>
+        {props.activeDocId !== null && (
+          <button
+            type="button"
+            className={`doc-tab doc-tab--delete${armed ? ' is-armed' : ''}`}
+            aria-label="문서 삭제"
+            title={armed ? '한 번 더 누르면 이 문서를 지웁니다' : '현재 문서 삭제'}
+            disabled={props.busy}
+            onClick={removeActive}
+            data-testid="doc-delete"
+          >
+            {armed ? '삭제?' : '휴지통'}
+          </button>
+        )}
+        {props.revertable !== null &&
+          DOC_UNDO_OPS.has(props.revertable.op) && (
+            <button
+              type="button"
+              className="doc-tab doc-tab--undo"
+              aria-label="문서 작업 되돌리기"
+              title={props.revertable.summary}
+              disabled={props.busy}
+              onClick={props.onRevert}
+              data-testid="doc-undo"
+            >
+              ↩ {props.revertable.summary}
+            </button>
+          )}
+      </div>
+      {creating && (
+        <form className="doc-create-form" onSubmit={submit}>
+          <input
+            className="doc-create-title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="문서 제목"
+            aria-label="문서 제목"
+            autoFocus
+            data-testid="doc-create-title"
+          />
+          <select
+            value={kind}
+            onChange={(event) => setKind(event.target.value as DocKind)}
+            aria-label="문서 종류"
+            data-testid="doc-create-kind"
+          >
+            <option value="spec">스펙</option>
+            <option value="research">리서치</option>
+          </select>
+          <button
+            type="submit"
+            className="btn btn--primary btn--sm"
+            disabled={props.busy || title.trim() === ''}
+            data-testid="doc-create-confirm"
+          >
+            만들기
+          </button>
+          <button type="button" className="btn btn--sm" onClick={() => setCreating(false)}>
+            취소
+          </button>
+        </form>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -76,23 +245,52 @@ export function DocPanel(props: DocPanelProps) {
   if (doc === null) {
     return (
       <aside className="doc-panel" aria-label="문서" data-testid="doc-panel">
-        <div className="panel-head">
-          <span className="panel-title">
-            <h2>문서</h2>
-          </span>
-        </div>
-        <p className="doc-empty">화면을 먼저 등록하면 문서가 함께 열립니다.</p>
+        <DocTabs
+          docs={props.docs}
+          activeDocId={null}
+          busy={props.busy}
+          revertable={props.sqliteMode ? props.revertable : null}
+          onSwitch={props.onSwitchDoc}
+          onCreate={props.onCreateDoc}
+          onDelete={props.onDeleteDoc}
+          onRevert={props.onRevert}
+        />
+        <p className="doc-empty">
+          문서가 없습니다. <b>+</b> 버튼으로 첫 문서를 만들 수 있습니다.
+        </p>
       </aside>
     );
   }
 
   const badges = staleBadges(doc, pins);
   const staleCount = badges.length;
-  const proposalOpen = proposal !== null && proposal.state === 'open';
+  // A proposal belongs to the doc it was filed against; other tabs never see it.
+  const ours = proposal !== null && proposal.docId === doc.id ? proposal : null;
+  const proposalOpen = ours !== null && ours.state === 'open';
   const directEditable = mode === 'direct' && !props.busy;
+  // The honest badge: what the daemon said filed this card wins; the origin
+  // fallback keeps the old meaning (핀 추출 = rule, 그 외 = LLM 문안).
+  const cardSource =
+    ours !== null && props.sourceHint !== null && props.sourceHint.proposalId === ours.id
+      ? props.sourceHint.source
+      : ours?.origin === 'doc-chat'
+        ? 'llm'
+        : 'rule';
+
 
   return (
     <aside className="doc-panel" aria-label="문서" data-testid="doc-panel">
+      <DocTabs
+        docs={props.docs}
+        activeDocId={doc.id}
+        busy={props.busy}
+        revertable={props.sqliteMode ? props.revertable : null}
+        onSwitch={props.onSwitchDoc}
+        onCreate={props.onCreateDoc}
+        onDelete={props.onDeleteDoc}
+        onRevert={props.onRevert}
+      />
+
       <div className="panel-head doc-head">
         <span className="panel-title">
           <h2>{doc.title}</h2>
@@ -106,6 +304,19 @@ export function DocPanel(props: DocPanelProps) {
           </span>
         )}
       </div>
+
+      {doc.kind === 'spec' && props.ungrounded.length > 0 && (
+        <div className="ungrounded-note" data-testid="req-ungrounded">
+          <p className="ungrounded-count">근거 없는 요구사항 {props.ungrounded.length}건</p>
+          <ul>
+            {props.ungrounded.map((req) => (
+              <li key={req.id} title={req.title}>
+                {req.title}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="doc-mode" role="group" aria-label="편집 계층">
         <button
@@ -191,23 +402,23 @@ export function DocPanel(props: DocPanelProps) {
             <p className="proposal-eyebrow">
               제안 1건 · 결정 카드 1개
               <span
-                className={`decision-source decision-source--${proposal.origin === 'doc-chat' ? 'llm' : 'rule'}`}
+                className={`decision-source decision-source--${cardSource}`}
                 data-testid="proposal-source"
-                data-source={proposal.origin === 'doc-chat' ? 'llm' : 'rule'}
+                data-source={cardSource}
                 title={
-                  proposal.origin === 'doc-chat'
+                  cardSource === 'llm'
                     ? '모델이 쓴 문단 patch입니다. 채택 전까지 본문은 그대로입니다.'
                     : '로컬 규칙이 만든 문단 patch입니다.'
                 }
               >
-                {proposal.origin === 'doc-chat' ? 'LLM 제안' : '로컬 규칙'}
+                {cardSource === 'llm' ? 'LLM 제안' : '로컬 규칙'}
               </span>
             </p>
             <p className="proposal-summary" data-testid="proposal-summary">
-              {proposal.summary}
+              {ours.summary}
             </p>
             <ul className="proposal-patches">
-              {proposal.patches.map((patch) => (
+              {ours.patches.map((patch) => (
                 <li key={patch.blockId} data-testid="proposal-patch">
                   <span className={`patch-kind patch-kind--${patch.before === null ? 'add' : 'edit'}`}>
                     {patch.before === null ? '추가' : '수정'}
@@ -243,10 +454,10 @@ export function DocPanel(props: DocPanelProps) {
           </section>
         )}
 
-        {proposal !== null && proposal.state === 'adopted' && revertable !== null && (
+        {ours !== null && ours.state === 'adopted' && revertable !== null && (
           <div className="adopted-bar" data-testid="adopted-bar">
             <span className="adopted-text">
-              채택됨 · {truncate(proposal.summary, 48)}
+              채택됨 · {truncate(ours.summary, 48)}
               {props.sqliteMode ? '' : ' (데몬 연결 시 되돌리기 가능)'}
             </span>
             <button
@@ -262,7 +473,7 @@ export function DocPanel(props: DocPanelProps) {
           </div>
         )}
 
-        {proposal !== null && proposal.state === 'rejected' && revertable === null && (
+        {ours !== null && ours.state === 'rejected' && revertable === null && (
           <p className="doc-note" data-testid="reverted-note">
             마지막 제안은 채택되지 않았거나 되돌려졌습니다. 문단은 채택 이전 상태입니다.
           </p>

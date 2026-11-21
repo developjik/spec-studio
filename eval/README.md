@@ -51,6 +51,22 @@ Every case is built by the same commands the app sends (`screen.attach`, `pin.cr
 proposal goes through `execute(project, { type: 'graph.proposal.create', … })` — the daemon's own
 path — so a draft that would be rejected in the app is rejected here too.
 
+## The brief set (E1 §7-B-3)
+
+`golden/brief.json` — ten research-brief cases after the golden thirty: five where every evidence
+claim is backed, three with no evidence at all, two mixed. A case seeds a real board through the
+same commands the app sends (`idea.capture`, `evidence.capture` — fixture-set `E_…` ids included),
+then grades the draft `buildFallbackBrief` (mock) or `requestBriefDraft` (live) produces:
+
+| Metric | Meaning | Threshold |
+| --- | --- | --- |
+| 인용 정확성 | claims whose `evidenceRefs` are all provided ids — hallucinated citations are 0 | 100% |
+| 마커 정확도 | cases where every claim is marked `ungrounded` exactly when it has no refs, and the grounded/ungrounded counts match `expect` | ≥ 90% |
+
+The fallback is the same function the daemon's `mode: 'brief'` local plan uses, so the '로컬 규칙
+폴백' badge and this gate defend one implementation. The two gates fold into the same PASS/FAIL
+line; the golden-30 thresholds are untouched.
+
 ## What mock mode measures
 
 Mock mode is the rule extractor that ships as the fallback: a policy pin becomes a policy, a data

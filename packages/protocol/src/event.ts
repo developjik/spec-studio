@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockSchema, DocIdSchema, DocSchema, ProposalIdSchema } from './doc';
+import { EvidenceSchema } from './evidence';
 import { GraphLinkSchema, GraphNodeSchema, GraphProposalSchema } from './graph';
+import { IdeaSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
@@ -32,7 +34,18 @@ export const EventSchema = z.discriminatedUnion('type', [
     number: z.number().int().min(1),
   }),
 
+  // ── idea inbox · research board (E1 §4 F2·F3) ────────────────────────
+  z.object({ type: z.literal('idea.captured'), idea: IdeaSchema }),
+  z.object({ type: z.literal('idea.updated'), idea: IdeaSchema }),
+  z.object({ type: z.literal('idea.archived'), idea: IdeaSchema }),
+  z.object({ type: z.literal('evidence.captured'), evidence: EvidenceSchema }),
+  z.object({ type: z.literal('evidence.updated'), evidence: EvidenceSchema }),
+  z.object({ type: z.literal('evidence.dismissed'), evidence: EvidenceSchema }),
+
   z.object({ type: z.literal('doc.attached'), doc: DocSchema }),
+  z.object({ type: z.literal('doc.created'), doc: DocSchema }),
+  z.object({ type: z.literal('doc.renamed'), docId: DocIdSchema, title: z.string().min(1) }),
+  z.object({ type: z.literal('doc.deleted'), docId: DocIdSchema }),
   z.object({ type: z.literal('block.created'), block: BlockSchema }),
   z.object({ type: z.literal('block.updated'), block: BlockSchema }),
   z.object({ type: z.literal('block.deleted'), docId: DocIdSchema, blockId: BlockIdSchema }),
@@ -78,6 +91,14 @@ export const EventSchema = z.discriminatedUnion('type', [
     /** The `op_log.seq` this revert restored. */
     revertedSeq: z.number().int().min(1),
     blocks: z.number().int().min(0),
+  }),
+  /**
+   * F4: a handoff package left the project. The state does not change — the
+   * event is the record that six files went out, and `files` names them.
+   */
+  z.object({
+    type: z.literal('package.exported'),
+    files: z.array(z.string().min(1).max(120)).min(1).max(16),
   }),
 
   // ── object graph (v1) ─────────────────────────────────────────────────

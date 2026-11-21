@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc, Pin, Project, Screen } from '@spec-studio/protocol';
 import {
+  buildSpecSummaryMd,
+  buildTasksMd,
   QA_CSV_COLUMNS,
   buildOverlayMarkers,
   buildQaCsv,
@@ -354,6 +356,7 @@ describe('the static HTML carries the document (W4)', () => {
     id: `D_${'d'.repeat(12)}`,
     title: '주문 상세 문서',
     rev: 2,
+    kind: 'spec',
     blocks: [
       {
         id: `B_${'b'.repeat(12)}`,
@@ -366,6 +369,7 @@ describe('the static HTML carries the document (W4)', () => {
     ],
     createdAt: AT,
     updatedAt: AT,
+    deletedAt: null,
   };
 
   it('prints the paragraph, its pin and the stale mark without an app', () => {
@@ -383,5 +387,112 @@ describe('the static HTML carries the document (W4)', () => {
     const withOut = renderStaticHtml({ screen, pins, generatedAt: AT });
     expect(withOut).not.toContain('주문 상세 문서');
     expect(withOut).toContain('화면설계서');
+  });
+});
+
+describe('the handoff package files (F4)', () => {
+  function packageContext(): ExecuteContext {
+    let n = 0;
+    const next = () => String(++n).padStart(12, '0');
+    return {
+      at: AT,
+      nextId: (kind, nodeType) => {
+        const suffix = next();
+        switch (kind) {
+          case 'screen':
+            return screen.id;
+          case 'pin':
+            return `P_${suffix}`;
+          case 'node':
+            return nodeType === 'contract' ? `C_${suffix}` : nodeType === 'qa' ? `V_${suffix}` : `N_${suffix}`;
+          case 'link':
+            return `L_${suffix}`;
+          case 'evidence':
+            return `E_${suffix}`;
+          default:
+            return `X_${suffix}`;
+        }
+      },
+    };
+  }
+
+  function packageProject(): Project {
+    const ctx = packageContext();
+    let project = createProject({ id: 'PRJ_abcdefghijkl', name: '주문 상세', at: AT });
+    project = execute(project, { type: 'screen.attach', screen }, ctx).project;
+    for (const p of pins) {
+      project = execute(
+        project,
+        { type: 'pin.create', screenId: screen.id, pinType: p.type, title: p.title, body: p.body, anchor: p.anchor },
+        ctx,
+      ).project;
+    }
+    project = execute(project, { type: 'node.create', nodeType: 'req', title: '취소 요청 흐름', body: '배송 전 취소' }, ctx).project;
+    project = execute(project, { type: 'node.create', nodeType: 'policy', title: '취소 정책', body: '' }, ctx).project;
+    project = execute(
+      project,
+      {
+        type: 'evidence.capture',
+        url: 'https://example.com/policy',
+        title: '취소 정책 원문',
+        excerpt: '배송 시작 전에는 무료 취소가 가능하다.',
+        evidenceType: 'web',
+      },
+      ctx,
+    ).project;
+    const reqId = project.graph.nodes.find((node) => node.type === 'req')!.id;
+    const evidenceId = project.evidence[0]!.id;
+    project = execute(project, { type: 'link.create', linkType: 'references', src: reqId, dst: evidenceId }, ctx).project;
+    return project;
+  }
+
+  it('summarises screen, pins, graph nodes and grounding in one markdown', () => {
+    const md = buildSpecSummaryMd({ project: packageProject(), generatedAt: AT });
+    expect(md).toContain('# 스펙 요약 — 주문 상세');
+    expect(md).toContain('SCR-110');
+    expect(md).toContain('취소 요청 버튼');
+    expect(md).toContain('취소 요청 흐름');
+    expect(md).toContain('취소 정책');
+    expect(md.endsWith('\n')).toBe(true);
+  });
+
+  it('writes one checkbox per requirement and policy, numbered T001', () => {
+    const md = buildTasksMd({ project: packageProject(), generatedAt: AT });
+    expect(md).toContain('- [ ] T001 [req] 취소 요청 흐름');
+    expect(md).toContain('- [ ] T002 [policy] 취소 정책');
+    // the req cites the captured evidence, so the task carries its source
+    expect(md).toContain('근거: 취소 정책 원문');
+  });
+
+  it('marks a requirement with no evidence link instead of guessing', () => {
+    const ctx = packageContext();
+    let project = packageProject();
+    project = execute(project, { type: 'node.create', nodeType: 'req', title: '환불 규칙', body: '' }, ctx).project;
+    const md = buildTasksMd({ project, generatedAt: AT });
+    expect(md).toContain('- [ ] T002 [req] 환불 규칙');
+    expect(md).toContain('근거 없음');
+  });
+
+  it('is deterministic — the same state writes the same markdown', () => {
+    const project = packageProject();
+    expect(buildSpecSummaryMd({ project, generatedAt: AT })).toBe(
+      buildSpecSummaryMd({ project, generatedAt: AT }),
+    );
+    expect(buildTasksMd({ project, generatedAt: AT })).toBe(
+      buildTasksMd({ project, generatedAt: AT }),
+    );
+  });
+
+  it('records the export as an event and leaves the project untouched', () => {
+    const project = packageProject();
+    const result = execute(
+      project,
+      { type: 'project.package.export', files: ['spec-summary.md', 'tasks.md'] },
+      packageContext(),
+    );
+    expect(result.project).toBe(project);
+    expect(result.events).toEqual([
+      { type: 'package.exported', files: ['spec-summary.md', 'tasks.md'] },
+    ]);
   });
 });

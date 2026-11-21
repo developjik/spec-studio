@@ -3,6 +3,7 @@ import type {
   AiProposalMode,
   AiProposalSource,
   Command,
+  CredentialSource,
   Project,
   ProjectBundle,
 } from '@spec-studio/protocol';
@@ -13,19 +14,55 @@ import type {
  * read and write in SQLite mode passes through here.
  */
 
+/** What the desktop preload injects; absent when this same build runs in a browser. */
+export interface DesktopBridge {
+  readonly daemonUrl: string;
+  readonly daemonToken: string;
+  readonly desktopVersion: string;
+}
+
+/**
+ * The desktop shell's surface: daemon facts at boot, plus the F2 quick-capture
+ * ping. Both are optional at the call site — the same bundle treats absence of
+ * `window.specstudio` as "plain browser" and changes nothing else.
+ */
+declare global {
+  interface Window {
+    specstudio?: {
+      getDaemonInfo(): DesktopBridge | null;
+      onQuickCapture?(callback: () => void): () => void;
+    };
+  }
+}
+
+const desktop = window.specstudio?.getDaemonInfo();
+
 export const DAEMON_URL: string =
-  (import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787';
+  desktop?.daemonUrl ??
+  ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787');
+
+/** The desktop shell's one-shot session token; null in every browser context. */
+const DAEMON_TOKEN: string | null = desktop?.daemonToken ?? null;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/** The headers every request to a token-gated daemon carries. */
+function daemonHeaders(json: boolean): Record<string, string> {
+  const headers: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
+  if (DAEMON_TOKEN !== null) headers['x-daemon-token'] = DAEMON_TOKEN;
+  return headers;
+}
 
 /**
  * The loopback daemon can only answer a page served from the same machine.
  * On a static public host (the GitHub Pages demo) there is none, and an https
  * page asking `http://127.0.0.1` is refused as mixed content — so the probe is
  * skipped there and the app opens straight into browser mode with no failed
- * request on the console. An explicitly configured daemon URL is always tried.
+ * request on the console. The desktop preload (app:// origin, random port) and
+ * an explicitly configured daemon URL are always tried.
  */
 export function daemonProbeAllowed(): boolean {
+  if (desktop !== undefined) return true;
   if ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) !== undefined) return true;
   return LOOPBACK_HOSTS.has(window.location.hostname);
 }
@@ -40,8 +77,8 @@ export interface DaemonProjectSummary {
   screenCode: string | null;
   pins: number;
   figmaUrl: string | null;
-  docTitle: string | null;
-  blocks: number;
+  /** The doc registry, compactly: one row per live document (W3/F5). */
+  docs: Array<{ id: string; title: string; kind: string; blocks: number }>;
   proposalState: string | null;
   graphNodes: number;
   graphLinks: number;
@@ -56,6 +93,8 @@ export interface RevertableView {
   proposalId: string | null;
   blocks: number;
   kind: 'doc' | 'graph';
+  /** The `op_log.kind` the undo targets — proposal adopts or doc lifecycle ops. */
+  op: string;
   nodes: number;
 }
 
@@ -113,6 +152,8 @@ export type PublishModeView = 'auto' | 'create' | 'update';
 /** What the AI settings panel sends; the key lives in this object and nowhere else. */
 export interface AiRequestView {
   provider: AiProvider;
+  /** Which gateway preset the request is aimed at ('local' when rule mode). */
+  presetId: string;
   model: string;
   endpoint: string | null;
   apiKey: string;
@@ -128,6 +169,10 @@ export interface AiProviderStatusView {
 export interface AiStatusView {
   providers: AiProviderStatusView[];
   localAvailable: boolean;
+  /** Whether this daemon can reach an OS keychain (desktop app only). */
+  keychainAvailable: boolean;
+  /** Per preset: a key sits in the keychain — booleans only, like hasEnvKey. */
+  presets: Array<{ id: string; hasKeychainKey: boolean }>;
 }
 
 export interface AiTestResultView {
@@ -136,6 +181,8 @@ export interface AiTestResultView {
   model: string;
   latencyMs: number;
   message: string;
+  /** Which chain step supplied the key; null for local rules. */
+  source?: CredentialSource | null;
 }
 
 export interface AiProposalOutcomeView {
@@ -173,6 +220,7 @@ export class DaemonClient {
   async health(timeoutMs = 1600): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl}/api/health`, {
+        headers: daemonHeaders(false),
         signal: AbortSignal.timeout(timeoutMs),
       });
       return response.ok;
@@ -264,6 +312,7 @@ export class DaemonClient {
       method: 'POST',
       body: {
         provider: input.provider,
+        presetId: input.presetId,
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,
@@ -273,22 +322,55 @@ export class DaemonClient {
   }
 
   /**
+   * Moves a key into the OS keychain via the daemon (desktop only). The answer
+   * is a boolean — a stored key is write-only and never comes back over HTTP.
+   */
+  async aiKeychainStore(input: { presetId: string; apiKey: string }): Promise<void> {
+    await this.#request<{ saved: boolean }>('/api/ai/keychain/store', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  async aiKeychainErase(input: { presetId: string }): Promise<void> {
+    await this.#request<{ erased: boolean }>('/api/ai/keychain/erase', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
+  /**
    * Asks the daemon for a proposal. The answer is the project *after* the card
    * was filed, so the screen and the card can never disagree about what is on
-   * the table.
+   * the table. `brief` also names the idea and the evidence it should cite.
    */
   async aiProposal(
     projectId: string,
-    input: AiRequestView & { mode: AiProposalMode },
+    input: AiRequestView & {
+      mode: AiProposalMode;
+      docId?: string | null;
+      ideaId?: string | null;
+      evidenceIds?: string[];
+      topic?: string;
+    },
   ): Promise<AiProposalOutcomeView> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}/ai/proposal`, {
       method: 'POST',
       body: {
         mode: input.mode,
         provider: input.provider,
+        presetId: input.presetId,
         model: input.model,
         endpoint: input.endpoint,
         apiKey: input.apiKey,
+        // Which registry doc a `doc`/`brief` proposal edits; absent leaves
+        // the daemon to pick the first spec (doc) or research (brief) doc.
+        ...(input.docId == null ? {} : { docId: input.docId }),
+        // F3-2: the brief's inputs ride the same request; omitted means the
+        // daemon falls back to its own defaults.
+        ...(input.ideaId == null ? {} : { ideaId: input.ideaId }),
+        ...(input.evidenceIds === undefined ? {} : { evidenceIds: input.evidenceIds }),
+        ...(input.topic === undefined || input.topic === '' ? {} : { topic: input.topic }),
       },
     });
   }
@@ -334,7 +416,7 @@ export class DaemonClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
-        headers: { 'content-type': 'application/json' },
+        headers: daemonHeaders(true),
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
         signal: AbortSignal.timeout(60_000),
       });

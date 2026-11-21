@@ -2,24 +2,34 @@ import {
   AI_DEFAULT_ENDPOINTS,
   AI_DEFAULT_MODELS,
   AI_ENV_KEYS,
+  AI_PRESETS,
   AI_PROVIDERS,
   AiProposalRequestSchema,
+  findPreset,
+  type AiProposalMode,
+  type AiPreset,
   type AiProvider,
   type AiProposalRequest,
   type AiProposalSource,
   type AiStatus,
   type AiTestResult,
   type Command,
+  type CredentialPort,
+  type CredentialSource,
+  type Doc,
   type Project,
   type Project as ProjectType,
 } from '@spec-studio/protocol';
+
 import {
   AiDraftError,
   AiProviderError,
+  buildFallbackBrief,
   hasEnvKey,
   isOfficialEndpoint,
   isRemote,
   probeProvider,
+  requestBriefDraft,
   requestDocDraft,
   requestGraphDraft,
   resolveApiKey,
@@ -52,6 +62,8 @@ export class AiRequestError extends Error {
 export interface AiRuntime {
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
+  /** The OS keychain port; null when this daemon has none (standalone, web). */
+  keychain?: CredentialPort | null;
 }
 
 export interface AiCommandPlan {
@@ -62,7 +74,21 @@ export interface AiCommandPlan {
   note: string;
 }
 
-export function aiStatus(env: Record<string, string | undefined>): AiStatus {
+export async function aiStatus(
+  env: Record<string, string | undefined>,
+  keychain: CredentialPort | null,
+): Promise<AiStatus> {
+  const presets = await Promise.all(
+    AI_PRESETS.map(async (preset) => {
+      try {
+        const key = keychain === null ? null : await keychain.resolve(preset.provider, preset.id);
+        return { id: preset.id, hasKeychainKey: key !== null };
+      } catch {
+        // A broken keychain must not fail the status route — report "no key".
+        return { id: preset.id, hasKeychainKey: false };
+      }
+    }),
+  );
   return {
     providers: AI_PROVIDERS.map((provider) => ({
       provider,
@@ -72,39 +98,84 @@ export function aiStatus(env: Record<string, string | undefined>): AiStatus {
       defaultEndpoint: provider === 'local' ? null : AI_DEFAULT_ENDPOINTS[provider],
     })),
     localAvailable: true,
+    keychainAvailable: keychain !== null,
+    presets,
   };
 }
 
-function requireApiKey(
+async function requireApiKey(
   provider: AiProvider,
+  presetId: string | undefined,
   requestKey: string | null | undefined,
-  env: AiRuntime['env'],
+  runtime: AiRuntime,
   endpoint: string | null,
-): string | null {
-  return resolveApiKey(provider, requestKey, env, endpoint);
+): Promise<{ key: string | null; source: CredentialSource | null }> {
+  return resolveApiKey(provider, presetId, requestKey, runtime.env, runtime.keychain ?? null, endpoint);
+}
+
+/**
+ * A preset without a default model (Ollama, LM Studio) wants the name typed
+ * in; only a bare provider keeps the built-in default.
+ */
+function defaultModelFor(provider: AiProvider, preset: AiPreset | undefined): string {
+  if (preset === undefined) return AI_DEFAULT_MODELS[provider];
+  return preset.defaultModel ?? '';
+}
+
+/**
+ * Which document a proposal targets. `brief` runs on a research doc — the
+ * first one when the request does not name one — because a brief *is*
+ * research prose; `doc`/default keep the first spec. One registry, one
+ * failure code.
+ */
+function resolveDoc(project: Project, docId: string | undefined, mode: AiProposalMode): Doc {
+  const doc =
+    docId !== undefined
+      ? project.docs.find((candidate) => candidate.id === docId)
+      : mode === 'brief'
+        ? project.docs.find((candidate) => candidate.kind === 'research')
+        : (project.docs.find((candidate) => candidate.kind === 'spec') ?? project.docs[0]);
+  if (doc === undefined) {
+    throw new DomainError(
+      'doc_missing',
+      mode === 'brief'
+        ? '리서치 문서를 먼저 만들어 주세요'
+        : '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.',
+    );
+  }
+  return doc;
 }
 
 /**
  * The one case `resolveApiKey` answers `null` for and the user did not cause:
- * the daemon has a key, but this request pointed the call at another host.
- * Saying so is better than silently answering from local rules — the person who
- * typed that endpoint should learn that it cannot hold the environment key.
+ * the daemon holds a key — in its environment or in the OS keychain — but this
+ * request pointed the call at another host. Saying so is better than silently
+ * answering from local rules — the person who typed that endpoint should learn
+ * that it cannot hold a daemon-stored key.
  */
-function envKeyBlockedByEndpoint(
+async function daemonKeyBlockedByEndpoint(
   provider: AiProvider,
+  presetId: string | undefined,
   requestKey: string | null | undefined,
-  env: AiRuntime['env'],
+  runtime: AiRuntime,
   endpoint: string | null,
-): boolean {
+): Promise<boolean> {
   if ((requestKey ?? '').trim() !== '') return false;
   if (endpoint === null || endpoint.trim() === '') return false;
   if (!isRemote(provider)) return false;
-  if (!hasEnvKey(provider, env)) return false;
-  return !isOfficialEndpoint(provider, endpoint);
+  if (isOfficialEndpoint(provider, endpoint)) return false;
+  if (hasEnvKey(provider, runtime.env)) return true;
+  try {
+    const held = await runtime.keychain?.resolve(provider, presetId ?? '');
+    if (held != null && held !== '') return true;
+  } catch {
+    // An unavailable keychain never blocks the request.
+  }
+  return false;
 }
 
 const ENDPOINT_KEY_REQUIRED_MESSAGE =
-  '사용자 지정 Endpoint에는 직접 입력한 API 키가 필요합니다. 데몬 환경변수 키는 프로바이더 공식 주소에만 쓰입니다.';
+  '사용자 지정 Endpoint에는 직접 입력한 API 키가 필요합니다. 데몬이 보관한 키(환경변수 · 키체인)는 프로바이더 공식 주소에만 쓰입니다.';
 
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
@@ -116,10 +187,24 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
       note: why,
     };
   }
-  const doc = project.doc;
-  if (doc === null || (request.docId !== undefined && doc.id !== request.docId)) {
-    throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
+  if (request.mode === 'brief') {
+    // The fallback brief is the same function eval gates; the card carries
+    // its draft so core's evidence check runs for rules too.
+    const doc = resolveDoc(project, request.docId, 'brief');
+    const draft = buildFallbackBrief(project, {
+      ideaId: request.ideaId ?? null,
+      topic: request.topic ?? null,
+      evidenceIds: request.evidenceIds ?? null,
+    });
+    return {
+      command: { type: 'proposal.create', docId: doc.id, draft, source: 'rule' },
+      source: 'rule',
+      provider: 'local',
+      model: '',
+      note: why,
+    };
   }
+  const doc = resolveDoc(project, request.docId, 'doc');
   return {
     command: { type: 'proposal.create', docId: doc.id },
     source: 'rule',
@@ -136,29 +221,45 @@ export async function planAiProposal(
   runtime: AiRuntime,
 ): Promise<AiCommandPlan> {
   const request = AiProposalRequestSchema.parse(raw);
+  const preset = findPreset(request.presetId ?? '');
   const model =
-    request.model.trim() === '' ? AI_DEFAULT_MODELS[request.provider] : request.model.trim();
+    request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
+  const endpoint = request.endpoint ?? preset?.baseUrl ?? null;
 
   if (!isRemote(request.provider)) {
     return localPlan(project, request, '로컬 규칙으로 만들었습니다. API 키는 쓰지 않았습니다.');
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env, request.endpoint ?? null);
-  if (apiKey === null) {
-    if (envKeyBlockedByEndpoint(request.provider, request.apiKey, runtime.env, request.endpoint ?? null)) {
-      throw new AiRequestError(400, 'endpoint_key_required', ENDPOINT_KEY_REQUIRED_MESSAGE);
+  let apiKey: string;
+  if (preset?.authMode === 'none') {
+    // A local model server asks for no key; callModel just sends an empty Bearer.
+    apiKey = '';
+  } else {
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime, endpoint);
+    if (resolved.key === null) {
+      if (
+        await daemonKeyBlockedByEndpoint(
+          request.provider,
+          request.presetId,
+          request.apiKey,
+          runtime,
+          endpoint,
+        )
+      ) {
+        throw new AiRequestError(400, 'endpoint_key_required', ENDPOINT_KEY_REQUIRED_MESSAGE);
+      }
+      return localPlan(
+        project,
+        request,
+        'API 키가 없어 로컬 규칙으로 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.',
+      );
     }
-    return localPlan(
-      project,
-      request,
-      'API 키가 없어 로컬 규칙으로 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.',
-    );
+    apiKey = resolved.key;
   }
   if (model === '') {
     throw new AiRequestError(400, 'model_required', '모델 이름을 입력해 주세요.');
   }
 
-  const endpoint = request.endpoint ?? null;
   try {
     if (request.mode === 'graph') {
       const { draft, latencyMs } = await requestGraphDraft({
@@ -184,10 +285,38 @@ export async function planAiProposal(
       };
     }
 
-    const doc = project.doc;
-    if (doc === null || (request.docId !== undefined && doc.id !== request.docId)) {
-      throw new DomainError('doc_missing', '제안할 문서가 없습니다. 먼저 문서를 만들어 주세요.');
+    if (request.mode === 'brief') {
+      const doc = resolveDoc(project, request.docId, 'brief');
+      const { draft, latencyMs } = await requestBriefDraft({
+        provider: request.provider,
+        apiKey,
+        model,
+        endpoint,
+        project,
+        brief: {
+          ideaId: request.ideaId ?? null,
+          topic: request.topic ?? null,
+          evidenceIds: request.evidenceIds ?? null,
+        },
+        ...(runtime.fetchImpl === undefined ? {} : { fetchImpl: runtime.fetchImpl }),
+      });
+      return {
+        command: {
+          type: 'proposal.create',
+          docId: doc.id,
+          draft,
+          source: 'llm',
+          provider: request.provider,
+          model,
+        },
+        source: 'llm',
+        provider: request.provider,
+        model,
+        note: `LLM이 브리프 주장 ${draft.claims.length}개를 만들었습니다 (${latencyMs}ms).`,
+      };
     }
+
+    const doc = resolveDoc(project, request.docId, 'doc');
     const { draft, latencyMs } = await requestDocDraft({
       provider: request.provider,
       apiKey,
@@ -240,9 +369,12 @@ export async function testAiConnection(
     model: true,
     endpoint: true,
     apiKey: true,
+    presetId: true,
   }).parse(raw);
+  const preset = findPreset(request.presetId ?? '');
   const model =
-    request.model.trim() === '' ? AI_DEFAULT_MODELS[request.provider] : request.model.trim();
+    request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
+  const endpoint = request.endpoint ?? preset?.baseUrl ?? null;
 
   if (!isRemote(request.provider)) {
     return {
@@ -251,34 +383,47 @@ export async function testAiConnection(
       model: '',
       latencyMs: 0,
       message: '로컬 규칙 모드입니다. 키 없이 바로 쓸 수 있습니다.',
+      source: null,
     };
   }
 
-  const apiKey = requireApiKey(request.provider, request.apiKey, runtime.env, request.endpoint ?? null);
-  if (apiKey === null) {
-    if (envKeyBlockedByEndpoint(request.provider, request.apiKey, runtime.env, request.endpoint ?? null)) {
+  let apiKey: string;
+  let source: CredentialSource | null;
+  if (preset?.authMode === 'none') {
+    // Local server: no key by design — probe with an empty Bearer.
+    apiKey = '';
+    source = null;
+  } else {
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime, endpoint);
+    if (resolved.key === null) {
       return {
         ok: false,
         provider: request.provider,
         model,
         latencyMs: 0,
-        message: ENDPOINT_KEY_REQUIRED_MESSAGE,
+        message: (
+          await daemonKeyBlockedByEndpoint(
+            request.provider,
+            request.presetId,
+            request.apiKey,
+            runtime,
+            endpoint,
+          )
+        )
+          ? ENDPOINT_KEY_REQUIRED_MESSAGE
+          : 'API 키가 없습니다. 키를 입력하거나 데몬 환경변수를 설정해 주세요.',
+        source: null,
       };
     }
-    return {
-      ok: false,
-      provider: request.provider,
-      model,
-      latencyMs: 0,
-      message: 'API 키가 없습니다. 키를 입력하거나 데몬 환경변수를 설정해 주세요.',
-    };
+    apiKey = resolved.key;
+    source = resolved.source;
   }
 
   const probe = await probeProvider({
     provider: request.provider,
     apiKey,
     model,
-    endpoint: request.endpoint ?? null,
+    endpoint,
     ...(runtime.fetchImpl === undefined ? {} : { fetchImpl: runtime.fetchImpl }),
   });
   return {
@@ -287,5 +432,6 @@ export async function testAiConnection(
     model,
     latencyMs: probe.latencyMs,
     message: probe.message.slice(0, 300),
+    source,
   };
 }

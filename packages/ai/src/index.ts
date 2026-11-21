@@ -1,7 +1,20 @@
-import { AI_DEFAULT_ENDPOINTS, AI_ENV_KEYS, type AiProvider, type AiRemoteProvider } from '@spec-studio/protocol';
+import {
+  AI_DEFAULT_ENDPOINTS,
+  AI_ENV_KEYS,
+  type AiProvider,
+  type AiRemoteProvider,
+  type CredentialPort,
+  type CredentialSource,
+} from '@spec-studio/protocol';
 import { AiProviderError, callModel, redact } from './providers.js';
-import { buildDocPrompt, buildGraphPrompt, buildProbePrompt, buildSystemPrompt } from './prompt.js';
-import { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+import { buildBriefPrompt, buildDocPrompt, buildGraphPrompt, buildProbePrompt, buildSystemPrompt } from './prompt.js';
+import { AiDraftError, extractJsonObject, parseBriefDraft, parseDocDraft, parseGraphDraft } from './parse.js';
+import type { BriefInput } from './brief.js';
+import {
+  EnvCredentialPort,
+  RequestCredentialPort,
+  resolveCredentials,
+} from './credentials.js';
 
 export {
   AiProviderError,
@@ -12,16 +25,26 @@ export {
   type ModelCallResult,
 } from './providers.js';
 export {
+  buildBriefPrompt,
   buildDocPrompt,
   buildGraphPrompt,
   buildProbePrompt,
   buildSystemPrompt,
 } from './prompt.js';
-export { AiDraftError, extractJsonObject, parseDocDraft, parseGraphDraft } from './parse.js';
+export {
+  AiDraftError,
+  extractJsonObject,
+  parseBriefDraft,
+  parseDocDraft,
+  parseGraphDraft,
+} from './parse.js';
+export { buildFallbackBrief, selectedEvidence, BRIEF_MAX_EVIDENCE, type BriefInput } from './brief.js';
+export { EnvCredentialPort, RequestCredentialPort, resolveCredentials } from './credentials.js';
+export type { CredentialPort, CredentialSource } from '@spec-studio/protocol';
 
 /**
- * Whether `endpoint` is the provider's own host, which is the only place the
- * daemon's environment key may be spent.
+ * Whether `endpoint` is the provider's own host, which is the only place a
+ * key the daemon holds may be spent.
  *
  * An empty endpoint means "the default", so it counts as official. A custom
  * endpoint does not: a request body is attacker-shaped input when a page on any
@@ -46,24 +69,36 @@ export function isOfficialEndpoint(
 }
 
 /**
- * The key a request will use: the one in the body first, then the daemon's
- * environment — but the environment key only against the provider's own host.
- * Nothing else: no file, no database row, no settings screen that survives a
- * reload. `null` means "no key this request may use", which is the honest
- * answer the UI needs to offer the local rule extractor instead.
+ * The key a request will use: the one in the body first, then the OS keychain
+ * (when the daemon has one), then the daemon's environment — but a key the
+ * daemon holds (keychain or environment) is spent only on the provider's own
+ * host, for the reason `isOfficialEndpoint` states. Nothing else — no file, no
+ * database row, no settings screen that survives a reload. `null` means "no
+ * key anywhere", which is the honest answer the UI needs to offer the local
+ * rule extractor instead. `local` never has a key.
  */
-export function resolveApiKey(
+export async function resolveApiKey(
   provider: AiProvider,
+  presetId: string | undefined,
   requestKey: string | null | undefined,
   env: Record<string, string | undefined>,
+  keychain?: CredentialPort | null,
   endpoint: string | null | undefined = null,
-): string | null {
-  if (provider === 'local') return null;
-  const trimmed = (requestKey ?? '').trim();
-  if (trimmed !== '') return trimmed;
-  if (!isOfficialEndpoint(provider, endpoint)) return null;
-  const fromEnv = (env[AI_ENV_KEYS[provider]] ?? '').trim();
-  return fromEnv === '' ? null : fromEnv;
+): Promise<{ key: string | null; source: CredentialSource | null }> {
+  if (!isRemote(provider)) return { key: null, source: null };
+  // Daemon-held keys — the OS keychain and the environment — are spent only
+  // on the provider's own host; a key the request carried is the requester's
+  // own and may go where they point it.
+  const daemonHeld = isOfficialEndpoint(provider, endpoint)
+    ? [keychain, new EnvCredentialPort(env)]
+    : [];
+  return resolveCredentials(
+    [new RequestCredentialPort(requestKey), ...daemonHeld].filter(
+      (port): port is CredentialPort => port != null,
+    ),
+    provider,
+    presetId,
+  );
 }
 
 /** Whether the daemon holds a key for this provider at all — never the key. */
@@ -127,6 +162,29 @@ export async function requestDocDraft(input: {
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
   });
   return { draft: parseDocDraft(result.text), text: result.text, latencyMs: result.latencyMs };
+}
+
+export async function requestBriefDraft(input: {
+  provider: AiRemoteProvider;
+  apiKey: string;
+  model: string;
+  endpoint?: string | null;
+  project: Parameters<typeof buildBriefPrompt>[0];
+  brief?: BriefInput;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}) {
+  const result = await callModel({
+    provider: input.provider,
+    apiKey: input.apiKey,
+    model: input.model,
+    endpoint: input.endpoint ?? null,
+    system: buildSystemPrompt('brief'),
+    prompt: buildBriefPrompt(input.project, input.brief ?? {}),
+    ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  });
+  return { draft: parseBriefDraft(result.text), text: result.text, latencyMs: result.latencyMs };
 }
 
 /** A cheap probe for the settings panel's connection badge. */

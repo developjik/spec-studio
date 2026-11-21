@@ -11,6 +11,8 @@
 -- ═══════════════════════════════════════════════════════════════════
 PRAGMA foreign_keys = OFF;
 
+BEGIN IMMEDIATE;
+
 ALTER TABLE doc ADD COLUMN project_id TEXT REFERENCES project(id) ON DELETE CASCADE;
 ALTER TABLE doc ADD COLUMN screen_id TEXT REFERENCES obj(id) ON DELETE SET NULL;
 ALTER TABLE doc ADD COLUMN updated_at TEXT;
@@ -21,3 +23,4 @@ ALTER TABLE block ADD COLUMN updated_at TEXT;
 CREATE INDEX IF NOT EXISTS doc_project ON doc(project_id, screen_id);
 
 PRAGMA user_version = 13;
+COMMIT;

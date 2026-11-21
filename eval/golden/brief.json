@@ -1,0 +1,239 @@
+[
+  {
+    "id": "BRG-01",
+    "group": "grounded",
+    "note": "경쟁사 취소 정책 발췌 3건 — 모든 주장이 증거를 인용해야 한다",
+    "idea": {
+      "title": "주문 취소 UX 개선",
+      "text": "주문 취소 UX 개선\n경쟁 서비스는 취소를 어디까지 허용하는지 조사한다."
+    },
+    "evidence": [
+      {
+        "id": "E_brg01ev01",
+        "title": "경쟁사 A 취소 정책",
+        "url": "https://example.com/a/cancel",
+        "excerpt": "결제 후 24시간 이내에는 무료 취소가 가능하다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brg01ev02",
+        "title": "경쟁사 B 취소 정책",
+        "url": "https://example.com/b/cancel",
+        "excerpt": "배송 준비 중에는 취소 수수료 0원, 배송 시작 후에는 반품 절차로 안내한다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brg01ev03",
+        "title": "취소 사유 통계",
+        "url": "https://example.com/stats/cancel",
+        "excerpt": "취소 요청의 62%는 결제 직후 10분 안에 발생한다.",
+        "type": "web"
+      }
+    ],
+    "expect": { "grounded": 3, "ungrounded": 2 }
+  },
+  {
+    "id": "BRG-02",
+    "group": "grounded",
+    "note": "단일 증거 한 건 — 근거 1개와 템플릿 2개",
+    "idea": {
+      "title": "검색 필드 자동완성",
+      "text": "검색 필드 자동완성\n사용자가 검색어를 입력하는 동안 무엇을 보여줄지 정한다."
+    },
+    "evidence": [
+      {
+        "id": "E_brg02ev01",
+        "title": "자동완성 응답 시간 기준",
+        "url": "https://example.com/docs/autocomplete",
+        "excerpt": "자동완성 후보는 입력 후 200ms 안에 첫 화면에 떠야 한다.",
+        "type": "web"
+      }
+    ],
+    "expect": { "grounded": 1, "ungrounded": 2 }
+  },
+  {
+    "id": "BRG-03",
+    "group": "grounded",
+    "note": "PDF 발췌와 이미지 근거가 섞인 경우",
+    "idea": {
+      "title": "온보딩 스텝 수 줄이기",
+      "text": "온보딩 스텝 수 줄이기\n첫 화면에서 완료까지 스텝을 몇 개로 줄일 수 있는지 근거를 모은다."
+    },
+    "evidence": [
+      {
+        "id": "E_brg03ev01",
+        "title": "온보딩 리포트",
+        "url": "https://example.com/report.pdf",
+        "excerpt": "스텝 5개 이상에서 이탈률이 2.1배 높았다.",
+        "type": "pdf"
+      },
+      {
+        "id": "E_brg03ev02",
+        "title": "경쟁 온보딩 스크린샷",
+        "url": "https://example.com/img/onboarding.png",
+        "excerpt": "경쟁사는 3스텝 안에 첫 작업을 완료시킨다.",
+        "type": "image"
+      }
+    ],
+    "expect": { "grounded": 2, "ungrounded": 2 }
+  },
+  {
+    "id": "BRG-04",
+    "group": "grounded",
+    "note": "정책 문서 인용 4건 — 근거만 4개",
+    "idea": {
+      "title": "환불 정책 문구 정리",
+      "text": "환불 정책 문구 정리\n환불 정책에 들어갈 문장을 근거별로 정리한다."
+    },
+    "evidence": [
+      {
+        "id": "E_brg04ev01",
+        "title": "환불 소관 부서 문서",
+        "url": "https://example.com/policy/refund",
+        "excerpt": "환불은 결제 수단 기준 3~5 영업일 내 원결제 취소로 처리한다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brg04ev02",
+        "title": "이용약관 환불 조항",
+        "url": "https://example.com/terms#refund",
+        "excerpt": "이용 목적 달성 이후의 환불은 전액 환불 대상이 아니다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brg04ev03",
+        "title": "환불 문의 로그",
+        "url": "https://example.com/logs/refund",
+        "excerpt": "환불 문의의 절반은 처리 기간을 묻는 질문이다.",
+        "type": "text"
+      },
+      {
+        "id": "E_brg04ev04",
+        "title": "환불 안내 개선 회의록",
+        "url": "https://example.com/notes/refund",
+        "excerpt": "안내 문구에 기간을 먼저 쓰기로 했다.",
+        "type": "text"
+      }
+    ],
+    "expect": { "grounded": 4, "ungrounded": 2 }
+  },
+  {
+    "id": "BRG-05",
+    "group": "grounded",
+    "note": "링크가 붙은 아이디어 — 링크 태그와 근거 2건",
+    "idea": {
+      "title": "장바구니 담기 애니메이션",
+      "text": "장바구니 담기 애니메이션 https://example.com/inspiration/cart 애니메이션 레퍼런스를 모은다.",
+      "url": "https://example.com/inspiration/cart"
+    },
+    "evidence": [
+      {
+        "id": "E_brg05ev01",
+        "title": "애니메이션 지속시간 가이드",
+        "url": "https://example.com/docs/motion",
+        "excerpt": "전환 애니메이션은 150~250ms 사이가 인지 부담이 가장 낮다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brg05ev02",
+        "title": "경쟁사 카트 애니메이션 녹화",
+        "url": "https://example.com/img/cart.gif",
+        "excerpt": "아이콘이 카트까지 날아가는 200ms 동안 다른 UI는 움직이지 않는다.",
+        "type": "image"
+      }
+    ],
+    "expect": { "grounded": 2, "ungrounded": 2 }
+  },
+  {
+    "id": "BRU-01",
+    "group": "unsupported",
+    "note": "증거 없음 — 모든 사실 주장이 근거 없음 마커여야 한다",
+    "idea": {
+      "title": "다크 모드 색상 팔레트",
+      "text": "다크 모드 색상 팔레트\n다크 모드에 쓸 회색 단계를 정한다."
+    },
+    "evidence": [],
+    "expect": { "grounded": 0, "ungrounded": 2 }
+  },
+  {
+    "id": "BRU-02",
+    "group": "unsupported",
+    "note": "증거 없음 + 주제 텍스트만 있는 경우",
+    "idea": {
+      "title": "알림 발송 시간대",
+      "text": "알림 발송 시간대\n재방문 알림을 언제 보낼지 아직 근거가 없다."
+    },
+    "evidence": [],
+    "expect": { "grounded": 0, "ungrounded": 2 }
+  },
+  {
+    "id": "BRU-03",
+    "group": "unsupported",
+    "note": "증거 없음 — 가정만 있는 초기 아이디어",
+    "idea": {
+      "title": "추천 상품 카루셀",
+      "text": "추천 상품 카루셀\n첫 화면에 추천 카루셀을 넣으면 좋을 것 같다는 가정이다."
+    },
+    "evidence": [],
+    "expect": { "grounded": 0, "ungrounded": 2 }
+  },
+  {
+    "id": "BRX-01",
+    "group": "mixed",
+    "note": "근거 2건 + 검증되지 않은 가정이 섞인 경우",
+    "idea": {
+      "title": "비회원 구매",
+      "text": "비회원 구매\n비회원 구매를 허용할지, 허용한다면 어디까지를 근거로 정할지 섞여 있다."
+    },
+    "evidence": [
+      {
+        "id": "E_brx01ev01",
+        "title": "비회원 구매 도입 사례",
+        "url": "https://example.com/cases/guest",
+        "excerpt": "비회원 구매를 허용한 커머스의 완료율이 8% 올랐다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brx01ev02",
+        "title": "비회원 주문 조회 정책",
+        "url": "https://example.com/policy/guest",
+        "excerpt": "비회원 주문은 주문번호와 전화번호로만 조회할 수 있다.",
+        "type": "web"
+      }
+    ],
+    "expect": { "grounded": 2, "ungrounded": 2 }
+  },
+  {
+    "id": "BRX-02",
+    "group": "mixed",
+    "note": "근거 3건 + 남은 질문 — 혼합 브리프",
+    "idea": {
+      "title": "배송지 변경 가능 시점",
+      "text": "배송지 변경 가능 시점\n배송 상태 어디까지 배송지를 바꿀 수 있게 할지 정한다."
+    },
+    "evidence": [
+      {
+        "id": "E_brx02ev01",
+        "title": "택배사 배송지 변경 규정",
+        "url": "https://example.com/courier/change",
+        "excerpt": "집하 직전까지 배송지 변경이 가능하다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brx02ev02",
+        "title": "배송지 변경 문의 통계",
+        "url": "https://example.com/stats/address",
+        "excerpt": "문의의 71%는 배송 시작 이후에 들어온다.",
+        "type": "web"
+      },
+      {
+        "id": "E_brx02ev03",
+        "title": "변경 실패 사유 메모",
+        "url": "https://example.com/notes/address",
+        "excerpt": "변경 실패의 대부분은 이미 집하된 이후 시도였다.",
+        "type": "text"
+      }
+    ],
+    "expect": { "grounded": 3, "ungrounded": 2 }
+  }
+]

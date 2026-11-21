@@ -203,29 +203,112 @@ describe('provider calls', () => {
 });
 
 describe('resolving the key', () => {
-  it('prefers the request key, then the environment, then nothing', () => {
-    const env = { ANTHROPIC_API_KEY: 'env-anthropic', OPENAI_API_KEY: 'env-openai' };
-    expect(resolveApiKey('anthropic', 'body-key', env)).toBe('body-key');
-    expect(resolveApiKey('anthropic', '', env)).toBe('env-anthropic');
-    expect(resolveApiKey('openai', null, {})).toBeNull();
-    expect(resolveApiKey('local', 'ignored', env)).toBeNull();
+  const env = { ANTHROPIC_API_KEY: 'env-anthropic', OPENAI_API_KEY: 'env-openai' };
+
+  /** A keychain double: a Map plus a call log, nothing else. */
+  const keychainWith = (entries: Record<string, string>) => {
+    const calls: string[] = [];
+    return {
+      source: 'keychain' as const,
+      calls,
+      async resolve(_provider: 'anthropic' | 'openai', presetId: string) {
+        calls.push(presetId);
+        return entries[presetId] ?? null;
+      },
+    };
+  };
+
+  it('prefers the request key, then the environment, then nothing', async () => {
+    await expect(resolveApiKey('anthropic', undefined, 'body-key', env)).resolves.toEqual({
+      key: 'body-key',
+      source: 'request',
+    });
+    await expect(resolveApiKey('anthropic', undefined, '', env)).resolves.toEqual({
+      key: 'env-anthropic',
+      source: 'env',
+    });
+    await expect(resolveApiKey('openai', undefined, null, {})).resolves.toEqual({
+      key: null,
+      source: null,
+    });
+    await expect(resolveApiKey('local', undefined, 'ignored', env)).resolves.toEqual({
+      key: null,
+      source: null,
+    });
   });
 
-  it('spends an environment key only on the provider\'s own host', () => {
+  it('reads the keychain between the request key and the environment', async () => {
+    const keychain = keychainWith({ openai: 'sk-keychain' });
+    // request > keychain
+    await expect(
+      resolveApiKey('openai', 'openai', 'body-key', env, keychain),
+    ).resolves.toEqual({ key: 'body-key', source: 'request' });
+    // keychain > env
+    await expect(resolveApiKey('openai', 'openai', null, env, keychain)).resolves.toEqual({
+      key: 'sk-keychain',
+      source: 'keychain',
+    });
+    // keychain miss → env
+    await expect(
+      resolveApiKey('openai', 'custom', null, env, keychain),
+    ).resolves.toEqual({ key: 'env-openai', source: 'env' });
+  });
+
+  it('treats a broken keychain as absent, not as a failure', async () => {
+    const broken = {
+      source: 'keychain' as const,
+      async resolve(): Promise<string | null> {
+        throw new Error('safeStorage unavailable');
+      },
+    };
+    await expect(resolveApiKey('openai', 'openai', null, env, broken)).resolves.toEqual({
+      key: 'env-openai',
+      source: 'env',
+    });
+    await expect(resolveApiKey('openai', 'openai', null, {}, broken)).resolves.toEqual({
+      key: null,
+      source: null,
+    });
+  });
+
+  it("spends a daemon-held key only on the provider's own host", async () => {
     const env = { ANTHROPIC_API_KEY: 'env-anthropic', OPENAI_API_KEY: 'env-openai' };
+    const keychain = keychainWith({ openai: 'sk-keychain' });
 
     // The default endpoint, the official base URL, or no endpoint at all.
-    expect(resolveApiKey('openai', '', env, null)).toBe('env-openai');
-    expect(resolveApiKey('openai', '', env, 'https://api.openai.com/v1')).toBe('env-openai');
-    expect(resolveApiKey('anthropic', '', env, 'https://api.anthropic.com')).toBe('env-anthropic');
+    await expect(resolveApiKey('openai', undefined, '', env, null, null)).resolves.toEqual({
+      key: 'env-openai',
+      source: 'env',
+    });
+    await expect(
+      resolveApiKey('openai', undefined, '', env, null, 'https://api.openai.com/v1'),
+    ).resolves.toEqual({ key: 'env-openai', source: 'env' });
+    await expect(
+      resolveApiKey('anthropic', undefined, '', env, null, 'https://api.anthropic.com'),
+    ).resolves.toEqual({ key: 'env-anthropic', source: 'env' });
+    // The keychain key is daemon-held too, and follows the same rule.
+    await expect(
+      resolveApiKey('openai', 'openai', '', env, keychain, 'https://api.openai.com/v1'),
+    ).resolves.toEqual({ key: 'sk-keychain', source: 'keychain' });
 
-    // Anything else is a host the request chose, and the daemon's key stays home.
-    expect(resolveApiKey('openai', '', env, 'https://collect.evil.example/v1')).toBeNull();
-    expect(resolveApiKey('openai', '', env, 'http://127.0.0.1:9999/v1')).toBeNull();
-    expect(resolveApiKey('openai', '', env, 'https://api.openai.com.evil.example/v1')).toBeNull();
+    // Anything else is a host the request chose, and the daemon's keys stay home.
+    await expect(
+      resolveApiKey('openai', undefined, '', env, null, 'https://collect.evil.example/v1'),
+    ).resolves.toEqual({ key: null, source: null });
+    await expect(
+      resolveApiKey('openai', undefined, '', env, null, 'http://127.0.0.1:9999/v1'),
+    ).resolves.toEqual({ key: null, source: null });
+    await expect(
+      resolveApiKey('openai', undefined, '', env, null, 'https://api.openai.com.evil.example/v1'),
+    ).resolves.toEqual({ key: null, source: null });
+    await expect(
+      resolveApiKey('openai', 'openai', '', env, keychain, 'https://collect.evil.example/v1'),
+    ).resolves.toEqual({ key: null, source: null });
 
     // A key the request carried is the user's own, and may go where they point it.
-    expect(resolveApiKey('openai', 'sk-body', env, 'https://collect.evil.example/v1')).toBe('sk-body');
+    await expect(
+      resolveApiKey('openai', undefined, 'sk-body', env, null, 'https://collect.evil.example/v1'),
+    ).resolves.toEqual({ key: 'sk-body', source: 'request' });
   });
 
   it('knows which endpoints are the provider\'s own, and is not fooled by a lookalike', () => {
