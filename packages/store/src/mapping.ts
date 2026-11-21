@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  DOC_KINDS,
   NODE_TYPE_KIND,
   type Block,
   type BlockPinRef,
@@ -515,7 +516,9 @@ export function docFromRows(row: DocRow, blocks: BlockRow[]): Doc {
       .sort((a, b) => (a.idx === b.idx ? a.id.localeCompare(b.id) : a.idx.localeCompare(b.idx)))
       .map(blockFromRow),
     // The column CHECK already holds the vocabulary; deleted docs never read.
-    kind: row.kind === 'research' ? 'research' : 'spec',
+    kind: (DOC_KINDS as readonly string[]).includes(row.kind)
+      ? (row.kind as Doc['kind'])
+      : 'spec',
     deletedAt: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
@@ -531,6 +534,7 @@ export interface ProposalRow {
   summary: string;
   base_rev: number;
   state: string;
+  idea_id: string | null;
   created_at: string;
   decided_at: string | null;
 }
@@ -559,6 +563,7 @@ export function proposalToRow(proposal: Proposal): ProposalRow {
     summary: proposal.summary,
     base_rev: proposal.baseRev,
     state: proposal.state,
+    idea_id: proposal.ideaId,
     created_at: proposal.createdAt,
     decided_at: proposal.decidedAt,
   };
@@ -606,6 +611,7 @@ export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Propos
     baseRev: Number(row.base_rev ?? 0),
     state: row.state as Proposal['state'],
     patches,
+    ideaId: row.idea_id as Proposal['ideaId'],
     createdAt: row.created_at,
     decidedAt: row.decided_at,
   };

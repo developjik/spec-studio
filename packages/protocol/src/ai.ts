@@ -134,7 +134,7 @@ export const AI_DEFAULT_ENDPOINTS: Record<AiRemoteProvider, string> = {
   openai: findPreset('openai')?.baseUrl ?? '',
 };
 
-export const AI_PROPOSAL_MODES = ['graph', 'doc', 'brief'] as const;
+export const AI_PROPOSAL_MODES = ['graph', 'doc', 'brief', 'backlog'] as const;
 export const AiProposalModeSchema = z.enum(AI_PROPOSAL_MODES);
 export type AiProposalMode = (typeof AI_PROPOSAL_MODES)[number];
 
@@ -250,6 +250,43 @@ export const AiBriefDraftSchema = z
     }
   });
 export type AiBriefDraft = z.infer<typeof AiBriefDraftSchema>;
+
+/**
+ * One backlog task (§4.1 ③): what to build and the pins/requests it stands
+ * on. `evidenceRefs` names objects the project already has — a ref that is
+ * not there is rejected at the card, never silently dropped — and a task
+ * with none must carry the honest `ungrounded` flag, same rule as a claim.
+ */
+export const AiBacklogTaskSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().max(4000).default(''),
+  /** Object ids this task grounds on (pins · specnodes · evidence · ideas). */
+  evidenceRefs: z.array(z.string().min(1).max(60)).max(12).default([]),
+  ungrounded: z.boolean().default(false),
+});
+export type AiBacklogTask = z.infer<typeof AiBacklogTaskSchema>;
+
+/**
+ * The backlog draft: one summary plus 1–50 ordered tasks. The array order is
+ * the priority order — the draft carries no separate rank column.
+ */
+export const AiBacklogDraftSchema = z
+  .object({
+    summary: z.string().trim().min(1).max(300),
+    tasks: z.array(AiBacklogTaskSchema).min(1).max(50),
+  })
+  .superRefine((value, ctx) => {
+    for (const [index, task] of value.tasks.entries()) {
+      if (task.evidenceRefs.length === 0 && !task.ungrounded) {
+        ctx.addIssue({
+          code: 'custom',
+          message: '태스크에는 근거 참조 또는 근거 없음 표시가 필요합니다',
+          path: ['tasks', index],
+        });
+      }
+    }
+  });
+export type AiBacklogDraft = z.infer<typeof AiBacklogDraftSchema>;
 
 /**
  * What the browser asks the daemon for. The key rides in this body or sits in

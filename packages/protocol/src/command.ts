@@ -172,6 +172,8 @@ export const CommandSchema = z.discriminatedUnion('type', [
     source: AiProposalSourceSchema.optional(),
     provider: z.string().max(40).nullable().optional(),
     model: z.string().max(80).nullable().optional(),
+    /** v16 (MN-A): the idea a brief answers — persisted on the proposal row. */
+    ideaId: IdeaIdSchema.optional(),
   }),
   z.object({
     type: z.literal('proposal.adopt'),

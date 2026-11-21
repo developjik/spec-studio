@@ -281,6 +281,7 @@ export function buildProposal(input: {
     baseRev: doc.rev,
     state: 'open',
     patches,
+    ideaId: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -356,6 +357,7 @@ export function buildProposalFromDraft(input: {
     baseRev: doc.rev,
     state: 'open',
     patches,
+    ideaId: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -424,6 +426,7 @@ export function buildProposalFromBrief(input: {
     baseRev: doc.rev,
     state: 'open',
     patches,
+    ideaId: null,
     createdAt: input.at,
     decidedAt: null,
   };

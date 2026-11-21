@@ -40,9 +40,10 @@ export const BLOCK_TYPE_LABEL: Record<BlockType, string> = {
 
 /**
  * What a document is for. `spec` is the prose a screen's pins stand under;
- * `research` is notes that may cite the same pins without being the spec.
+ * `research` is notes that may cite the same pins without being the spec;
+ * `backlog` (v16) is the decomposition document the E2 work fills.
  */
-export const DOC_KINDS = ['spec', 'research'] as const;
+export const DOC_KINDS = ['spec', 'research', 'backlog'] as const;
 export const DocKindSchema = z.enum(DOC_KINDS);
 export type DocKind = z.infer<typeof DocKindSchema>;
 

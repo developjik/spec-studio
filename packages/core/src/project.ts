@@ -613,6 +613,9 @@ export function execute(
                 draft: command.draft,
                 at: ctx.at,
               });
+      // MN-A (v16): the proposal remembers which idea it answers, so a
+      // promotion can find its seed again after a restart.
+      const carried: Proposal = { ...proposal, ideaId: command.ideaId ?? null };
       // One open proposal per doc: a new card retires the one still on the
       // table for the same doc, the same way a refusal would.
       const retired = project.proposals.filter(
@@ -627,7 +630,7 @@ export function execute(
                 ? { ...candidate, state: 'rejected' as const, decidedAt: ctx.at }
                 : candidate,
             ),
-            proposal,
+            carried,
           ],
           updatedAt: ctx.at,
         },
@@ -637,7 +640,7 @@ export function execute(
             docId: doc.id,
             proposalId: candidate.id,
           })),
-          { type: 'proposal.created' as const, proposal },
+          { type: 'proposal.created' as const, proposal: carried },
         ],
       };
     }

@@ -6,6 +6,7 @@ import {
   AI_PROVIDERS,
   AiProposalRequestSchema,
   findPreset,
+  IdeaIdSchema,
   type AiProposalMode,
   type AiPreset,
   type AiProvider,
@@ -163,7 +164,7 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
       evidenceIds: request.evidenceIds ?? null,
     });
     return {
-      command: { type: 'proposal.create', docId: doc.id, draft, source: 'rule' },
+      command: { type: 'proposal.create', docId: doc.id, draft, source: 'rule', ideaId: ideaIdOf(request) },
       source: 'rule',
       provider: 'local',
       model: '',
@@ -180,6 +181,13 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
   };
 }
 
+/** A request `ideaId` is free text; the command only carries a real idea id. */
+function ideaIdOf(request: AiProposalRequest): string | undefined {
+  if (request.ideaId === undefined) return undefined;
+  const parsed = IdeaIdSchema.safeParse(request.ideaId);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** Turns one browser request into the command the store will run. */
 export async function planAiProposal(
   project: ProjectType,
@@ -187,6 +195,10 @@ export async function planAiProposal(
   runtime: AiRuntime,
 ): Promise<AiCommandPlan> {
   const request = AiProposalRequestSchema.parse(raw);
+  if (request.mode === 'backlog') {
+    // v16 adds the mode and the draft schema; the planner is the next wave's.
+    throw new AiRequestError(501, 'backlog_not_ready', '백로그 분해는 아직 준비 중입니다.');
+  }
   const preset = findPreset(request.presetId ?? '');
   const model =
     request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
@@ -263,6 +275,7 @@ export async function planAiProposal(
           source: 'llm',
           provider: request.provider,
           model,
+          ideaId: ideaIdOf(request),
         },
         source: 'llm',
         provider: request.provider,

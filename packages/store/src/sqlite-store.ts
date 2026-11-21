@@ -403,7 +403,10 @@ export class SqliteStore implements StorePort {
       // Nothing to write: the event and the op row ARE the export's trace, and
       // #writeDoc would restamp every block's updated_at with this `at`.
       if (!isExport) this.#writeProject(before, after, at);
-      this.#appendEvents(projectId, result.events, at);
+      // F0-6: every milestone the command just wrote gets a journey.mark in
+      // the same transaction — the report never has to reconstruct timings.
+      const marks = this.#journeyMarks(projectId, before, after, result.events, at);
+      this.#appendEvents(projectId, [...result.events, ...marks], at);
       const opSeq = this.#appendLog(before, after, command, result.events, at, context?.actor);
       return {
         project: after,
@@ -946,6 +949,60 @@ export class SqliteStore implements StorePort {
     return null;
   }
 
+  /**
+   * AC-1 instrumentation: the events one command produced are scanned for the
+   * core journey milestones, and each gets a `journey.mark` appended right
+   * behind it. `elapsedMs` is measured off the previous mark's own `at` —
+   * event timestamps are the only clock, no new columns anywhere.
+   */
+  #journeyMarks(
+    projectId: string,
+    before: Project,
+    after: Project,
+    events: readonly DomainEvent[],
+    at: string,
+  ): DomainEvent[] {
+    const stageOf = (event: DomainEvent): string | null => {
+      switch (event.type) {
+        case 'screen.attached':
+          return 'attach';
+        case 'idea.captured':
+          return 'capture';
+        case 'proposal.adopted':
+          // The brief milestone is an adoption on a research doc; a spec or
+          // backlog adoption is not part of the capture→package chain.
+          return after.docs.find((doc) => doc.id === event.docId)?.kind === 'research'
+            ? 'brief'
+            : null;
+        case 'idea.updated':
+          return event.idea.state === 'promoted' ? 'promote' : null;
+        case 'package.exported':
+          return 'package';
+        default:
+          return null;
+      }
+    };
+    const stages = events.map(stageOf).filter((stage): stage is string => stage !== null);
+    if (stages.length === 0) return [];
+
+    const last = oneRow<{ at: string }>(
+      this.#db,
+      "SELECT at FROM event WHERE thread_id = ? AND type = 'journey.mark' ORDER BY seq DESC LIMIT 1",
+      this.#threadId(projectId),
+    );
+    let prevAt = last?.at ?? before.createdAt;
+    const marks: DomainEvent[] = [];
+    for (const stage of stages) {
+      marks.push({
+        type: 'journey.mark',
+        stage,
+        elapsedMs: Math.max(0, Date.parse(at) - Date.parse(prevAt)),
+      });
+      prevAt = at;
+    }
+    return marks;
+  }
+
   #appendEvents(projectId: string, events: readonly DomainEvent[], at: string): void {
     if (events.length === 0) return;
     const threadId = this.#threadId(projectId);
@@ -1396,12 +1453,13 @@ export class SqliteStore implements StorePort {
     const row = proposalToRow(proposal);
     this.#db
       .prepare(
-        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, created_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?)
+        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, idea_id, created_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            summary    = excluded.summary,
            state      = excluded.state,
            risk       = excluded.risk,
+           idea_id    = excluded.idea_id,
            decided_at = excluded.decided_at`,
       )
       .run(
@@ -1411,6 +1469,7 @@ export class SqliteStore implements StorePort {
         row.summary,
         row.base_rev,
         row.state,
+        row.idea_id,
         row.created_at,
         row.decided_at,
       );

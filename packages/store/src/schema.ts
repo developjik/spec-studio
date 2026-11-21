@@ -19,7 +19,7 @@ export const SCHEMA_DIR =
 export const SCHEMA_FILE = join(SCHEMA_DIR, 'schema.sql');
 
 /** `PRAGMA user_version` of the DDL above. */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /**
  * Additive steps applied when an older file is opened. A database is only ever
@@ -31,6 +31,7 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   12: join(SCHEMA_DIR, 'migrate-12-13.sql'),
   13: join(SCHEMA_DIR, 'migrate-13-14.sql'),
   14: join(SCHEMA_DIR, 'migrate-14-15.sql'),
+  15: join(SCHEMA_DIR, 'migrate-15-16.sql'),
 };
 
 /**

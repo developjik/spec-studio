@@ -430,6 +430,17 @@ def main() -> int:
     expect_reject(conn, "doc kind not registered",
         "INSERT INTO doc(id,project_id,screen_id,title,rev,created_at,updated_at,kind) "
         "VALUES('D_500000000002','PRJ_000000000001','S_cccccccccccc','이상한 문서',0,'t','t','bogus')")
+
+    # ── v16: backlog kind · proposal.idea_id · journey.* 자유 문자열 ─────
+    expect_accept(conn, "backlog document",
+        "INSERT INTO doc(id,title,rev,created_at,kind) "
+        "VALUES('D_500000000003','릴리스 백로그',0,'t','backlog')")
+    expect_accept(conn, "proposal remembers its idea",
+        "INSERT INTO proposal(id,doc_id,origin,summary,base_rev,author_kind,risk,state,idea_id,created_at) "
+        "VALUES('PR_500000000001','D_aaaaaaaaaaaa','pin','브리프 답안',3,'ai','low','open','I_500000000001','t')")
+    expect_accept(conn, "journey.* event type is free text",
+        "INSERT INTO event(thread_id,type,payload,at,device_id,uuid) "
+        "VALUES('doc:D_aaaaaaaaaaaa','journey.mark','{\"stage\":\"capture\",\"elapsedMs\":0}','t','dev_a','u3')")
     expect_accept(conn, "meta holds the device id",
         "INSERT INTO meta(key,value) VALUES('device_id','dev_contract01')")
     expect_reject(conn, "meta device_id is a single row",
@@ -459,8 +470,8 @@ def main() -> int:
     record("sibling idx uses block_doc", "plan", "block_doc" in plan_block, plan_block)
 
     last_seq = conn.execute("SELECT last_seq FROM thread WHERE id='doc:D_aaaaaaaaaaaa'").fetchone()[0]
-    # 1 seeded event + 3 stamped ones (2 devices + 1 legacy NULL) above.
-    record("thread.last_seq advances with events", "plan", last_seq == 4, f"last_seq={last_seq}")
+    # 1 seeded event + 4 stamped ones (2 devices + 1 legacy NULL + journey.mark).
+    record("thread.last_seq advances with events", "plan", last_seq == 5, f"last_seq={last_seq}")
 
     # ── Korean search: trigram for 3+ syllables, bigram as the fallback ─────
     def bigrams(text: str) -> str:

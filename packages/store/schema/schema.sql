@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -112,7 +112,7 @@ CREATE TABLE doc (
   rev         INTEGER NOT NULL DEFAULT 0,       -- 커밋 단위로 증가
   created_at  TEXT NOT NULL,
   updated_at  TEXT,
-  kind        TEXT NOT NULL DEFAULT 'spec' CHECK (kind IN ('spec','research')),
+  kind        TEXT NOT NULL DEFAULT 'spec' CHECK (kind IN ('spec','research','backlog')),
   deleted_at  TEXT                              -- 소프트 삭제 툼스톤. block state='deleted'·obj.deleted_at과 같은 패턴
 );
 CREATE INDEX doc_project ON doc(project_id, screen_id);
@@ -258,6 +258,7 @@ CREATE TABLE proposal (
   risk         TEXT NOT NULL DEFAULT 'medium' CHECK (risk IN ('low','medium','high')),
   state        TEXT NOT NULL
                CHECK (state IN ('open','reviewing','adopted','rejected','superseded')),
+  idea_id      TEXT,                            -- v16: 브리프가 답한 아이디어 — 승격 시딩(MN-A)
   created_at   TEXT NOT NULL,
   decided_at   TEXT,
   CHECK (state NOT IN ('adopted','rejected') OR decided_at IS NOT NULL)

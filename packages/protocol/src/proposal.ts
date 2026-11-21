@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockSchema, DocIdSchema, ProposalIdSchema } from './doc.js';
+import { IdeaIdSchema } from './idea.js';
 
 /**
  * A proposal is an edit that has not happened yet. It never touches the text:
@@ -46,6 +47,11 @@ export const ProposalSchema = z.object({
   baseRev: z.number().int().min(0),
   state: ProposalStateSchema,
   patches: z.array(ProposalPatchSchema).min(1).max(50),
+  /**
+   * v16 (MN-A): the idea a brief answers. Promotion reads it back so the
+   * spec's seed survives a restart; anything not idea-born stays null.
+   */
+  ideaId: IdeaIdSchema.nullable().default(null),
   createdAt: z.string().min(1),
   decidedAt: z.string().min(1).nullable(),
 });

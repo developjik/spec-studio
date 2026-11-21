@@ -72,7 +72,7 @@ describe('the schema', () => {
   it('creates itself on an empty file and reports the promised version', () => {
     const store = open();
     expect(store.schema.created).toBe(true);
-    expect(store.schema.actual).toBe(15);
+    expect(store.schema.actual).toBe(16);
   });
 
   it('does not re-create tables when the file already carries them', async () => {
@@ -277,7 +277,8 @@ describe('the write path', () => {
       .prepare('SELECT id, last_seq FROM thread WHERE id = ?')
       .get(`project:${projectId}`) as { id: string; last_seq: number };
     expect(thread.id).toBe(`project:${projectId}`);
-    expect(thread.last_seq).toBe(5);
+    // 5 command events + the journey.mark the attach milestone stamps (v16).
+    expect(thread.last_seq).toBe(6);
 
     const events = store.database
       .prepare('SELECT type FROM event ORDER BY seq')
@@ -285,6 +286,7 @@ describe('the write path', () => {
     expect(events.map((event) => event.type)).toEqual([
       'screen.attached',
       'doc.attached',
+      'journey.mark',
       'pin.created',
       'pin.created',
       'pin.created',
@@ -356,7 +358,7 @@ describe('the write path', () => {
     const after = await store.readProject(projectId);
     expect(after?.pins).toHaveLength(before?.pins.length ?? 0);
     const events = store.database
-      .prepare('SELECT count(*) AS n FROM event')
+      .prepare("SELECT count(*) AS n FROM event WHERE type != 'journey.mark'")
       .get() as {
       n: number;
     };

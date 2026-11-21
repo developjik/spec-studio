@@ -133,7 +133,7 @@ describe('the daemon API', () => {
   it('reports health and names SQLite as the canonical store', async () => {
     const health = await api<{ ok: boolean; schemaVersion: number; mode: string }>(daemon, '/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ ok: true, schemaVersion: 15, mode: 'sqlite' });
+    expect(health.body).toMatchObject({ ok: true, schemaVersion: 16, mode: 'sqlite' });
   });
 
   it('serves only the app origins', async () => {

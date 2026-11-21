@@ -101,6 +101,18 @@ export const EventSchema = z.discriminatedUnion('type', [
     files: z.array(z.string().min(1).max(120)).min(1).max(16),
   }),
 
+  /**
+   * AC-1/F0-6: the store stamps one mark each time the core journey hits a
+   * stage (attach → capture → brief → promote → package). `elapsedMs` is the
+   * gap since the previous mark — or since project creation for the first —
+   * so the journey report reads durations straight from the ledger.
+   */
+  z.object({
+    type: z.literal('journey.mark'),
+    stage: z.string().min(1).max(40),
+    elapsedMs: z.number().min(0),
+  }),
+
   // ── object graph (v1) ─────────────────────────────────────────────────
   z.object({ type: z.literal('node.created'), node: GraphNodeSchema }),
   z.object({ type: z.literal('node.updated'), node: GraphNodeSchema }),

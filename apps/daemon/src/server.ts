@@ -432,6 +432,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         provider: plan.provider,
         model: plan.model,
         note: plan.note,
+        revert: store.lastRevertable(projectId),
       });
     }
 
@@ -454,6 +455,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         seq: outcome.seq,
         opSeq: outcome.opSeq,
         events: outcome.events,
+        revert: store.lastRevertable(projectId),
       });
     }
 
