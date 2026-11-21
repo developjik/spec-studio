@@ -205,6 +205,8 @@ export function renderStaticHtml(input: StaticHtmlInput): string {
 <title>${escapeHtml(screen.title)} — ${escapeHtml(screen.code)} 화면설계서</title>
 <meta name="description" content="${escapeHtml(screen.title)} ${escapeHtml(screen.code)} 화면설계서 · 핀 ${overview.total}개 · spec-studio">
 <meta name="generator" content="spec-studio · static handoff">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <style>${STYLE}</style>
 </head>
 <body>
@@ -224,7 +226,7 @@ export function renderStaticHtml(input: StaticHtmlInput): string {
 
   <section class="board">
     <div class="frame" style="aspect-ratio:${frameRatio}">
-      ${image === null ? `<div class="frame-empty"><span class="mono">${escapeHtml(screen.ref.value)}</span><span>이미지 없이 등록된 화면 — 좌표는 화면 기준입니다.</span></div>` : `<img src="${image.dataUrl}" alt="${escapeHtml(screen.title)} 화면 이미지">`}
+      ${image === null ? `<div class="frame-empty"><span class="mono">${escapeHtml(screen.ref.value)}</span><span>이미지 없이 등록된 화면 — 좌표는 화면 기준입니다.</span></div>` : `<img src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(screen.title)} 화면 이미지">`}
       ${input.pins.map(renderPin).join('\n      ')}
     </div>
     ${filters.length === 0 ? '' : `<p class="caption">${escapeHtml(filters.join(' · '))} — 좌표는 화면 기준이며, 이 문서에는 프레임 이미지가 포함되지 않습니다.</p>`}

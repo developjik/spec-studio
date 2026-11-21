@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AiProposalRequestSchema,
+  AiTestRequestSchema,
   CommandSchema,
   ObjectSchema,
   ProjectSchema,
   ScreenRefSchema,
   ScreenSchema,
+  parseImageDataUrl,
 } from '../src';
 
 const AT = '2026-11-19T09:00:00.000Z';
@@ -79,6 +82,38 @@ describe('objects mirror the database constraints', () => {
 describe('screen refs', () => {
   it('requires a value for an image', () => {
     expect(ScreenRefSchema.safeParse({ kind: 'image', value: '' }).success).toBe(false);
+  });
+
+  it('accepts only an image data URL it is willing to embed', () => {
+    const image = (value: string) => ScreenRefSchema.safeParse({ kind: 'image', value }).success;
+
+    expect(image('data:image/png;base64,AA==')).toBe(true);
+    expect(image('data:image/jpeg;base64,/9j/4AAQ')).toBe(true);
+    expect(image('data:image/webp;base64,UklGRg==')).toBe(true);
+    expect(image('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22x%22%2F%3E')).toBe(true);
+
+    // A link is not an image and would be fetched over the network.
+    expect(image('https://example.com/shot.png')).toBe(false);
+    // A scriptable document pretending to be a screenshot is refused.
+    expect(image('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==')).toBe(false);
+    expect(image('data:application/xhtml+xml;base64,PHNjcmlwdD4=')).toBe(false);
+    // The mime is where an attribute injection would ride in, and the payload
+    // must stay base64.
+    expect(image('data:image/png" onerror="alert(1);base64,AA==')).toBe(false);
+    expect(image('data:image/png;base64,AA==<script>alert(1)</script>')).toBe(false);
+    expect(image('data:image/png;base64,')).toBe(false);
+  });
+
+  it('reads a data URL into its mime and payload without trusting either', () => {
+    expect(parseImageDataUrl('data:image/png;base64,AA==')).toEqual({
+      mime: 'image/png',
+      base64: true,
+      payload: 'AA==',
+    });
+    expect(parseImageDataUrl('data:image/jpg;base64,AA==')?.mime).toBe('image/jpeg');
+    expect(parseImageDataUrl('data:image/svg+xml,%3Csvg%2F%3E')?.base64).toBe(false);
+    expect(parseImageDataUrl('data:text/html;base64,AA==')).toBeNull();
+    expect(parseImageDataUrl('data:image/svg+xml,%E0%A4%A')).toBeNull();
   });
 
   it('requires a URL for a Figma frame', () => {
@@ -198,5 +233,21 @@ describe('project', () => {
     const parsed = ProjectSchema.safeParse(project);
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.pins[0]?.number).toBe(1);
+  });
+});
+
+describe('ai endpoint', () => {
+  it('takes http(s) urls only, on the request and on the probe', () => {
+    const request = { mode: 'graph' as const, provider: 'openai' as const, apiKey: null };
+    expect(
+      AiProposalRequestSchema.safeParse({ ...request, endpoint: 'http://127.0.0.1:1234/v1' }).success,
+    ).toBe(true);
+    expect(
+      AiProposalRequestSchema.safeParse({ ...request, endpoint: 'https://api.openai.com/v1' }).success,
+    ).toBe(true);
+    for (const endpoint of ['file:///etc/passwd', 'data:text/plain,hello', 'ftp://example.com']) {
+      expect(AiProposalRequestSchema.safeParse({ ...request, endpoint }).success).toBe(false);
+      expect(AiTestRequestSchema.safeParse({ ...request, endpoint }).success).toBe(false);
+    }
   });
 });
