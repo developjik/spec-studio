@@ -35,12 +35,13 @@ export function qaCaseId(number: number): string {
 
 /**
  * Excel, Numbers and Sheets all treat a cell that starts with `=`, `+`, `-` or
- * `@` as a formula; `\t` and `\r` are stripped first and get the same job done.
- * A pin body is prose a person wrote or a model drafted, and this CSV is meant
- * to be opened in a spreadsheet, so the leading character is neutralised with
- * an apostrophe — the cell reads exactly as written, and nothing executes.
+ * `@` as a formula; a leading tab, CR or LF is stripped first and gets the same
+ * job done. A pin body is prose a person wrote or a model drafted, and this CSV
+ * is meant to be opened in a spreadsheet, so the leading character is
+ * neutralised with an apostrophe — the cell reads exactly as written, and
+ * nothing executes.
  */
-const CSV_FORMULA_LEAD = /^[=+\-@\t\r]/;
+const CSV_FORMULA_LEAD = /^[=+\-@\t\r\n]/;
 
 export function csvCell(value: string): string {
   const neutralized = CSV_FORMULA_LEAD.test(value) ? `'${value}` : value;

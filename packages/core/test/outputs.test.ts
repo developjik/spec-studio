@@ -142,6 +142,7 @@ describe('qa csv', () => {
     expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
     expect(csvCell('\t=cmd')).toBe("'\t=cmd");
     expect(csvCell('\r=cmd')).toBe('"\'\r=cmd"');
+    expect(csvCell('\n=cmd')).toBe('"\'\n=cmd"');
     // A '=' that is not the first character is prose, and stays as written.
     expect(csvCell('사전조건: 주문 상태 = 배송 시작')).toBe('사전조건: 주문 상태 = 배송 시작');
   });
@@ -151,6 +152,13 @@ describe('qa csv', () => {
     const csv = buildQaCsv({ screen, pins: [risky] });
     expect(csv).toContain(`"'=HYPERLINK(""http://evil.example"",""주문"")"`);
     expect(csv).not.toContain(',=HYPERLINK');
+  });
+
+  it('guards a body whose formula hides behind a leading line break', () => {
+    const sneaky = pin(9, 'function', '취소 요청', '\n=HYPERLINK("http://evil.example","주문")');
+    const csv = buildQaCsv({ screen, pins: [sneaky] });
+    expect(csv).toContain('"\'\n=HYPERLINK');
+    expect(csv).not.toMatch(/,\n=HYPERLINK/);
   });
 });
 
