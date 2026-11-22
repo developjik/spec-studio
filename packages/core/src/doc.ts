@@ -282,6 +282,7 @@ export function buildProposal(input: {
     state: 'open',
     patches,
     ideaId: null,
+    authorId: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -358,6 +359,7 @@ export function buildProposalFromDraft(input: {
     state: 'open',
     patches,
     ideaId: null,
+    authorId: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -427,6 +429,7 @@ export function buildProposalFromBrief(input: {
     state: 'open',
     patches,
     ideaId: null,
+    authorId: null,
     createdAt: input.at,
     decidedAt: null,
   };

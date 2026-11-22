@@ -82,6 +82,7 @@ export const newBlockId = (): string => `B_${newSuffix()}`;
 export const newProposalId = (): string => `PR_${newSuffix()}`;
 export const newLinkId = (): string => `L_${newSuffix()}`;
 export const newGraphProposalId = (): string => `GP_${newSuffix()}`;
+export const newRunId = (): string => `R_${newSuffix()}`;
 export const newIdeaId = (): string => `I_${newSuffix()}`;
 export const newEvidenceId = (): string => `E_${newSuffix()}`;
 
@@ -535,6 +536,8 @@ export interface ProposalRow {
   base_rev: number;
   state: string;
   idea_id: string | null;
+  /** E3 W1: the run that produced the card — `ai:<runId>` on adoption (AC-1). */
+  author_id: string | null;
   created_at: string;
   decided_at: string | null;
 }
@@ -564,6 +567,7 @@ export function proposalToRow(proposal: Proposal): ProposalRow {
     base_rev: proposal.baseRev,
     state: proposal.state,
     idea_id: proposal.ideaId,
+    author_id: proposal.authorId,
     created_at: proposal.createdAt,
     decided_at: proposal.decidedAt,
   };
@@ -612,6 +616,7 @@ export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Propos
     state: row.state as Proposal['state'],
     patches,
     ideaId: row.idea_id as Proposal['ideaId'],
+    authorId: (row.author_id as Proposal['authorId']) ?? null,
     createdAt: row.created_at,
     decidedAt: row.decided_at,
   };

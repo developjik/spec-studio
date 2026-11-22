@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { BlockIdSchema, BlockSchema, DocIdSchema, ProposalIdSchema } from './doc.js';
 import { IdeaIdSchema } from './idea.js';
+import { RunIdSchema } from './agent.js';
 
 /**
  * A proposal is an edit that has not happened yet. It never touches the text:
@@ -52,6 +53,12 @@ export const ProposalSchema = z.object({
    * spec's seed survives a restart; anything not idea-born stays null.
    */
   ideaId: IdeaIdSchema.nullable().default(null),
+  /**
+   * E3 (W1): the run that produced this card, or null. Written to the
+   * reserved `author_id` column — the store stamps the adoption's op_log
+   * actor `ai:<runId>` from it, which is AC-1's provenance rule.
+   */
+  authorId: RunIdSchema.nullable().default(null),
   createdAt: z.string().min(1),
   decidedAt: z.string().min(1).nullable(),
 });

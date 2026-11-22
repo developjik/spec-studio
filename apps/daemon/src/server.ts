@@ -27,7 +27,9 @@ import {
   type PublishRecordPort,
 } from '@spec-studio/publish';
 import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
+import { AgentService, dispatchAgentCommand, type DeclaredTool } from './agent.js';
 import { createIpcKeychainPort } from './keychain.js';
+import type { ModelPort } from '@spec-studio/agent';
 
 /**
  * The local daemon: a loopback-only HTTP API in front of the SQLite store.
@@ -75,6 +77,8 @@ export interface DaemonOptions {
    * does not — the token is the real gate for the sidecar daemon.
    */
   authToken?: string;
+  /** The agent runtime's doubles — a scripted model in tests, declared tools. */
+  agent?: { modelPort?: ModelPort; tools?: DeclaredTool[]; fetchImpl?: typeof fetch };
 }
 
 export interface Daemon {
@@ -244,6 +248,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const store = options.store ?? openSqliteStore({ file: options.dbPath, actor: 'person:owner' });
   const env = options.env ?? process.env;
   const keychain = options.keychain === undefined ? createIpcKeychainPort() : options.keychain;
+  // E3 F1 (AC-2): a daemon that comes back marks every run that was live
+  // when it left — the person then chooses resume or cancel for each.
+  store.markInterruptedRuns();
+  const agent = new AgentService({
+    store,
+    env,
+    ...(options.agent?.modelPort === undefined ? {} : { modelPort: options.agent.modelPort }),
+    ...(options.agent?.tools === undefined ? {} : { tools: options.agent.tools }),
+    ...(options.agent?.fetchImpl === undefined ? {} : { fetchImpl: options.agent.fetchImpl }),
+    ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
+  });
   const backupDir =
     options.backupDir ??
     (options.dbPath === ':memory:' ? `${process.cwd()}/backups` : `${dirname(options.dbPath)}/backups`);
@@ -450,12 +465,34 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         );
       }
       const outcome = await store.execute(projectId, parsed.data);
+      dispatchAgentCommand(agent, projectId, parsed.data, outcome);
       return send(res, 200, {
         project: outcome.project,
         seq: outcome.seq,
         opSeq: outcome.opSeq,
         events: outcome.events,
         revert: store.lastRevertable(projectId),
+      });
+    }
+
+    // GET /api/projects/:id/runs — the run list a UI (or a test) polls.
+    if (action === 'runs' && segments.length === 4) {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      return send(res, 200, { runs: store.listRuns().filter((run) => run.projectId === projectId) });
+    }
+
+    // GET /api/projects/:id/runs/:runId — one run, its log and checkpoint.
+    if (action === 'runs' && segments.length === 5) {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      const runId = segments[4] ?? '';
+      const run = store.getRun(runId);
+      if (run === null || run.projectId !== projectId) {
+        throw new HttpError(404, 'run_not_found', '그런 런이 없습니다.');
+      }
+      return send(res, 200, {
+        run,
+        log: store.runLog(runId),
+        checkpoint: store.latestCheckpoint(runId),
       });
     }
 

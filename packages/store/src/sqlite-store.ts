@@ -24,6 +24,14 @@ import type {
 } from '@spec-studio/protocol';
 import { DocSnapshotSchema, DocSchema } from '@spec-studio/protocol';
 import {
+  isTerminalRunState,
+  machineTransition,
+  personTransition,
+  type RunRecord,
+  type RunSeed,
+} from '@spec-studio/agent';
+import type { JournalLine } from '@spec-studio/agent';
+import {
   blockToRow,
   docFromRows,
   evidenceToRow,
@@ -34,6 +42,7 @@ import {
   newEvidenceId,
   newIdeaId,
   newGraphProposalId,
+  newRunId,
   newLinkId,
   newNodeId,
   newPinId,
@@ -94,7 +103,8 @@ export type StoreIdKind =
   | 'link'
   | 'graphProposal'
   | 'idea'
-  | 'evidence';
+  | 'evidence'
+  | 'run';
 
 interface ProjectRow {
   id: string;
@@ -116,6 +126,43 @@ interface OpLogRow {
 /** `node:sqlite` types rows as `Record<string, SQLOutputValue>`; this is the one place we assert. */
 function oneRow<T>(db: DatabaseSync, sql: string, ...params: Array<string | number>): T | undefined {
   return db.prepare(sql).get(...params) as unknown as T | undefined;
+}
+
+interface RunRow {
+  id: string;
+  task_id: string;
+  project_id: string;
+  agent: string;
+  mode: string;
+  state: string;
+  interrupted: number;
+  outward_at: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+function rowToRun(row: RunRow): RunRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    agent: row.agent,
+    mode: row.mode as RunRecord['mode'],
+    state: row.state as RunRecord['state'],
+    interrupted: row.interrupted === 1,
+    outwardAt: row.outward_at,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+  };
+}
+
+type RunLifecycleCommand = Extract<
+  Command,
+  { type: 'run.start' | 'run.cancel' | 'run.resume' | 'run.answer' }
+>;
+
+function isRunCommand(command: Command): command is RunLifecycleCommand {
+  return command.type.startsWith('run.');
 }
 
 function allRows<T>(db: DatabaseSync, sql: string, ...params: Array<string | number>): T[] {
@@ -154,6 +201,10 @@ const OP_KIND: Readonly<Record<string, string>> = {
   'graph.proposal.adopt': 'graph.proposal.adopt',
   'graph.proposal.reject': 'graph.proposal.reject',
   'project.package.export': 'package.export',
+  'run.start': 'run.start',
+  'run.cancel': 'run.cancel',
+  'run.resume': 'run.resume',
+  'run.answer': 'run.answer',
 };
 
 const DEFAULT_IDS = {
@@ -166,6 +217,7 @@ const DEFAULT_IDS = {
   node: (nodeType: EditableNodeType) => newNodeId(nodeType),
   link: newLinkId,
   graphProposal: newGraphProposalId,
+  run: newRunId,
   idea: newIdeaId,
   evidence: newEvidenceId,
 } as const;
@@ -390,6 +442,18 @@ export class SqliteStore implements StorePort {
     if (before === null) throw new Error(`no project ${projectId} in this database`);
 
     const at = this.#clock();
+    // Run lifecycle is operational state (E3 §4.2): the store applies it
+    // against the run tables in one transaction — core, the project reducer,
+    // refuses these commands by design, so the branch must come first.
+    if (isRunCommand(command)) {
+      return this.#executeRun(projectId, before, command, at, context);
+    }
+    // A card may only speak for a run that exists — the stamp on adoption.
+    if (command.type === 'proposal.create' && command.runId !== undefined) {
+      if (this.#readRunRow(command.runId) === null) {
+        throw new DomainError('run_missing', `제안이 가리키는 런이 없습니다: ${command.runId}`);
+      }
+    }
     const result = applyCommand(before, command, {
       at,
       nextId: (kind, nodeType) => this.#newId(kind, nodeType),
@@ -415,6 +479,210 @@ export class SqliteStore implements StorePort {
         events: result.events,
       };
     });
+  }
+
+  /** The person's run commands, applied against the run tables (§4.2). */
+  #executeRun(
+    projectId: string,
+    project: Project,
+    command: RunLifecycleCommand,
+    at: string,
+    context?: { actor?: string },
+  ): ExecuteOutcome {
+    return transaction(this.#db, () => {
+      const before =
+        command.type === 'run.start' ? null : this.#readRunRow(command.runId);
+      if (command.type !== 'run.start' && before === null) {
+        throw new DomainError('run_missing', `런을 찾지 못했습니다: ${command.runId}`);
+      }
+      const seed: RunSeed | RunRecord =
+        command.type === 'run.start'
+          ? {
+              id: this.#newId('run') as string,
+              projectId,
+              taskId: command.taskId,
+              agent: command.agent,
+              mode: command.mode,
+              state: null,
+            }
+          : (before as RunRecord);
+      const next = personTransition(seed, command, at);
+      this.#writeRun(next, at);
+      this.#appendRunEvents(next, [
+        command.type === 'run.start'
+          ? ({ type: 'run.started', run: next } as const)
+          : ({ type: 'run.updated', run: next } as const),
+      ], at);
+      this.appendRunLog(
+        next.id,
+        'event',
+        JSON.stringify({
+          lifecycle: command.type.split('.')[1],
+          ...(command.type === 'run.cancel' && command.reason !== undefined ? { reason: command.reason } : {}),
+          ...(command.type === 'run.answer' ? { answer: command.text } : {}),
+        }),
+      );
+      const opSeq = this.#insertLog({
+        at,
+        actor: context?.actor,
+        kind: OP_KIND[command.type] ?? command.type,
+        target: next.id,
+        before,
+        after: next,
+        payload: { projectId },
+      });
+      // The project itself did not change; the run row is the change. The
+      // events ride the agent thread above and come back to the caller too,
+      // so a driver learns the run id without re-reading the table.
+      const events = [
+        command.type === 'run.start'
+          ? ({ type: 'run.started', run: next } as const)
+          : ({ type: 'run.updated', run: next } as const),
+      ];
+      return { project, seq: this.#lastSeq(projectId), opSeq, events };
+    });
+  }
+
+  /** The daemon's half of the machine — one legal move, journaled and evented. */
+  transitionRun(runId: string, to: RunRecord['state']): RunRecord {
+    const at = this.#clock();
+    return transaction(this.#db, () => {
+      const record = this.#readRunRow(runId);
+      if (record === null) throw new DomainError('run_missing', `런을 찾지 못했습니다: ${runId}`);
+      const next = machineTransition(record, to, at);
+      this.#writeRun(next, at);
+      this.#appendRunEvents(next, [{ type: 'run.updated', run: next }], at);
+      return next;
+    });
+  }
+
+  /** One `run_log` line — the run's own memory, never the project's (A5). */
+  appendRunLog(runId: string, stream: JournalLine['stream'], line: string): void {
+    const at = this.#clock();
+    const row = oneRow<{ next: number }>(
+      this.#db,
+      'SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM run_log WHERE run_id = ?',
+      runId,
+    ) ?? { next: 1 };
+    this.#db
+      .prepare('INSERT INTO run_log(run_id, seq, at, stream, line) VALUES (?, ?, ?, ?, ?)')
+      .run(runId, row.next, at, stream, line.slice(0, 16_000));
+  }
+
+  runLog(runId: string): JournalLine[] {
+    return allRows<{ seq: number; stream: string; line: string }>(
+      this.#db,
+      'SELECT seq, stream, line FROM run_log WHERE run_id = ? ORDER BY seq',
+      runId,
+    ).map((row) => ({ stream: row.stream as JournalLine['stream'], line: row.line }));
+  }
+
+  saveCheckpoint(runId: string, seq: number, summary: string): void {
+    const at = this.#clock();
+    this.#db
+      .prepare(
+        `INSERT INTO checkpoint(id, run_id, seq, git_ref, summary, created_at) VALUES (?, ?, ?, NULL, ?, ?)
+         ON CONFLICT(run_id, seq) DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at`,
+      )
+      .run(`CP_${newSuffix()}`, runId, seq, summary.slice(0, 60_000), at);
+  }
+
+  latestCheckpoint(runId: string): { seq: number; summary: string; createdAt: string } | null {
+    const row = oneRow<{ seq: number; summary: string; created_at: string }>(
+      this.#db,
+      'SELECT seq, summary, created_at FROM checkpoint WHERE run_id = ? ORDER BY seq DESC LIMIT 1',
+      runId,
+    );
+    return row === undefined ? null : { seq: row.seq, summary: row.summary, createdAt: row.created_at };
+  }
+
+  getRun(runId: string): RunRecord | null {
+    return this.#readRunRow(runId);
+  }
+
+  listRuns(): RunRecord[] {
+    return allRows<RunRow>(
+      this.#db,
+      `SELECT r.*, o.project_id AS project_id FROM run r JOIN obj o ON o.id = r.task_id ORDER BY r.rowid`,
+    ).map(rowToRun);
+  }
+
+  /**
+   * Daemon boot (AC-2): every run that was live when the process died gets
+   * the interrupted flag, so the person sees it and chooses resume or cancel.
+   */
+  markInterruptedRuns(): number {
+    const at = this.#clock();
+    return transaction(this.#db, () => {
+      const result = this.#db
+        .prepare(
+          "UPDATE run SET interrupted = 1 WHERE interrupted = 0 AND state IN ('queued','running','waiting','needs_input','review')",
+        )
+        .run();
+      const count = Number(result.changes);
+      if (count > 0) {
+        for (const record of this.listRuns()) {
+          if (record.interrupted && !isTerminalRunState(record.state)) {
+            this.#appendRunEvents(record, [{ type: 'run.updated', run: record }], at);
+          }
+        }
+      }
+      return count;
+    });
+  }
+
+  #readRunRow(runId: string): RunRecord | null {
+    const row = oneRow<RunRow>(
+      this.#db,
+      'SELECT r.*, o.project_id AS project_id FROM run r JOIN obj o ON o.id = r.task_id WHERE r.id = ?',
+      runId,
+    );
+    return row === undefined ? null : rowToRun(row);
+  }
+
+  #writeRun(record: RunRecord, at: string): void {
+    this.#db
+      .prepare(
+        `INSERT INTO run(id, task_id, worktree, branch, agent, mode, state, interrupted, outward_at, started_at, ended_at)
+         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           state      = excluded.state,
+           interrupted = excluded.interrupted,
+           outward_at = excluded.outward_at,
+           started_at = excluded.started_at,
+           ended_at   = excluded.ended_at`,
+      )
+      .run(
+        record.id,
+        record.taskId,
+        record.agent,
+        record.mode,
+        record.state,
+        record.interrupted ? 1 : 0,
+        record.outwardAt,
+        record.startedAt,
+        record.endedAt,
+      );
+    void at;
+  }
+
+  /** Run events ride the thread the v17 schema reserved: `agent:<runId>`. */
+  #appendRunEvents(
+    record: RunRecord,
+    events: ReadonlyArray<{ type: 'run.started' | 'run.updated'; run: RunRecord }>,
+    at: string,
+  ): void {
+    if (events.length === 0) return;
+    const threadId = `agent:${record.id}`;
+    this.#db
+      .prepare("INSERT OR IGNORE INTO thread(id,kind,last_seq,created_at) VALUES(?,'agent',0,?)")
+      .run(threadId, at);
+    const insert = this.#db.prepare(
+      'INSERT INTO event(thread_id,type,payload,at,device_id,uuid) VALUES(?,?,?,?,?,?)',
+    );
+    for (const event of events) {
+      insert.run(threadId, event.type, JSON.stringify(event), at, this.#deviceId, randomUUID());
+    }
   }
 
   /**
@@ -1070,9 +1338,14 @@ export class SqliteStore implements StorePort {
         proposal.patches.map((patch) => patch.blockId),
         adopted.rev,
       );
+      // E3 W1 (AC-1): an adoption that went through a run carries the run's
+      // name — `ai:<runId>` — regardless of whose finger clicked. A person's
+      // own card keeps `person:*`; the explicit context actor still wins over
+      // the default, just never over the run's provenance.
+      const stamp = proposal.authorId === null ? actor : `ai:${proposal.authorId}`;
       return this.#insertLog({
         at,
-        actor,
+        actor: stamp,
         kind: 'proposal.adopt',
         target: doc.id,
         before: beforeSnapshot,
@@ -1453,13 +1726,14 @@ export class SqliteStore implements StorePort {
     const row = proposalToRow(proposal);
     this.#db
       .prepare(
-        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, idea_id, created_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?, ?)
+        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, idea_id, author_id, created_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            summary    = excluded.summary,
            state      = excluded.state,
            risk       = excluded.risk,
            idea_id    = excluded.idea_id,
+           author_id  = excluded.author_id,
            decided_at = excluded.decided_at`,
       )
       .run(
@@ -1470,6 +1744,7 @@ export class SqliteStore implements StorePort {
         row.base_rev,
         row.state,
         row.idea_id,
+        row.author_id,
         row.created_at,
         row.decided_at,
       );

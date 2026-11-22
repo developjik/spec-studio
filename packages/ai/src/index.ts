@@ -16,8 +16,11 @@ import {
 
 export {
   AiProviderError,
+  callAgentTurn,
   callModel,
   redact,
+  type AgentTurnInput,
+  type AgentTurnResult,
   type AiProviderErrorCode,
   type ModelCallInput,
   type ModelCallResult,

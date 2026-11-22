@@ -4,6 +4,7 @@ import { EvidenceSchema } from './evidence';
 import { GraphLinkSchema, GraphNodeSchema, GraphProposalSchema } from './graph';
 import { IdeaSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
+import { RunRecordSchema } from './agent';
 import { PinSchema } from './pin';
 import { ProposalSchema } from './proposal';
 import { ScreenSchema } from './screen';
@@ -74,6 +75,12 @@ export const EventSchema = z.discriminatedUnion('type', [
     pinId: PinIdSchema,
   }),
   z.object({ type: z.literal('proposal.created'), proposal: ProposalSchema }),
+
+  // ── agent runs (E3 F1) ─────────────────────────────────────────────
+  /** A run entered the world (run.start). Carries the full record once. */
+  z.object({ type: z.literal('run.started'), run: RunRecordSchema }),
+  /** Every later lifecycle move — state, interrupted, outward — in one shape. */
+  z.object({ type: z.literal('run.updated'), run: RunRecordSchema }),
   z.object({
     type: z.literal('proposal.adopted'),
     docId: DocIdSchema,

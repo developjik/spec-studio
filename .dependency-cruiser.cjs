@@ -30,6 +30,14 @@ module.exports = {
       to: { path: '^packages/(store|publish|core|mcp)' },
     },
     {
+      name: 'agent-runtime-is-port-driven',
+      severity: 'error',
+      comment:
+        'The agent runtime (E3 F1) is pure: state machine and driver decide, ports act. It never imports the store, the daemon, the publisher or the model layer — the daemon wires those in.',
+      from: { path: '^packages/agent' },
+      to: { path: '^packages/(store|publish|core|mcp|ai)|^apps/' },
+    },
+    {
       name: 'core-is-pure',
       severity: 'error',
       comment:

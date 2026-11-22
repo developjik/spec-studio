@@ -9,6 +9,7 @@ import {
 import { IdeaIdSchema, IdeaStateSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { AnchorSchema, PinTypeSchema, PinTypeSchema as TypeSchema } from './pin';
+import { RunIdSchema, RunModeSchema } from './agent';
 import { ScreenSchema } from './screen';
 
 /**
@@ -174,6 +175,8 @@ export const CommandSchema = z.discriminatedUnion('type', [
     model: z.string().max(80).nullable().optional(),
     /** v16 (MN-A): the idea a brief answers — persisted on the proposal row. */
     ideaId: IdeaIdSchema.optional(),
+    /** E3 (W1): the run this card was produced by — persisted as author_id. */
+    runId: RunIdSchema.optional(),
   }),
   z.object({
     type: z.literal('proposal.adopt'),
@@ -235,6 +238,29 @@ export const CommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('graph.proposal.reject'),
     proposalId: z.string().min(1),
+  }),
+
+  // ── agent runs (E3 F1) ─────────────────────────────────────────────
+  /** A person starts a run on a task (specnode · pin · idea). The daemon picks it up. */
+  z.object({
+    type: z.literal('run.start'),
+    taskId: ObjectIdSchema,
+    agent: z.string().trim().min(1).max(40),
+    mode: RunModeSchema.default('research'),
+  }),
+  /** A person stops a run. Terminal — the runner's in-flight work is aborted. */
+  z.object({
+    type: z.literal('run.cancel'),
+    runId: RunIdSchema,
+    reason: z.string().max(500).optional(),
+  }),
+  /** A person revives an `interrupted` run from its checkpoint (AC-2). */
+  z.object({ type: z.literal('run.resume'), runId: RunIdSchema }),
+  /** A person answers the `needs_input` question; the run continues. */
+  z.object({
+    type: z.literal('run.answer'),
+    runId: RunIdSchema,
+    text: z.string().trim().min(1).max(8000),
   }),
 
   // ── handoff package (F4) ─────────────────────────────────────────────

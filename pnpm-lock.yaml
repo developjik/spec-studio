@@ -35,6 +35,9 @@ importers:
 
   apps/daemon:
     dependencies:
+      '@spec-studio/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@spec-studio/ai':
         specifier: workspace:*
         version: link:../../packages/ai
@@ -113,6 +116,22 @@ importers:
         specifier: ^7.3.8
         version: 7.3.8(@types/node@24.19.2)(jiti@2.7.0)
 
+  packages/agent:
+    dependencies:
+      '@spec-studio/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@types/node@22.20.5)(vite@7.3.8(@types/node@22.20.5)(jiti@2.7.0))
+
   packages/ai:
     dependencies:
       '@spec-studio/protocol':
@@ -179,6 +198,9 @@ importers:
 
   packages/store:
     dependencies:
+      '@spec-studio/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@spec-studio/core':
         specifier: workspace:*
         version: link:../core

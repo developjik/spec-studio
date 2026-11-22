@@ -614,8 +614,13 @@ export function execute(
                 at: ctx.at,
               });
       // MN-A (v16): the proposal remembers which idea it answers, so a
-      // promotion can find its seed again after a restart.
-      const carried: Proposal = { ...proposal, ideaId: command.ideaId ?? null };
+      // promotion can find its seed again after a restart. E3 (W1): it also
+      // remembers the run that produced it — author_id, the adoption stamp.
+      const carried: Proposal = {
+        ...proposal,
+        ideaId: command.ideaId ?? null,
+        authorId: command.runId ?? null,
+      };
       // One open proposal per doc: a new card retires the one still on the
       // table for the same doc, the same way a refusal would.
       const retired = project.proposals.filter(
@@ -965,6 +970,19 @@ export function execute(
     }
 
     // ── handoff package (F4) ───────────────────────────────────────────
+    case 'run.start':
+    case 'run.cancel':
+    case 'run.resume':
+    case 'run.answer': {
+      // Run lifecycle is operational state the store owns (E3 §4.2, A1): it
+      // never becomes project content, so the project reducer refuses it and
+      // SqliteStore applies it against the run tables before core runs.
+      throw new DomainError(
+        'invalid_input',
+        '런 수명주기 커맨드는 저장소가 적용합니다 — 프로젝트 상태를 바꾸지 않습니다',
+      );
+    }
+
     case 'project.package.export':
       // Writing files changes no project state; the event is the record.
       return {
