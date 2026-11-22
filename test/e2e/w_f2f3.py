@@ -107,6 +107,12 @@ def main() -> int:
             )
             page.on("pageerror", lambda error: console_errors.append(str(error)))
 
+            # E4 F1: this suite exercises pro surfaces (인박스·근거 패널 등). A
+            # fresh profile boots easy, so declare the pro choice the way the
+            # mode switch persists it — the local settings key, pre-boot.
+            page.add_init_script(
+                "localStorage.setItem('spec-studio.settings.v1', JSON.stringify({mode:'pro'}))"
+            )
             page.goto(WEB_URL, wait_until="networkidle")
             page.wait_for_selector(
                 "[data-testid=daemon-status][data-status=connected]", timeout=20000

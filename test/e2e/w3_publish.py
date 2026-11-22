@@ -116,6 +116,12 @@ def main() -> int:
             page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
             page.on("pageerror", lambda error: console_errors.append(str(error)))
 
+            # E4 F1: this suite exercises pro surfaces (figma-bar·발행 등). A
+            # fresh profile boots easy, so declare the pro choice the way the
+            # mode switch persists it — the local settings key, pre-boot.
+            page.add_init_script(
+                "localStorage.setItem('spec-studio.settings.v1', JSON.stringify({mode:'pro'}))"
+            )
             page.goto(WEB_URL, wait_until="networkidle")
             page.wait_for_selector('[data-testid=daemon-status][data-status=connected]', timeout=20000)
             check("SQLite 데몬에 연결됨 배지", True)

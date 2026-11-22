@@ -126,6 +126,12 @@ def main() -> int:
             }
             check("데몬 환경변수 키 없음 (UI 키로만)", env_keys == {"anthropic": False, "openai": False, "local": False}, str(env_keys))
 
+            # E4 F1: this suite exercises pro surfaces (그래프 제안 카드 등). A
+            # fresh profile boots easy, so declare the pro choice the way the
+            # mode switch persists it — the local settings key, pre-boot.
+            page.add_init_script(
+                "localStorage.setItem('spec-studio.settings.v1', JSON.stringify({mode:'pro'}))"
+            )
             page.goto(WEB_URL, wait_until="networkidle")
             page.wait_for_selector(
                 "[data-testid=daemon-status][data-status=connected]", timeout=20000
