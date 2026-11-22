@@ -354,13 +354,14 @@ describe('run.* refusal mapping — a predictable rejection is never a 500 (W2)'
     }
   });
 
-  it('a missing runId answers 404 run_missing', async () => {
+  it('a missing runId hides behind the same 404 as a foreign run (쓰기 은닉 통일)', async () => {
     const daemon = await boot(scriptedModel([FINAL]));
     const { projectId } = await seed(daemon);
     for (const body of RUN_COMMANDS('R_nonexistent')) {
       const refused = await command(daemon, projectId, body);
       expect(refused.status).toBe(404);
-      expect(refused.body.error?.code).toBe('run_missing');
+      expect(refused.body.error?.code).toBe('run_not_found');
+      expect(refused.body.error?.message).toBe('그런 런이 없습니다.');
     }
   });
 
@@ -774,6 +775,129 @@ describe('waiting 데드 상태 — the interrupted park (W3, 제품 결정 2026
     const detail = await api<{ run: RunRecord }>(daemon, `/api/projects/${projectId}/runs/${runId}`);
     expect(detail.body.run.state).toBe('needs_input');
     expect(detail.body.run.interrupted).toBe(false);
+  });
+
+  it("a stale loop's late cancelled cannot settle the run a resume already retook (Major-2)", async () => {
+    // The verifier's race, end to end: the backstop parks and aborts loop A,
+    // but A's model turn is a slow upstream that ignores the abort. The
+    // person resumes; loop B runs to the card. When A's turn finally answers,
+    // its driveRun sees the aborted signal and hands back a cancelled
+    // outcome — a dead loop's verdict arriving at a live run. Ownership, not
+    // state guards, is what must stop it: B owns the slot now.
+    let release: ((value: { text: string; toolCalls: AgentToolCall[] }) => void) | undefined;
+    const slowUpstream: ModelPort = {
+      turn: () =>
+        new Promise((resolve) => {
+          release = resolve; // deliberately never rejects on abort
+        }),
+    };
+    const model = switchableModel(slowUpstream);
+    const daemon = await bootBackstop(model);
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.interrupted && run.state === 'waiting');
+
+    // the person resumes: loop B reaches the card while A still hangs
+    model.swap(scriptedModel([FINAL]));
+    const resumed = await command(daemon, projectId, { type: 'run.resume', runId });
+    expect(resumed.status).toBe(200);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'review');
+
+    // A's upstream finally answers — the late cancelled verdict must land
+    // nowhere. The run stays on its card, resumable by the person.
+    release?.({ text: '', toolCalls: [] });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const after = await api<{ run: RunRecord }>(daemon, `/api/projects/${projectId}/runs/${runId}`);
+    expect(after.body.run.state).toBe('review');
+    expect(after.body.run.interrupted).toBe(false);
+  });
+});
+
+describe('daemon shutdown under a live loop (Major-1)', () => {
+  /** A model whose turn ignores the abort and wakes only when told. */
+  function unwakingModel(): ModelPort & { wake(): void } {
+    let wakeIt: (() => void) | undefined;
+    const port: ModelPort & { wake(): void } = {
+      wake() {
+        wakeIt?.();
+      },
+      turn: () =>
+        new Promise((resolve) => {
+          wakeIt = () => resolve({ text: '', toolCalls: [] });
+        }),
+    };
+    return port;
+  }
+  /** A model that rejects the moment the run is aborted — like real fetch. */
+  const abortableModel: ModelPort = {
+    turn: (request) =>
+      new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      }),
+  };
+  async function bootShutdown(model: ModelPort, drainGraceMs: number): Promise<Daemon> {
+    const started = await startDaemon({
+      dbPath,
+      port: 0,
+      now: () => '2026-11-22T07:00:00.000Z',
+      agent: { modelPort: model, drainGraceMs },
+    });
+    daemons.push(started);
+    return started;
+  }
+  async function startARun(daemon: Daemon): Promise<{ projectId: string; runId: string }> {
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    return { projectId, runId: runIdOf(started) };
+  }
+
+  it('the store closing under a mid-flight loop leaves no unhandled rejection', async () => {
+    const model = unwakingModel();
+    const daemon = await bootShutdown(model, 40);
+    const { projectId, runId } = await startARun(daemon);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'running');
+
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await daemon.close(); // the drain grace is short — the loop survives it
+      model.wake(); // the loop wakes to a store that is already closed
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(rejections).toHaveLength(0);
+  });
+
+  it('a run aborted at close is left for the boot marking and still resumes', async () => {
+    const daemonA = await bootShutdown(abortableModel, 2000);
+    const { projectId, runId } = await startARun(daemonA);
+    await waitRun(daemonA, projectId, runId, (run) => run.state === 'running');
+
+    await daemonA.close(); // abort → the model rejects → the loop drains in close
+
+    const daemonB = await boot(scriptedModel([FINAL]));
+    const flagged = await api<{ run: RunRecord }>(daemonB, `/api/projects/${projectId}/runs/${runId}`);
+    expect(flagged.body.run.interrupted).toBe(true); // AC-2 boot marking, not cancelled
+    expect(flagged.body.run.state).toBe('running');
+
+    const resumed = await command(daemonB, projectId, { type: 'run.resume', runId });
+    expect(resumed.status).toBe(200);
+    await waitRun(daemonB, projectId, runId, (run) => run.state === 'review');
   });
 });
 

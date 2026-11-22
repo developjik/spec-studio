@@ -62,9 +62,10 @@ describe('toHttpError — cross-project hiding (읽기 경로 404 은닉 통일)
     expect(failure.message).toBe('그런 런이 없습니다.');
   });
 
-  it('run_missing keeps its 404', () => {
-    const failure = toHttpError(new DomainError('run_missing', '그런 런이 없습니다'));
+  it('run_missing hides behind the same 404 run_not_found body (쓰기 존재 오라클 제거)', () => {
+    const failure = toHttpError(new DomainError('run_missing', '런을 찾지 못했습니다: R_probe000001'));
     expect(failure.status).toBe(404);
-    expect(failure.code).toBe('run_missing');
+    expect(failure.code).toBe('run_not_found');
+    expect(failure.message).toBe('그런 런이 없습니다.');
   });
 });

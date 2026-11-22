@@ -52,6 +52,13 @@ export interface AgentRuntimeOptions {
   waitingTimeoutMs?: number;
   /** How often the backstop sweeps the activity clock (default 30s). */
   sweepIntervalMs?: number;
+  /**
+   * Major-1 (검증 W3): on close the service aborts in-flight loops and
+   * waits out their unwind at most this long before the store closes under
+   * them — a loop that outruns the grace is harmless (its catch is
+   * defensive), never an unhandled rejection. Default 2s; tests shrink it.
+   */
+  drainGraceMs?: number;
 }
 
 export const AGENT_SYSTEM_PROMPT = [
@@ -71,15 +78,20 @@ export class AgentService {
   readonly #store: SqliteStore;
   readonly #options: AgentRuntimeOptions;
   readonly #aborts = new Map<string, AbortController>();
+  /** One entry per in-flight #drive — what stop() drains before returning. */
+  readonly #drives = new Map<string, Promise<void>>();
   /** W3 backstop: runId → last activity instant (journal · stream · state). */
   readonly #lastActivity = new Map<string, number>();
   readonly #waitingTimeoutMs: number;
+  readonly #drainGraceMs: number;
   readonly #sweeper: ReturnType<typeof setInterval> | undefined;
+  #closing = false;
 
   constructor(options: AgentRuntimeOptions) {
     this.#store = options.store;
     this.#options = options;
     this.#waitingTimeoutMs = options.waitingTimeoutMs ?? 10 * 60_000;
+    this.#drainGraceMs = options.drainGraceMs ?? 2_000;
     const sweepMs = options.sweepIntervalMs ?? 30_000;
     if (sweepMs > 0) {
       this.#sweeper = setInterval(() => this.#sweep(), sweepMs);
@@ -87,9 +99,32 @@ export class AgentService {
     }
   }
 
-  /** The daemon closes: the backstop timer stops with it. */
-  stop(): void {
+  /**
+   * The daemon closes (Major-1): stop the backstop, abort every in-flight
+   * loop, and wait out their unwind — the store must not close under a loop
+   * still mid-write. Loops see `closing` and settle nothing: a run that was
+   * live at shutdown stays exactly as it is, and the next boot's
+   * markInterruptedRuns flags it — AC-2's restart story, not a cancelled one.
+   * A loop whose upstream ignores the abort outruns the grace; its late
+   * unwind is harmless (the drive never rejects), so the wait is bounded.
+   */
+  async stop(): Promise<void> {
+    if (this.#closing) return;
+    this.#closing = true;
     if (this.#sweeper !== undefined) clearInterval(this.#sweeper);
+    for (const controller of this.#aborts.values()) controller.abort();
+    if (this.#drives.size > 0) {
+      await Promise.race([
+        Promise.allSettled([...this.#drives.values()]),
+        new Promise((resolve) => {
+          const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, this.#drainGraceMs);
+          timer.unref?.();
+        }),
+      ]);
+    }
+    this.#aborts.clear();
+    this.#drives.clear();
+    this.#lastActivity.clear();
   }
 
   /**
@@ -137,15 +172,28 @@ export class AgentService {
    * forget by design: the HTTP request that caused it has already answered.
    */
   pickUpRun(projectId: string, runId: string, extraUserMessage?: string): void {
+    if (this.#closing) return; // shutting down — the next boot picks runs up
     const record = this.#store.getRun(runId);
     if (record === null) return;
     if (record.state !== 'queued') return;
     if (this.#aborts.has(runId)) return; // one loop per run
     const controller = new AbortController();
     this.#aborts.set(runId, controller);
-    void this.#drive(projectId, runId, controller, extraUserMessage).finally(() => {
+    const drive = this.#drive(projectId, runId, controller, extraUserMessage).finally(() => {
       this.#aborts.delete(runId);
+      this.#drives.delete(runId);
+      try {
+        // A resume (or answer) that landed while this loop was still
+        // unwinding found the slot taken and left the run queued with no
+        // owner — the slot is free now, so it gets picked up here.
+        if (!this.#closing && this.#store.getRun(runId)?.state === 'queued') {
+          this.pickUpRun(projectId, runId);
+        }
+      } catch {
+        // the store is gone (shutdown outran this unwind) — nothing to pick up
+      }
     });
+    this.#drives.set(runId, drive);
   }
 
   /** A decision on a run's card is what 'done' means for the run. */
@@ -232,21 +280,30 @@ export class AgentService {
       const checkpointSeq = (store.latestCheckpoint(runId)?.seq ?? 0) + 1;
       store.saveCheckpoint(runId, checkpointSeq, JSON.stringify({ messages: outcome.messages }));
 
-      await this.#settle(projectId, runId, record, outcome, project, reportedUrls);
+      await this.#settle(projectId, runId, record, outcome, project, controller, reportedUrls);
     } catch (error) {
-      flushText();
-      // The honest exits: cancelled by command, or a failure the person sees.
-      const current = store.getRun(runId);
-      if (current === null || current.state === 'cancelled') return;
-      // W3: a parked run (backstop or provider error) is the person's now —
-      // the sweep already answered them; this loop only winds down.
-      if (current.interrupted && !isTerminalRunState(current.state)) return;
-      if (current.state !== 'running' && current.state !== 'waiting') return;
-      store.appendRunLog(runId, 'stderr', error instanceof Error ? error.message : String(error));
+      // Major-1: a loop that outlives close() must never turn a store failure
+      // into an unhandled rejection — every read below can itself throw once
+      // the store is gone, so the whole exit stays defensive.
       try {
-        store.transitionRun(runId, 'failed');
+        if (this.#closing) return; // shutdown owns the record — boot marks it
+        if (this.#aborts.get(runId) !== controller) return; // Major-2: stale loop
+        flushText();
+        // The honest exits: cancelled by command, or a failure the person sees.
+        const current = store.getRun(runId);
+        if (current === null || current.state === 'cancelled') return;
+        // W3: a parked run (backstop or provider error) is the person's now —
+        // the sweep already answered them; this loop only winds down.
+        if (current.interrupted && !isTerminalRunState(current.state)) return;
+        if (current.state !== 'running' && current.state !== 'waiting') return;
+        store.appendRunLog(runId, 'stderr', error instanceof Error ? error.message : String(error));
+        try {
+          store.transitionRun(runId, 'failed');
+        } catch {
+          // already terminal — the state machine has the last word
+        }
       } catch {
-        // already terminal — the state machine has the last word
+        // the store is closed (daemon close outran this loop) — nothing left to record
       }
     } finally {
       this.#lastActivity.delete(runId);
@@ -259,9 +316,18 @@ export class AgentService {
     record: RunRecord,
     outcome: RunOutcome,
     project: Project,
+    controller: AbortController,
     reportedUrls: ReadonlySet<string> = new Set(),
   ): Promise<void> {
     const store = this.#store;
+    // Major-2 (검증 W3): loop ownership. A park+resume (or anything else
+    // that freed the abort slot) may have handed this run to a newer loop
+    // while ours was still unwinding — state guards alone let a late machine
+    // verdict through (the verifier's race: a dead loop's cancelled ended a
+    // live run on review). A verdict is only ours while our controller
+    // still owns the slot; after that it lands nowhere, by design.
+    if (this.#aborts.get(runId) !== controller) return;
+    if (this.#closing) return; // shutdown: boot marking takes over
     // W3: a parked run is waiting on the person's resume or cancel — every
     // machine verdict below would overwrite their decision, so none runs.
     // A run already resumed (queued) belongs to its new loop the same way.

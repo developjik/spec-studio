@@ -11,7 +11,7 @@ import {
   type Project,
   type ProjectBundle,
 } from '@spec-studio/protocol';
-import { DomainError, remapProject, ungroundedRequirements, type DomainErrorCode } from '@spec-studio/core';
+import { DomainError, remapProject, ungroundedRequirements } from '@spec-studio/core';
 import {
   openSqliteStore,
   SCHEMA_VERSION,
@@ -86,6 +86,8 @@ export interface DaemonOptions {
     /** W3 backstop knobs — see AgentRuntimeOptions. */
     waitingTimeoutMs?: number;
     sweepIntervalMs?: number;
+    /** Major-1: how long close() waits out in-flight loops — see AgentRuntimeOptions. */
+    drainGraceMs?: number;
   };
 }
 
@@ -272,6 +274,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     ...(options.agent?.modelPort === undefined ? {} : { modelPort: options.agent.modelPort }),
     ...(options.agent?.waitingTimeoutMs === undefined ? {} : { waitingTimeoutMs: options.agent.waitingTimeoutMs }),
     ...(options.agent?.sweepIntervalMs === undefined ? {} : { sweepIntervalMs: options.agent.sweepIntervalMs }),
+    ...(options.agent?.drainGraceMs === undefined ? {} : { drainGraceMs: options.agent.drainGraceMs }),
     ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
   });
   const backupDir =
@@ -568,6 +571,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         unsubscribe();
         clearInterval(heartbeat);
       });
+      // A run that already ended streams its snapshot and closes: the end
+      // check lives in pushDeltas, which only a change notice fires — a
+      // watcher connecting after the terminal state would otherwise sit on
+      // an open stream with nothing left to report (검증 Major-1의 안정 파트너:
+      // 종료 후 접속한 tail watcher가 영원히 대기하는 게이트 플레이크).
+      if (isTerminalRunState(initial.state)) {
+        unsubscribe();
+        clearInterval(heartbeat);
+        res.end();
+      }
       return;
     }
 
@@ -720,14 +733,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const address = server.address();
   const port = typeof address === 'object' && address !== null ? address.port : (options.port ?? DEFAULT_PORT);
 
+  let closedOnce = false;
   return {
     server,
     store,
     port,
     url: `http://${host}:${port}`,
     async close() {
+      if (closedOnce) return;
+      closedOnce = true;
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      agent.stop();
+      // Major-1 (검증 W3): drain the agent's in-flight loops before the
+      // store closes under them — a loop that outlives the grace is
+      // harmless, never an unhandled rejection at shutdown.
+      await agent.stop();
       await store.close();
     },
   };
@@ -737,11 +756,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
  * W2's refusal surface: every predictable `run.*` rejection is a 4xx a client
  * can branch on — `code` carries the cause, never the message text.
  *
- *   404 run_missing         the runId names nothing in this database
- *   404 run_not_found       the run belongs to another project — hidden
- *                           behind the same body as a missing run, so ids
- *                           cannot be probed across projects (W3: the read
- *                           routes' hiding policy, applied to writes too)
+ *   404 run_not_found       the runId names nothing, or belongs to another
+ *                           project — both hidden behind the same body, so
+ *                           ids cannot be probed on any route (W3 통일:
+ *                           읽기·쓰기 전부, 검증 Minor-1)
  *   409 run_terminal        the run already ended — every command refuses
  *   409 run_not_asking      run.answer outside needs_input
  *   409 run_not_interrupted run.resume without a restart flag
@@ -764,21 +782,19 @@ function isSqliteConstraint(error: unknown): error is Error & { errcode: number;
   const code = (error as { errcode: number }).errcode;
   return code === SQLITE_CONSTRAINT || (code > 0xff && (code & 0xff) === SQLITE_CONSTRAINT);
 }
-const DOMAIN_ERROR_STATUS: Readonly<Partial<Record<DomainErrorCode, number>>> = {
-  run_missing: 404,
-};
-
 export function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
   if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
   if (error instanceof RunRefusal) return new HttpError(409, error.code, error.message);
   if (error instanceof DomainError) {
-    // 존재 은닉: another project's run answers exactly what a missing run
-    // answers — same status, same code, same body (W3 통일).
-    if (error.code === 'run_scope') {
+    // 존재 은닉 (W3 통일): another project's run and a run that names nothing
+    // answer exactly what a missing run answers — same status, same code,
+    // same body — so an outside prober cannot tell 'exists somewhere' from
+    // 'does not exist' on any route, read or write (검증 Minor-1).
+    if (error.code === 'run_scope' || error.code === 'run_missing') {
       return new HttpError(404, 'run_not_found', '그런 런이 없습니다.');
     }
-    return new HttpError(DOMAIN_ERROR_STATUS[error.code] ?? 400, error.code, error.message);
+    return new HttpError(400, error.code, error.message);
   }
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {
