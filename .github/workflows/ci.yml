@@ -29,6 +29,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Eval typecheck
+        run: pnpm typecheck:eval
+
       - name: Unit tests
         run: pnpm test
 

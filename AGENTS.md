@@ -14,14 +14,14 @@ This file is the onboarding for any autonomous agent (Devin Bot, Claude Code, Co
 - `apps/daemon` — local daemon, the only writer of `graph.db` (binds 127.0.0.1).
 - `apps/desktop` — Tauri desktop shell.
 - `packages/` — `core` (graph model) · `store` (SQLite) · `protocol` · `ai` · `publish`.
-- `eval/` — the golden set (30 Korean cases) and its runner.
+- `eval/` — the golden set (40 cases: 30 golden + 10 research-brief) and its runner.
 - `test/contract` — SQLite schema contract tests · `test/e2e`.
 
 ## The one gate
 
 ```bash
 pnpm install
-pnpm check   # typecheck → eval typecheck → unit tests → build → dep:check → contract
+pnpm check   # typecheck → eval typecheck → unit tests → golden-set eval → build → dep:check → contract
 ```
 
 `pnpm check` is the whole gate. CI runs it on every PR; a red `pnpm check` means the
