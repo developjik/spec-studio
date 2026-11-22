@@ -8,6 +8,7 @@ import {
   eventSummary,
   questionOf,
   runLabel,
+  webSearchNotice,
 } from '../model/runview';
 
 /**
@@ -48,6 +49,9 @@ export function RunPanel(props: RunPanelProps) {
   };
 
   const question = active !== null && active.state === 'needs_input' ? questionOf(log) : null;
+  // E3 F2 배지(QA R1): a keyless run says so while it holds — the search
+  // that quietly did not happen must never read as if it did.
+  const webSearchFlag = webSearchNotice(log);
 
   return (
     <section className="run-panel" aria-label="에이전트 런" data-testid="run-panel">
@@ -102,6 +106,11 @@ export function RunPanel(props: RunPanelProps) {
             {active.interrupted && (
               <span className="run-flag" data-testid="run-interrupted">
                 재시작됨 — run.resume 가능
+              </span>
+            )}
+            {webSearchFlag !== null && (
+              <span className="run-flag" data-testid="run-websearch-flag">
+                {webSearchFlag}
               </span>
             )}
           </div>

@@ -4,10 +4,11 @@ import {
   canCancel,
   canResume,
   eventSummary,
+  questionOf,
   runLabel,
   isLive,
-  questionOf,
   upsertRun,
+  webSearchNotice,
   RUN_STATE_LABEL,
   RUN_TERMINAL,
 } from '../src/model/runview';
@@ -101,6 +102,31 @@ describe('upsertRun — a stream update lands in place', () => {
     expect(merged[0]!.state).toBe('running');
     expect(merged).toHaveLength(2);
     expect(upsertRun(merged, { ...run('done'), id: 'R_new00000' })).toHaveLength(3);
+  });
+});
+
+describe('웹 검색 배지 (E3 F2 · QA 재검증 R1) — 강등이 화면에 도달한다', () => {
+  it('eventSummary renders the availability events instead of hiding them', () => {
+    expect(eventSummary(JSON.stringify({ web_search: 'available' }))).toBe('웹 검색 사용 가능');
+    expect(eventSummary(JSON.stringify({ web_search: 'unavailable', reason: 'no_api_key' }))).toBe(
+      '웹 검색 불가: TAVILY_API_KEY 키가 없습니다. 키를 설정한 뒤 이 런을 재개하세요.',
+    );
+  });
+
+  it('webSearchNotice flags the degraded run — and clears when a later pickup had the key', () => {
+    const degraded: RunLogLineView[] = [
+      { stream: 'event', line: JSON.stringify({ web_search: 'unavailable', reason: 'no_api_key' }) },
+    ];
+    expect(webSearchNotice(degraded)).toBe(
+      '웹 검색 불가: TAVILY_API_KEY 키가 없습니다. 키를 설정한 뒤 이 런을 재개하세요.',
+    );
+    expect(webSearchNotice([])).toBeNull();
+    expect(
+      webSearchNotice([
+        ...degraded,
+        { stream: 'event', line: JSON.stringify({ web_search: 'available' }) },
+      ]),
+    ).toBeNull();
   });
 });
 

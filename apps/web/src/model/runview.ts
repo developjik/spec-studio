@@ -80,6 +80,33 @@ export function questionOf(log: readonly RunLogLineView[]): string | null {
   return null;
 }
 
+/** The journal's keyless-degradation line — the badge and the log agree on it. */
+export const WEB_SEARCH_UNAVAILABLE_NOTICE =
+  '웹 검색 불가: TAVILY_API_KEY 키가 없습니다. 키를 설정한 뒤 이 런을 재개하세요.';
+
+/**
+ * E3 F2 배지(QA 재검증 R1): the run's pickup journals whether it can actually
+ * search. The degraded case must reach the person — a badge while it holds,
+ * a log line where it happened — never a silent skip the user reads as done.
+ */
+export function webSearchNotice(log: readonly RunLogLineView[]): string | null {
+  let notice: string | null = null;
+  for (const entry of log) {
+    if (entry.stream !== 'event') continue;
+    try {
+      const parsed = JSON.parse(entry.line) as { web_search?: string; reason?: string };
+      if (parsed.web_search === 'unavailable') {
+        notice = parsed.reason === 'no_api_key' ? WEB_SEARCH_UNAVAILABLE_NOTICE : '웹 검색 불가';
+      } else if (parsed.web_search === 'available') {
+        notice = null; // a later pickup had the key — the badge clears
+      }
+    } catch {
+      // not a structured journal line
+    }
+  }
+  return notice;
+}
+
 /** An event line's one-line summary for the log area; null hides noise. */
 export function eventSummary(line: string): string | null {
   try {
@@ -93,11 +120,16 @@ export function eventSummary(line: string): string | null {
       interrupted?: boolean;
       reason?: string;
       detail?: string;
+      web_search?: string;
     };
     if (parsed.interrupted === true) {
       const why = parsed.reason === 'inactivity_timeout' ? '타임아웃' : '오류';
       return `중단됨(${why})${parsed.detail === undefined ? '' : ` — ${parsed.detail}`}`;
     }
+    if (parsed.web_search === 'unavailable') {
+      return parsed.reason === 'no_api_key' ? WEB_SEARCH_UNAVAILABLE_NOTICE : '웹 검색 불가';
+    }
+    if (parsed.web_search === 'available') return '웹 검색 사용 가능';
     if (parsed.needs_input === true) return `질문: ${parsed.question ?? ''}`;
     if (parsed.final === true) return '최종 초안 작성 완료';
     if (parsed.card === true) return '리서치 문서에 결정카드 등록';

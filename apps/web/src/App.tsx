@@ -338,6 +338,11 @@ export default function App() {
           setRunLog(event.log);
         } else if (event.type === 'run') {
           setRuns((current) => upsertRun(current, event.run));
+          // QA R3: a card files server-side and retires the proposal this
+          // screen still shows — the moment the run reaches review, the
+          // project (and the panel's card) must catch up, or a stale adopt
+          // button 400s on a proposal that is no longer on the table.
+          if (event.run.state === 'review') void reload();
         } else if (event.type === 'log') {
           setRunLog((current) => [...current, { stream: event.stream, line: event.line }]);
         }
@@ -386,7 +391,7 @@ export default function App() {
       ? `${runProvider.provider} · ${runProvider.defaultModel}`
       : aiStatus === null
         ? null
-        : '모델 키 없음 — 런은 실패로 끝납니다';
+        : '모델 키 없음 — 런은 중단되고 대기로 남습니다(키 설정 후 재개 가능)';
 
   /**
    * One path for both modes: with a daemon the command is applied by the store
@@ -1343,7 +1348,12 @@ export default function App() {
           onTest={() => void runAiTest()}
           onEraseKeychain={() => void runKeychainErase()}
           onPropose={(mode) => void runAiProposal(mode)}
-          onClose={() => setAiOpen(false)}
+          onClose={() => {
+            setAiOpen(false);
+            // QA R4: the badge must not freeze on the state the modal opened
+            // with — a key that landed meanwhile shows on the way out.
+            refreshAiStatus();
+          }}
         />
       )}
 

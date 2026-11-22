@@ -1040,4 +1040,55 @@ describe('웹 리서치 런 (E3 F2 · AC-3)', () => {
       expect(patch.after?.text ?? '').not.toContain(MADE_UP);
     }
   });
+
+  it('QA R2: a keyless-degraded run resumes grounded after the key lands (restart + resume)', async () => {
+    // leg 1 — no key: the search is refused out loud, then the run parks on a question
+    const daemonA = await bootWeb(
+      scriptedModel([
+        SEARCH_TURN,
+        { toolCalls: [{ id: 'q1', name: 'ask_human', input: { question: '범위는 국내만?' } }] },
+      ]),
+      {},
+    );
+    const { projectId, ideaId } = await seed(daemonA);
+    const started = await command(daemonA, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemonA, projectId, runId, (run) => run.state === 'needs_input');
+    const degradedLog = await api<{ run: RunRecord; log: Array<{ stream: string; line: string }> }>(
+      daemonA,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    expect(degradedLog.body.log.some((line) => line.line.includes('"web_search":"unavailable"'))).toBe(true);
+
+    // the process dies with the question open; the key lands and the daemon returns
+    await daemonA.close();
+    const daemonB = await bootWeb(
+      scriptedModel([SEARCH_TURN, CITED_FINAL]),
+      { TAVILY_API_KEY: 'tvly-test' },
+      tavilyFetch(),
+    );
+
+    // the same run, resumed: the badge clears and the search now grounds the card
+    await command(daemonB, projectId, { type: 'run.resume', runId });
+    await command(daemonB, projectId, { type: 'run.answer', runId, text: '국내 + 일본' });
+    await waitRun(daemonB, projectId, runId, (run) => run.state === 'review');
+
+    const detail = await api<{ run: RunRecord; log: Array<{ stream: string; line: string }> }>(
+      daemonB,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    expect(detail.body.log.some((line) => line.line.includes('"web_search":"available"'))).toBe(true);
+    expect(detail.body.log.some((line) => line.line.includes(`"tool":"web_search","blocked":false`))).toBe(true);
+
+    const withCard = await api<{ project: Project }>(daemonB, `/api/projects/${projectId}`);
+    const card = withCard.body.project.proposals.find((proposal) => proposal.authorId === runId);
+    expect(card).toBeDefined();
+    expect(card!.patches.some((patch) => (patch.after?.text ?? '').includes(GOOD_A))).toBe(true);
+    expect(card!.patches.some((patch) => (patch.after?.text ?? '').includes(MADE_UP))).toBe(false);
+  });
 });
