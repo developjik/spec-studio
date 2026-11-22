@@ -22,6 +22,7 @@ import type {
   Idea,
   Pin,
   Project,
+  RunRecord,
   Screen,
 } from '@spec-studio/protocol';
 import type { PinFilter } from '@spec-studio/core';
@@ -47,6 +48,9 @@ import {
   type AiSettingsValue,
 } from './components/AiSettingsModal';
 import { DocPanel, type DocMode } from './components/DocPanel';
+import { RunPanel } from './components/RunPanel';
+import { RUN_TERMINAL, upsertRun } from './model/runview';
+import type { RunLogLineView } from './model/daemon';
 import { newProjectId, newScreenId, nextEntityId } from './model/ids';
 import {
   bundleOf,
@@ -156,6 +160,14 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<AiPanelResult | null>(null);
   const [aiSource, setAiSource] = useState<AiProposalSource | null>(null);
+  /**
+   * The run surface (E3 W2): the project's runs, the one being watched, and
+   * its journal as the SSE stream appends to it.
+   */
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runLog, setRunLog] = useState<RunLogLineView[]>([]);
+  const runStream = useRef<AbortController | null>(null);
   /**
    * Session memory only. The key is never written to localStorage, the project
    * or the daemon — closing the tab forgets it, which is the point.
@@ -306,6 +318,75 @@ export default function App() {
   }, []);
 
   const sqliteMode = daemonStatus === 'connected' && daemonProjectId !== null;
+
+  /**
+   * AC-9: one stream per watched run. A new pick aborts the old reader — the
+   * daemon's snapshot is the resync, so a stale event can never paint over a
+   * newer run's state.
+   */
+  const watchRun = (runId: string) => {
+    if (daemonProjectId === null) return;
+    runStream.current?.abort();
+    const controller = new AbortController();
+    runStream.current = controller;
+    setActiveRunId(runId);
+    setRunLog([]);
+    void client
+      .streamRun(daemonProjectId, runId, (event) => {
+        if (event.type === 'snapshot') {
+          setRuns((current) => upsertRun(current, event.run));
+          setRunLog(event.log);
+        } else if (event.type === 'run') {
+          setRuns((current) => upsertRun(current, event.run));
+        } else if (event.type === 'log') {
+          setRunLog((current) => [...current, { stream: event.stream, line: event.line }]);
+        }
+      }, controller.signal)
+      .catch(() => {
+        // A dropped stream is progress lost, not state: the detail route
+        // still answers on demand, so the panel degrades to its snapshot.
+      });
+  };
+
+  /** Open the run list when the daemon project lands; watch the live one. */
+  useEffect(() => {
+    if (!sqliteMode || daemonProjectId === null) return;
+    let alive = true;
+    void client
+      .listRuns(daemonProjectId)
+      .then((list) => {
+        if (!alive) return;
+        setRuns(list);
+        refreshAiStatus();
+        const live = [...list].reverse().find((run) => !RUN_TERMINAL.has(run.state));
+        const pick = live ?? list.at(-1);
+        if (pick !== undefined) watchRun(pick.id);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+    // watchRun reads daemonProjectId — same deps, one subscription per project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sqliteMode, daemonProjectId]);
+
+  /** Leaving the app — or the project — closes the open reader. */
+  useEffect(() => () => runStream.current?.abort(), [daemonProjectId]);
+
+  /**
+   * The run's label says what a new turn would call: the first provider with
+   * a key, exactly the daemon's own pick order. No key — the badge says so,
+   * because the run will honestly fail (no silent fallback).
+   */
+  const runProvider = aiStatus?.providers.find(
+    (provider) => provider.provider !== 'local' && provider.hasEnvKey,
+  );
+  const runModelLabel =
+    runProvider !== undefined
+      ? `${runProvider.provider} · ${runProvider.defaultModel}`
+      : aiStatus === null
+        ? null
+        : '모델 키 없음 — 런은 실패로 끝납니다';
 
   /**
    * One path for both modes: with a daemon the command is applied by the store
@@ -1006,6 +1087,54 @@ export default function App() {
   };
 
   /**
+   * E3: an idea becomes a researcher run's task. The research doc is created
+   * first when the project has none — the run's card files itself there.
+   */
+  const startAgentRun = async (ideaId: string) => {
+    if (!sqliteMode || daemonProjectId === null) {
+      setNotice({ tone: 'error', text: '에이전트 런은 SQLite 데몬 모드에서만 동작합니다.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      if (!docs.some((candidate) => candidate.kind === 'research')) {
+        const created = await applyCommand({ type: 'doc.create', title: '리서치', kind: 'research' });
+        if (created === null) return;
+      }
+      const result = await applyCommand({
+        type: 'run.start',
+        taskId: ideaId,
+        agent: 'researcher',
+        mode: 'research',
+      });
+      if (result === null) return;
+      const started = result.events.find((event) => event.type === 'run.started');
+      if (started !== undefined && started.type === 'run.started') {
+        watchRun(started.run.id);
+      }
+      setNotice({ tone: 'info', text: '에이전트 런을 시작했습니다.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** AC-9's cancel: one command — the daemon's abort lands in the same tick. */
+  const cancelRun = (runId: string) => {
+    void applyCommand({ type: 'run.cancel', runId });
+  };
+
+  const resumeRun = (runId: string) => {
+    void applyCommand({ type: 'run.resume', runId });
+  };
+
+  /** A1: the panel only renders the field under needs_input; this is the belt. */
+  const answerRun = (runId: string, text: string) => {
+    const trimmed = text.trim();
+    if (trimmed === '') return;
+    void applyCommand({ type: 'run.answer', runId, text: trimmed });
+  };
+
+  /**
    * 승격 = 두 순차 커맨드 (§4 F2): the spec doc first, then the state move —
    * both op_log'd, so the promotion is as undoable as the doc it created.
    */
@@ -1393,7 +1522,22 @@ export default function App() {
               onArchive={archiveIdea}
               onPromote={(idea) => void promoteIdea(idea)}
               onRunBrief={(ideaId, evidenceIds) => void runBrief(ideaId, evidenceIds)}
+              onRunAgent={(ideaId) => void startAgentRun(ideaId)}
             />
+
+            {sqliteMode && runs.length > 0 && (
+              <RunPanel
+                runs={runs}
+                activeId={activeRunId}
+                log={runLog}
+                modelLabel={runModelLabel}
+                busy={busy}
+                onSelect={watchRun}
+                onCancel={cancelRun}
+                onResume={resumeRun}
+                onAnswer={answerRun}
+              />
+            )}
           </div>
         </main>
       ) : (

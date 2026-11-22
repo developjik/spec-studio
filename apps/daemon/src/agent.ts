@@ -11,7 +11,7 @@ import {
   type RunRecord,
 } from '@spec-studio/protocol';
 import { driveRun, type ModelPort, type RunOutcome } from '@spec-studio/agent';
-import { callAgentTurn } from '@spec-studio/ai';
+import { callModelStream } from '@spec-studio/ai';
 import type { SqliteStore } from '@spec-studio/store';
 
 /**
@@ -104,6 +104,19 @@ export class AgentService {
     extraUserMessage?: string,
   ): Promise<void> {
     const store = this.#store;
+    // AC-9: model deltas land in run_log as stdout — coalesced so one
+    // token is not one row. The stream endpoint replays them as progress.
+    let pendingText = '';
+    const flushText = () => {
+      if (pendingText !== '') {
+        store.appendRunLog(runId, 'stdout', pendingText);
+        pendingText = '';
+      }
+    };
+    const onText = (delta: string) => {
+      pendingText += delta;
+      if (pendingText.length >= 120 || pendingText.endsWith('\n')) flushText();
+    };
     try {
       store.transitionRun(runId, 'running');
       const messages = this.#restoreMessages(runId);
@@ -124,6 +137,7 @@ export class AgentService {
         model: this.#modelPort(),
         toolbox: this.#toolbox(),
         journal: { log: (stream, line) => store.appendRunLog(runId, stream, line) },
+        onText,
         isCancelled: async () => {
           if (controller.signal.aborted) return true;
           const current = store.getRun(runId);
@@ -131,12 +145,14 @@ export class AgentService {
         },
         maxTurns: 12,
       });
+      flushText();
 
       const checkpointSeq = (store.latestCheckpoint(runId)?.seq ?? 0) + 1;
       store.saveCheckpoint(runId, checkpointSeq, JSON.stringify({ messages: outcome.messages }));
 
       await this.#settle(projectId, runId, record, outcome, project);
     } catch (error) {
+      flushText();
       // The honest exits: cancelled by command, or a failure the person sees.
       const current = store.getRun(runId);
       if (current === null || current.state === 'cancelled') return;
@@ -254,15 +270,18 @@ export class AgentService {
     const model = AI_DEFAULT_MODELS[provider];
     return {
       turn: (request) =>
-        callAgentTurn({
-          provider,
-          apiKey,
-          model,
-          messages: request.messages,
-          tools: request.tools,
-          ...(request.signal === undefined ? {} : { signal: request.signal }),
-          ...(this.#options.fetchImpl === undefined ? {} : { fetchImpl: this.#options.fetchImpl }),
-        }),
+        callModelStream(
+          {
+            provider,
+            apiKey,
+            model,
+            messages: request.messages,
+            tools: request.tools,
+            ...(request.signal === undefined ? {} : { signal: request.signal }),
+            ...(this.#options.fetchImpl === undefined ? {} : { fetchImpl: this.#options.fetchImpl }),
+          },
+          request.onText,
+        ),
     };
   }
 }

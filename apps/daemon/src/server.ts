@@ -29,7 +29,7 @@ import {
 import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
 import { AgentService, dispatchAgentCommand, type DeclaredTool } from './agent.js';
 import { createIpcKeychainPort } from './keychain.js';
-import { RunRefusal, type ModelPort } from '@spec-studio/agent';
+import { isTerminalRunState, RunRefusal, type ModelPort } from '@spec-studio/agent';
 
 /**
  * The local daemon: a loopback-only HTTP API in front of the SQLite store.
@@ -494,6 +494,53 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         log: store.runLog(runId),
         checkpoint: store.latestCheckpoint(runId),
       });
+    }
+
+    // GET /api/projects/:id/runs/:runId/events — AC-9 progress as an SSE
+    // stream: a snapshot first, then run and log deltas until the run ends.
+    if (action === 'runs' && segments.length === 6 && segments[5] === 'events') {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      const runId = segments[4] ?? '';
+      const initial = store.getRun(runId);
+      if (initial === null || initial.projectId !== projectId) {
+        throw new HttpError(404, 'run_not_found', '그런 런이 없습니다.');
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+      res.setHeader('cache-control', 'no-cache');
+      res.setHeader('connection', 'keep-alive');
+      res.flushHeaders();
+      const emit = (name: string, data: unknown) => {
+        if (!res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      let lastRun = initial;
+      let sent = 0;
+      emit('snapshot', { run: initial, log: store.runLog(runId) });
+      sent = store.runLog(runId).length;
+      const timer = setInterval(() => {
+        if (res.writableEnded) return;
+        const record = store.getRun(runId);
+        if (
+          record !== null &&
+          (record.state !== lastRun.state ||
+            record.interrupted !== lastRun.interrupted ||
+            record.outwardAt !== lastRun.outwardAt ||
+            record.endedAt !== lastRun.endedAt)
+        ) {
+          lastRun = record;
+          emit('run', record);
+        }
+        const lines = store.runLog(runId);
+        for (; sent < lines.length; sent += 1) {
+          emit('log', { seq: sent + 1, ...lines[sent] });
+        }
+        if (record !== null && isTerminalRunState(record.state)) {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 200);
+      res.on('close', () => clearInterval(timer));
+      return;
     }
 
     // POST /api/projects/:id/revert — restores op_log.before of an adoption.

@@ -187,3 +187,42 @@ describe('run driver — the wall (AC-4 · AC-2)', () => {
     expect(outcome.kind).toBe('failed');
   });
 });
+
+describe('run driver — streaming progress (W2 · AC-9)', () => {
+  it('forwards DriveOptions.onText to the model turn each round', async () => {
+    const seen: string[] = [];
+    const model: ModelPort = {
+      async turn(request) {
+        request.onText?.('델타 ');
+        request.onText?.('조각');
+        return { text: '{"action":"final","draft":{}}', toolCalls: [] };
+      },
+    };
+    const outcome = await driveRun({
+      messages: [...start],
+      model,
+      toolbox: toolbox([]),
+      journal: journal(),
+      isCancelled: async () => false,
+      maxTurns: 3,
+      onText: (delta) => seen.push(delta),
+    });
+    expect(outcome.kind).toBe('final');
+    expect(seen).toEqual(['델타 ', '조각']);
+  });
+
+  it('a non-streaming model keeps working — onText is optional', async () => {
+    const outcome = await driveRun({
+      messages: [...start],
+      model: scriptedModel([{ text: '{"action":"final","draft":{}}' }]),
+      toolbox: toolbox([]),
+      journal: journal(),
+      isCancelled: async () => false,
+      maxTurns: 3,
+      onText: () => {
+        throw new Error('must not be called');
+      },
+    });
+    expect(outcome.kind).toBe('final');
+  });
+});

@@ -6,6 +6,7 @@ import type {
   CredentialSource,
   Project,
   ProjectBundle,
+  RunRecord,
 } from '@spec-studio/protocol';
 
 /**
@@ -206,6 +207,18 @@ export class DaemonError extends Error {
   }
 }
 
+/** One `run_log` row, as the run detail and the stream both carry it. */
+export interface RunLogLineView {
+  stream: 'stdout' | 'stderr' | 'event';
+  line: string;
+}
+
+/** The SSE stream's three frames: full state, a run change, one new line. */
+export type RunStreamEvent =
+  | { type: 'snapshot'; run: RunRecord; log: RunLogLineView[] }
+  | { type: 'run'; run: RunRecord }
+  | { type: 'log'; seq: number; stream: RunLogLineView['stream']; line: string };
+
 interface ErrorPayload {
   error?: { code?: string; message?: string };
 }
@@ -374,6 +387,94 @@ export class DaemonClient {
         ...(input.topic === undefined || input.topic === '' ? {} : { topic: input.topic }),
       },
     });
+  }
+
+  /** Every run this project owns — the panel's list (E3 AC-9). */
+  async listRuns(projectId: string): Promise<RunRecord[]> {
+    const body = await this.#request<{ runs: RunRecord[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/runs`,
+    );
+    return body.runs;
+  }
+
+  async runDetail(
+    projectId: string,
+    runId: string,
+  ): Promise<{ run: RunRecord; log: RunLogLineView[] }> {
+    return this.#request(
+      `/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}`,
+    );
+  }
+
+  /**
+   * AC-9 progress: the daemon's SSE endpoint, parsed by hand so the daemon
+   * token header rides along — EventSource cannot send one. `snapshot` lands
+   * first, `run`/`log` deltas follow until the run ends or `signal` fires.
+   */
+  async streamRun(
+    projectId: string,
+    runId: string,
+    onEvent: (event: RunStreamEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/events`,
+        { headers: daemonHeaders(false), signal },
+      );
+    } catch (error) {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+      throw new DaemonError('daemon_unreachable', 'SQLite 데몬에 연결하지 못했습니다.');
+    }
+    if (!response.ok || response.body === null) {
+      throw new DaemonError('daemon_error', `런 스트림 응답 ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventName = 'message';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut = buffer.indexOf('\n\n');
+        while (cut !== -1) {
+          const block = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          cut = buffer.indexOf('\n\n');
+          let data = '';
+          for (const line of block.split('\n')) {
+            const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+            if (trimmed.startsWith('event:')) eventName = trimmed.slice(6).trim();
+            else if (trimmed.startsWith('data:')) data += trimmed.slice(5).trim();
+          }
+          const name = eventName;
+          eventName = 'message';
+          if (data === '') continue;
+          const parsed = JSON.parse(data) as Record<string, unknown>;
+          if (name === 'snapshot') {
+            onEvent({
+              type: 'snapshot',
+              run: parsed.run as RunRecord,
+              log: parsed.log as RunLogLineView[],
+            });
+          } else if (name === 'run') {
+            onEvent({ type: 'run', run: parsed as unknown as RunRecord });
+          } else if (name === 'log') {
+            onEvent({
+              type: 'log',
+              seq: parsed.seq as number,
+              stream: parsed.stream as RunLogLineView['stream'],
+              line: parsed.line as string,
+            });
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async publishes(projectId: string): Promise<PublishRecordView[]> {

@@ -18,6 +18,7 @@ export {
   AiProviderError,
   callAgentTurn,
   callModel,
+  callModelStream,
   redact,
   type AgentTurnInput,
   type AgentTurnResult,

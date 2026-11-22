@@ -34,6 +34,8 @@ interface IdeaInboxPanelProps {
   onArchive: (ideaId: string) => void;
   onPromote: (idea: Idea) => void;
   onRunBrief: (ideaId: string, evidenceIds: string[]) => void;
+  /** E3: the idea becomes an agent run's task (daemon mode only). */
+  onRunAgent: (ideaId: string) => void;
 }
 
 const STATE_LABEL: Record<Idea['state'], string> = {
@@ -228,6 +230,20 @@ export function IdeaInboxPanel(props: IdeaInboxPanelProps) {
                           title="이 아이디어로 리서치 브리프를 만듭니다"
                         >
                           리서치 시작
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          disabled={busy || briefBusy || !props.sqliteMode}
+                          onClick={() => props.onRunAgent(idea.id)}
+                          data-testid="idea-agent-run"
+                          title={
+                            props.sqliteMode
+                              ? '이 아이디어로 에이전트 런을 시작합니다'
+                              : '에이전트 런은 SQLite 데몬 모드에서만 동작합니다'
+                          }
+                        >
+                          에이전트 런
                         </button>
                         <button
                           type="button"

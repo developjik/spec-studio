@@ -23,6 +23,10 @@ let dbPath = '';
 const daemons: Daemon[] = [];
 
 interface TurnScript {
+  /** Text deltas the turn emits through onText — AC-9's progress. */
+  stream?: string[];
+  /** How long the turn lingers after streaming — lets a watcher catch it. */
+  delayMs?: number;
   text?: string;
   toolCalls?: AgentToolCall[];
 }
@@ -38,6 +42,10 @@ function scriptedModel(scripts: TurnScript[], onTurn?: (index: number) => void):
       onTurn?.(port.calls);
       const script = scripts[Math.min(index, scripts.length - 1)] ?? {};
       index += 1;
+      for (const delta of script.stream ?? []) request.onText?.(delta);
+      if (script.delayMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, script.delayMs));
+      }
       return { text: script.text ?? '', toolCalls: script.toolCalls ?? [] };
     },
   };
@@ -367,6 +375,165 @@ describe('run.* refusal mapping — a predictable rejection is never a 500 (W2)'
     const plain = await command(daemon, projectId, { type: 'run.resume', runId });
     expect(plain.status).toBe(409);
     expect(plain.body.error?.code).toBe('run_not_interrupted');
+  });
+});
+
+describe('run progress stream — the UI watches what the run does (AC-9 · W2)', () => {
+  interface SseFrame {
+    event: string;
+    data: Record<string, unknown>;
+  }
+
+  /** Reads the SSE endpoint until `stop` or the stream ends; always cancels. */
+  async function collectSse(
+    response: Response,
+    stop: (frames: SseFrame[]) => boolean,
+    timeoutMs = 8000,
+  ): Promise<SseFrame[]> {
+    const frames: SseFrame[] = [];
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let current = 'message';
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut = buffer.indexOf('\n\n');
+        while (cut !== -1) {
+          const block = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          cut = buffer.indexOf('\n\n');
+          let data = '';
+          for (const line of block.split('\n')) {
+            const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+            if (trimmed.startsWith('event:')) current = trimmed.slice(6).trim();
+            else if (trimmed.startsWith('data:')) data += trimmed.slice(5).trim();
+          }
+          if (data !== '') {
+            frames.push({ event: current, data: JSON.parse(data) as Record<string, unknown> });
+            current = 'message';
+          }
+        }
+        if (stop(frames)) break;
+      }
+      return frames;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+  }
+
+  it('replays a snapshot, streams live progress, and closes at the terminal state', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: 't1', name: 'ask_human', input: { question: '예산 한도는?' } }] },
+      { stream: ['마무리 초안 ', 'x'.repeat(130)], delayMs: 350, text: FINAL.text },
+    ]);
+    const daemon = await boot(model);
+    const { projectId, ideaId } = await seed(daemon);
+
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'needs_input');
+
+    // a UI connecting mid-run: snapshot first — the log-so-far included
+    const response = await fetch(`${daemon.url}/api/projects/${projectId}/runs/${runId}/events`, {
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+    // the stream's first word is the snapshot — and nothing else, because
+    // nothing has moved yet: deltas only arrive when the run does.
+    const frames = await collectSse(
+      response,
+      (list) => list.some((frame) => frame.event === 'snapshot'),
+    );
+
+    const snapshot = frames.find((frame) => frame.event === 'snapshot');
+    expect(snapshot).toBeDefined();
+    expect((snapshot!.data.run as RunRecord).state).toBe('needs_input');
+    const snapshotLog = snapshot!.data.log as Array<{ stream: string; line: string }>;
+    expect(snapshotLog.some((line) => line.stream === 'event' && line.line.includes('예산 한도는?'))).toBe(true);
+    expect(frames.some((frame) => frame.event === 'run')).toBe(false); // parked — nothing to report
+
+    // a second watcher: the person answers mid-stream, and the run's own
+    // writes must reach the client as live `run`/`log` deltas.
+    const liveResponse = await fetch(`${daemon.url}/api/projects/${projectId}/runs/${runId}/events`, {
+      headers: { origin: 'http://localhost:5173' },
+    });
+    const livePromise = collectSse(
+      liveResponse,
+      (list) => list.some((frame) => frame.event === 'run' && frame.data.state === 'review'),
+    );
+    // let the snapshot pass, then wake the run
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await command(daemon, projectId, { type: 'run.answer', runId, text: '예산 3만원까지' });
+    const live = await livePromise;
+
+    const states = live.filter((f) => f.event === 'run').map((f) => f.data.state);
+    expect(states).toContain('running');
+    expect(states).toContain('review');
+    // streamed stdout lands as log deltas *before* the run event — progress
+    // the person saw while the turn was still writing (the 130-char flush).
+    const logLines = live.filter((f) => f.event === 'log').map((f) => String(f.data.line ?? ''));
+    expect(logLines.some((line) => line.includes('마무리 초안'))).toBe(true);
+    const stdoutIndex = live.findIndex(
+      (f) => f.event === 'log' && String(f.data.line ?? '').includes('x'.repeat(60)),
+    );
+    const reviewIndex = live.findIndex((f) => f.event === 'run' && f.data.state === 'review');
+    expect(stdoutIndex).toBeGreaterThan(-1);
+    expect(reviewIndex).toBeGreaterThan(-1);
+    expect(stdoutIndex).toBeLessThan(reviewIndex);
+
+    // cancel stops promptly — the stream reports it and closes (EOF)
+    await command(daemon, projectId, { type: 'run.cancel', runId });
+    const tail = await collectSse(
+      await fetch(`${daemon.url}/api/projects/${projectId}/runs/${runId}/events`, {
+        headers: { origin: 'http://localhost:5173' },
+      }),
+      () => false,
+      3000,
+    );
+    const tailRun = tail.filter((frame) => frame.event === 'run');
+    const lastRecord = tailRun.at(-1)?.data as RunRecord | undefined;
+    expect(
+      lastRecord?.state ?? (tail.find((f) => f.event === 'snapshot')!.data.run as RunRecord).state,
+    ).toBe('cancelled');
+  });
+
+  it('a stream for a missing or foreign run is refused like the detail route', async () => {
+    const daemon = await boot(scriptedModel([FINAL]));
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+    });
+    const runId = runIdOf(started);
+
+    const missing = await fetch(`${daemon.url}/api/projects/${projectId}/runs/R_missing00/events`, {
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(missing.status).toBe(404);
+
+    const other = await api<{ project: Project }>(daemon, '/api/projects', {
+      method: 'POST',
+      body: { name: '다른 프로젝트' },
+    });
+    const foreign = await fetch(
+      `${daemon.url}/api/projects/${other.body.project.id}/runs/${runId}/events`,
+      { headers: { origin: 'http://localhost:5173' } },
+    );
+    expect(foreign.status).toBe(404);
+    await command(daemon, projectId, { type: 'run.cancel', runId });
   });
 });
 

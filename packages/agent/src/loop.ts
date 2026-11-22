@@ -24,6 +24,8 @@ export interface ModelPort {
     messages: AgentMessage[];
     tools: AgentToolSpec[];
     signal?: AbortSignal;
+    /** AC-9: streamed text deltas, if the model layer streams. */
+    onText?: (delta: string) => void;
   }): Promise<{ text: string; toolCalls: AgentToolCall[] }>;
 }
 
@@ -60,6 +62,8 @@ export interface DriveOptions {
   isCancelled(): boolean | Promise<boolean>;
   /** Hard ceiling on model turns; the honest failure beyond it. */
   maxTurns: number;
+  /** AC-9 progress: forwarded to the model's turn each round. */
+  onText?: (delta: string) => void;
 }
 
 const FINAL_MAX_RETRY = 2;
@@ -115,6 +119,7 @@ export async function driveRun(options: DriveOptions): Promise<RunOutcome> {
         messages,
         tools: options.toolbox.specs(),
         signal: controller.signal,
+        ...(options.onText === undefined ? {} : { onText: options.onText }),
       });
     } catch (error) {
       clearInterval(checkTimer);

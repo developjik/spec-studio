@@ -115,6 +115,9 @@ importers:
       vite:
         specifier: ^7.3.8
         version: 7.3.8(@types/node@24.19.2)(jiti@2.7.0)
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@types/node@24.19.2)(vite@7.3.8(@types/node@24.19.2)(jiti@2.7.0))
 
   packages/agent:
     dependencies:
