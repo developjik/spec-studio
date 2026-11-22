@@ -6,6 +6,7 @@ import {
   type AiProvider,
 } from '@spec-studio/protocol';
 import type { AiStatusView } from '../model/daemon';
+import { surfaceProps } from '../model/surfaces';
 
 /**
  * AI 설정 — BYOK 탭.
@@ -96,7 +97,12 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
           : '로컬 규칙 폴백';
 
   return (
-    <div className="modal-veil" data-testid="ai-modal" onClick={props.onClose}>
+    <div
+      className="modal-veil"
+      data-testid="ai-modal"
+      onClick={props.onClose}
+      {...surfaceProps('aiSettings')}
+    >
       <section
         className="modal ai-modal"
         role="dialog"

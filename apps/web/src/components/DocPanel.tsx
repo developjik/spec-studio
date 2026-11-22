@@ -11,6 +11,7 @@ import {
   type Proposal,
 } from '@spec-studio/protocol';
 import { proseOf, staleForBlock, staleBadges } from '@spec-studio/core';
+import { surfaceProps } from '../model/surfaces';
 
 export type DocMode = 'direct' | 'proposal';
 
@@ -316,7 +317,12 @@ export function DocPanel(props: DocPanelProps) {
 
   if (doc === null) {
     return (
-      <aside className="doc-panel" aria-label="문서" data-testid="doc-panel">
+      <aside
+        className="doc-panel"
+        aria-label="문서"
+        data-testid="doc-panel"
+        {...surfaceProps('docPanel')}
+      >
         <DocTabs
           docs={props.docs}
           activeDocId={null}
@@ -352,7 +358,12 @@ export function DocPanel(props: DocPanelProps) {
 
 
   return (
-    <aside className="doc-panel" aria-label="문서" data-testid="doc-panel">
+    <aside
+      className="doc-panel"
+      aria-label="문서"
+      data-testid="doc-panel"
+      {...surfaceProps('docPanel')}
+    >
       <DocTabs
         docs={props.docs}
         activeDocId={doc.id}

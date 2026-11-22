@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Evidence, Idea } from '@spec-studio/protocol';
+import { surfaceProps } from '../model/surfaces';
 
 
 /**
@@ -116,6 +117,7 @@ export function IdeaInboxPanel(props: IdeaInboxPanelProps) {
       className={`idea-inbox${open ? '' : ' is-collapsed'}`}
       aria-label="아이디어 인박스"
       data-testid="idea-inbox"
+      {...surfaceProps('ideaInbox')}
     >
       <div className="panel-head">
         <span className="panel-title">

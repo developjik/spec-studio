@@ -9,6 +9,7 @@ import {
   type BuiltOutput,
 } from '../model/outputs';
 import { buildZip } from '../model/zip';
+import { surfaceProps } from '../model/surfaces';
 
 interface OutputModalProps {
   screen: Screen;
@@ -93,7 +94,12 @@ export function OutputModal({ screen, pins, pinSeq, doc, project, onExportPackag
   const active = files?.find((file) => file.kind === tab) ?? null;
 
   return (
-    <div className="modal-veil" role="presentation" onClick={onClose}>
+    <div
+      className="modal-veil"
+      role="presentation"
+      onClick={onClose}
+      {...surfaceProps('outputModal')}
+    >
       <section
         className="modal"
         role="dialog"

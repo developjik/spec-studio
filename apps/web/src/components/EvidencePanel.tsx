@@ -5,6 +5,7 @@ import {
   type Evidence,
   type EvidenceType,
 } from '@spec-studio/protocol';
+import { surfaceProps } from '../model/surfaces';
 
 /**
  * The research board's evidence sidebar (E1 §4 F3-4). It rides the research
@@ -92,7 +93,12 @@ export function EvidencePanel(props: EvidencePanelProps) {
   };
 
   return (
-    <aside className="evidence-panel" aria-label="근거" data-testid="evidence-panel">
+    <aside
+      className="evidence-panel"
+      aria-label="근거"
+      data-testid="evidence-panel"
+      {...surfaceProps('evidencePanel')}
+    >
       <div className="panel-head">
         <span className="panel-title">
           <h2>근거</h2>

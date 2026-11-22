@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { surfaceProps } from '../model/surfaces';
 
 interface EntryGateProps {
   error: string | null;
@@ -17,7 +18,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
   };
 
   return (
-    <main className="gate">
+    <main className="gate" {...surfaceProps('entryGate')}>
       <div className="gate-inner">
         <p className="eyebrow">W2 · 첫 3분</p>
         <h1>

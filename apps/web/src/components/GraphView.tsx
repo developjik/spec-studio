@@ -15,6 +15,7 @@ import {
   type TraceabilityReport,
 } from '@spec-studio/core';
 import { useState } from 'react';
+import { surfaceProps } from '../model/surfaces';
 
 /**
  * The graph surface: one screen, its pins, and what a spec owes them. The three
@@ -115,7 +116,7 @@ export function GraphView(props: GraphViewProps) {
   };
 
   return (
-    <main className="graph-view" data-testid="graph-view">
+    <main className="graph-view" data-testid="graph-view" {...surfaceProps('graphView')}>
       <section className="graph-board">
         <div className="graph-head">
           <div>

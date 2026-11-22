@@ -12,6 +12,7 @@ import {
   summarizeStdout,
   webSearchNotice,
 } from '../model/runview';
+import { surfaceProps } from '../model/surfaces';
 
 /**
  * The run surface (E3 W2 · AC-9): the project's runs, the active one's
@@ -56,7 +57,12 @@ export function RunPanel(props: RunPanelProps) {
   const webSearchFlag = webSearchNotice(log);
 
   return (
-    <section className="run-panel" aria-label="에이전트 런" data-testid="run-panel">
+    <section
+      className="run-panel"
+      aria-label="에이전트 런"
+      data-testid="run-panel"
+      {...surfaceProps('runPanel')}
+    >
       <div className="panel-head">
         <span className="panel-title">
           <h2>에이전트 런</h2>

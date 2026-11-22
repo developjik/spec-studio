@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Screen } from '@spec-studio/protocol';
 import type { Maturity } from '@spec-studio/core';
 import type { DaemonStatus } from '../model/daemon';
+import { surfaceProps } from '../model/surfaces';
 
 export type StudioView = 'studio' | 'graph';
 
@@ -157,7 +158,7 @@ export function TopBar({
   aiSource,
 }: TopBarProps) {
   return (
-    <header className="topbar">
+    <header className="topbar" {...surfaceProps('topBar')}>
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">spec-studio</span>

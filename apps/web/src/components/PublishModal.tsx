@@ -11,6 +11,7 @@ import {
   type PublishPreviewView,
   type PublishRecordView,
 } from '../model/daemon';
+import { surfaceProps } from '../model/surfaces';
 
 interface PublishModalProps {
   projectId: string;
@@ -189,7 +190,12 @@ export function PublishModal({
   const hasImage = screen.ref.kind === 'image';
 
   return (
-    <div className="modal-veil" role="presentation" onClick={onClose}>
+    <div
+      className="modal-veil"
+      role="presentation"
+      onClick={onClose}
+      {...surfaceProps('publishModal')}
+    >
       <section
         className="modal publish-modal"
         role="dialog"

@@ -15,6 +15,7 @@ import {
   type PinFilter,
 } from '@spec-studio/core';
 import { PinEditor, type PinEditInput } from './PinEditor';
+import { surfaceProps } from '../model/surfaces';
 
 interface PinPanelProps {
   pins: Pin[];
@@ -57,7 +58,12 @@ export function PinPanel({
     doc === null || selected === null ? [] : blocksForPin(doc, selected.id);
 
   return (
-    <aside className="pin-panel" aria-label="핀 목록" data-testid="pin-panel">
+    <aside
+      className="pin-panel"
+      aria-label="핀 목록"
+      data-testid="pin-panel"
+      {...surfaceProps('pinPanel')}
+    >
       <div className="panel-head">
         <span className="panel-title">
           <h2>핀</h2>

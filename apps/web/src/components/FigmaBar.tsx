@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Screen } from '@spec-studio/protocol';
+import { surfaceProps } from '../model/surfaces';
 
 interface FigmaBarProps {
   screen: Screen;
@@ -40,7 +41,11 @@ export function FigmaBar({ screen, onSave }: FigmaBarProps) {
 
   if (editing) {
     return (
-      <div className="figma-bar figma-bar--edit" data-testid="figma-editor">
+      <div
+        className="figma-bar figma-bar--edit"
+        data-testid="figma-editor"
+        {...surfaceProps('figmaBar')}
+      >
         <span className="figma-label">Figma 프레임</span>
         <input
           className="input figma-input"
@@ -76,7 +81,7 @@ export function FigmaBar({ screen, onSave }: FigmaBarProps) {
   }
 
   return (
-    <div className="figma-bar" data-testid="figma-bar">
+    <div className="figma-bar" data-testid="figma-bar" {...surfaceProps('figmaBar')}>
       <span className="figma-label">Figma 프레임</span>
       {current === null ? (
         <>
