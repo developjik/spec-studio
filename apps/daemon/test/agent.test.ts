@@ -305,6 +305,71 @@ describe('cross-project scope (QA A4/A5 — a run answers its own project only)'
   });
 });
 
+describe('run.* refusal mapping — a predictable rejection is never a 500 (W2)', () => {
+  const RUN_COMMANDS = (runId: string) => [
+    { type: 'run.cancel', runId, reason: 'x' },
+    { type: 'run.resume', runId },
+    { type: 'run.answer', runId, text: 'x' },
+  ] as const;
+
+  async function startRun(target: Daemon, projectId: string, taskId: string): Promise<string> {
+    // Store-level start: the command surface is under test, not the runner —
+    // and nothing picks the queued run up, so the state moves are exact.
+    const started = await target.store.execute(projectId, {
+      type: 'run.start',
+      taskId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const event = started.events[0] as { type: string; run: { id: string } };
+    return event.run.id;
+  }
+
+  it('a terminal run answers every run.* command with 409 run_terminal — all nine combos', async () => {
+    const daemon = await boot(scriptedModel([FINAL]));
+    const { projectId, ideaId } = await seed(daemon);
+
+    for (const terminal of ['done', 'failed', 'cancelled'] as const) {
+      const runId = await startRun(daemon, projectId, ideaId);
+      daemon.store.transitionRun(runId, 'running');
+      daemon.store.transitionRun(runId, terminal);
+      for (const body of RUN_COMMANDS(runId)) {
+        const refused = await command(daemon, projectId, body);
+        expect(refused.status).toBe(409);
+        expect(refused.body.error?.code).toBe('run_terminal');
+      }
+      // and the run's state is still the terminal one it reached
+      const after = await api<{ run: RunRecord }>(daemon, `/api/projects/${projectId}/runs/${runId}`);
+      expect(after.body.run.state).toBe(terminal);
+    }
+  });
+
+  it('a missing runId answers 404 run_missing', async () => {
+    const daemon = await boot(scriptedModel([FINAL]));
+    const { projectId } = await seed(daemon);
+    for (const body of RUN_COMMANDS('R_nonexistent')) {
+      const refused = await command(daemon, projectId, body);
+      expect(refused.status).toBe(404);
+      expect(refused.body.error?.code).toBe('run_missing');
+    }
+  });
+
+  it('live-state refusals answer 409: answer outside needs_input · resume without the flag', async () => {
+    const daemon = await boot(scriptedModel([FINAL]));
+    const { projectId, ideaId } = await seed(daemon);
+    const runId = await startRun(daemon, projectId, ideaId);
+    daemon.store.transitionRun(runId, 'running');
+
+    const early = await command(daemon, projectId, { type: 'run.answer', runId, text: '너무 이른 답' });
+    expect(early.status).toBe(409);
+    expect(early.body.error?.code).toBe('run_not_asking');
+
+    const plain = await command(daemon, projectId, { type: 'run.resume', runId });
+    expect(plain.status).toBe(409);
+    expect(plain.body.error?.code).toBe('run_not_interrupted');
+  });
+});
+
 describe('a daemon restart under a live run (AC-2 · checkpoint)', () => {
   it('marks the run interrupted, and answering it after the restart finishes the card', async () => {
     const model = scriptedModel([

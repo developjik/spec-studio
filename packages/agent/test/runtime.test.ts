@@ -117,6 +117,26 @@ describe('run state machine (F1 · AC-2)', () => {
     }
   });
 
+  it('every refusal carries a machine-readable code — the daemon maps it to a 4xx (W2)', () => {
+    for (const state of ['done', 'failed', 'cancelled'] as const) {
+      for (const command of [
+        { type: 'run.cancel', runId: seed.id } as const,
+        { type: 'run.resume', runId: seed.id } as const,
+        { type: 'run.answer', runId: seed.id, text: 'x' } as const,
+      ]) {
+        expect(() => personTransition(run(state), command, T1)).toThrowError(
+          expect.objectContaining({ name: 'RunRefusal', code: 'run_terminal' }),
+        );
+      }
+    }
+    expect(() =>
+      personTransition(run('running'), { type: 'run.answer', runId: seed.id, text: 'x' }, T1),
+    ).toThrowError(expect.objectContaining({ code: 'run_not_asking' }));
+    expect(() =>
+      personTransition(run('running', false), { type: 'run.resume', runId: seed.id }, T1),
+    ).toThrowError(expect.objectContaining({ code: 'run_not_interrupted' }));
+  });
+
   it('run.answer clears the interrupted flag — the answer is itself the acknowledgment', () => {
     const asked = { ...machineTransition(run('running'), 'needs_input', T0), interrupted: true };
     expect(

@@ -10,10 +10,12 @@ export {
   isTerminalRunState,
   machineTransition,
   personTransition,
+  RunRefusal,
   RUN_STATES,
   RUN_TERMINAL_STATES,
   type PersonRunCommand,
   type RunRecord,
+  type RunRefusalCode,
   type RunSeed,
 } from './runtime';
 export {

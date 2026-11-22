@@ -29,7 +29,7 @@ import {
 import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
 import { AgentService, dispatchAgentCommand, type DeclaredTool } from './agent.js';
 import { createIpcKeychainPort } from './keychain.js';
-import type { ModelPort } from '@spec-studio/agent';
+import { RunRefusal, type ModelPort } from '@spec-studio/agent';
 
 /**
  * The local daemon: a loopback-only HTTP API in front of the SQLite store.
@@ -657,14 +657,25 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
 }
 
-/** Domain refusal codes that answer with a status other than the 400 default. */
+/**
+ * W2's refusal surface: every predictable `run.*` rejection is a 4xx a client
+ * can branch on — `code` carries the cause, never the message text.
+ *
+ *   404 run_missing         the runId names nothing in this database
+ *   403 run_scope           the run (or the task) belongs to another project
+ *   409 run_terminal        the run already ended — every command refuses
+ *   409 run_not_asking      run.answer outside needs_input
+ *   409 run_not_interrupted run.resume without a restart flag
+ */
 const DOMAIN_ERROR_STATUS: Readonly<Partial<Record<DomainErrorCode, number>>> = {
+  run_missing: 404,
   run_scope: 403,
 };
 
 function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
   if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
+  if (error instanceof RunRefusal) return new HttpError(409, error.code, error.message);
   if (error instanceof DomainError) {
     return new HttpError(DOMAIN_ERROR_STATUS[error.code] ?? 400, error.code, error.message);
   }

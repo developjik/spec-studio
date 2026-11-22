@@ -18,6 +18,24 @@ export type { RunRecord } from '@spec-studio/protocol';
 
 export { RUN_STATES, RUN_TERMINAL_STATES } from '@spec-studio/protocol';
 
+/**
+ * Why a person's run command was refused. Each code has a fixed HTTP status
+ * in the daemon's mapping — a client reads `code`, never parses the message.
+ * `agent` cannot import core's DomainError (port-driven boundary), so the
+ * machine keeps its own refusal type.
+ */
+export type RunRefusalCode = 'run_terminal' | 'run_not_asking' | 'run_not_interrupted';
+
+export class RunRefusal extends Error {
+  readonly code: RunRefusalCode;
+
+  constructor(code: RunRefusalCode, message: string) {
+    super(message);
+    this.name = 'RunRefusal';
+    this.code = code;
+  }
+}
+
 /** A run that does not exist yet — what run.start is handed. */
 export interface RunSeed {
   id: RunId;
@@ -55,18 +73,24 @@ export function personTransition(
   }
 
   const current = record as RunRecord;
+  // A finished run answers every command the same way: terminal first, so a
+  // late answer or resume is `run_terminal`, not a state complaint (W2).
+  const terminal = isTerminalRunState(current.state);
   switch (command.type) {
     case 'run.cancel': {
-      if (isTerminalRunState(current.state)) {
-        throw new Error(`이미 끝난 런입니다 (${current.state}) — 취소는 반복되지 않습니다`);
+      if (terminal) {
+        throw new RunRefusal('run_terminal', `이미 끝난 런입니다 (${current.state}) — 취소는 반복되지 않습니다`);
       }
       // Cancelling is itself an acknowledgment — no restart flag outlives
       // the run (AC-2: the flag lives only on runs that still are).
       return { ...current, state: 'cancelled', interrupted: false, endedAt: at };
     }
     case 'run.answer': {
+      if (terminal) {
+        throw new RunRefusal('run_terminal', `이미 끝난 런입니다 (${current.state}) — 답변할 수 없습니다`);
+      }
       if (current.state !== 'needs_input') {
-        throw new Error(`답변은 needs_input 상태에서만 받습니다 (현재 ${current.state})`);
+        throw new RunRefusal('run_not_asking', `답변은 needs_input 상태에서만 받습니다 (현재 ${current.state})`);
       }
       // The answer hands the run straight back to the queue; the runner
       // appends the message and continues from the checkpoint. Answering is
@@ -74,11 +98,11 @@ export function personTransition(
       return { ...current, state: 'queued', outwardAt: null, interrupted: false };
     }
     case 'run.resume': {
-      if (isTerminalRunState(current.state)) {
-        throw new Error(`이미 끝난 런입니다 (${current.state}) — 재개할 수 없습니다`);
+      if (terminal) {
+        throw new RunRefusal('run_terminal', `이미 끝난 런입니다 (${current.state}) — 재개할 수 없습니다`);
       }
       if (!current.interrupted) {
-        throw new Error('interrupted 표시가 없는 런은 재개할 수 없습니다');
+        throw new RunRefusal('run_not_interrupted', 'interrupted 표시가 없는 런은 재개할 수 없습니다');
       }
       if (current.state === 'needs_input' || current.state === 'review') {
         // A question is still a question; a card still waits. Only the
