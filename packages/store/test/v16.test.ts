@@ -156,12 +156,12 @@ afterEach(async () => {
 });
 
 describe('v14 → v15 → v16 migration chain', () => {
-  it('moves a real v14 file to 16 without losing a row', async () => {
+  it('moves a real v14 file through the chain without losing a row', async () => {
     applyV14(file);
     seedV14(file);
 
     const store = open();
-    expect(store.schema.actual).toBe(16);
+    expect(store.schema.actual).toBe(17); // v17 rides on top; the v14→16 rows are what this file guards
     expect(store.schema.created).toBe(false);
 
     const db = store.database;
@@ -211,12 +211,12 @@ describe('v11-origin migrated file → v16 (검증자 Blocker 1 회귀)', () => 
   // not the canonical order a fresh CREATE writes. A positional SELECT * in
   // migrate-15-16 pushed NULL project_id into NOT NULL rev and the file died
   // at user_version 15. This fixture is the real v11 DDL from git a9bb35f.
-  it('migrates a real v11 file all the way to 16 without losing a row', async () => {
+  it('migrates a real v11 file all the way through the chain without losing a row', async () => {
     applyV11(file);
     seedV11(file);
 
     const store = open();
-    expect(store.schema.actual).toBe(16);
+    expect(store.schema.actual).toBe(17);
     expect(store.schema.created).toBe(false);
 
     const db = store.database;

@@ -117,7 +117,7 @@ describe('v14 → v15 migration', () => {
     seedV14(file);
 
     const store = open();
-    expect(store.schema.actual).toBe(16);
+    expect(store.schema.actual).toBe(17); // the chain now carries on to the run surface
     expect(store.schema.created).toBe(false);
 
     const db = store.database;

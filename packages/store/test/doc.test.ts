@@ -291,12 +291,19 @@ describe('the document in SQLite', () => {
       ALTER TABLE event DROP COLUMN device_id;
       ALTER TABLE event DROP COLUMN uuid;
       ALTER TABLE op_log DROP COLUMN device_id;
+      -- v17 additions a real v12 file never had either: the run surface,
+      -- or migrate-16-17 collides with tables that are still there.
+      DROP TRIGGER IF EXISTS run_task_kind;
+      DROP INDEX IF EXISTS run_task;
+      DROP TABLE IF EXISTS checkpoint;
+      DROP TABLE IF EXISTS run_log;
+      DROP TABLE IF EXISTS run;
       PRAGMA user_version = 12;
     `);
     raw.close();
 
     const upgraded = open();
-    expect(upgraded.schema.actual).toBe(16);
+    expect(upgraded.schema.actual).toBe(17);
     const columns = upgraded.database
       .prepare('PRAGMA table_info(doc)')
       .all() as Array<{ name: string }>;

@@ -20,7 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "packages" / "store" / "schema" / "schema.sql"
-SCHEMA_V2 = ROOT / "packages" / "store" / "schema" / "schema-v2.sql"
 
 results: list[tuple[str, str, str, str]] = []
 
@@ -126,7 +125,9 @@ def main() -> int:
         {"created_at", "updated_at"} <= block_columns,
         ", ".join(sorted(block_columns)),
     )
-    record("DDL executes", "schema", objects == 88, f"{objects} objects in sqlite_master")
+    # v17: +run surface — 5 named objects and the 4 autoindexes their
+    # PRIMARY KEY / UNIQUE constraints create (88 → 97).
+    record("DDL executes", "schema", objects == 97, f"{objects} objects in sqlite_master")
 
     # v15: documents carry a kind, events and ledger rows carry a device (F6).
     record("doc carries kind and deleted_at", "schema",
@@ -517,12 +518,64 @@ def main() -> int:
     after = conn.execute("SELECT count(*) FROM search WHERE search MATCH '배송이'").fetchone()[0]
     record("deleting a chunk removes its match", "search", after == 0, f"{after} rows")
 
-    # ── v2 is additive and executes on top of v1 ───────────────────────────
+    # ── v17: the run surface is part of the base schema now ────────────────
+    uv = conn.execute("PRAGMA user_version").fetchone()[0]
+    record("schema stamps user_version 17", "run", uv == 17, str(uv))
+
+    conn.execute(
+        "INSERT INTO obj(id,kind,subtype,title,parent_id,props,state,rev,hash,created_at,updated_at)"
+        " VALUES('I_gggggggggggg','idea',NULL,'경쟁 취소 정책 조사',NULL,'{}','captured',1,'h-i1','t','t')"
+    )
     try:
-        conn.executescript(SCHEMA_V2.read_text())
-        record("schema-v2 applies additively", "v2", True, "run · run_log · checkpoint")
+        conn.execute(
+            "INSERT INTO run(id,task_id,worktree,branch,agent,mode,state)"
+            " VALUES('R_hhhhhhhhhhhh','I_gggggggggggg',NULL,NULL,'researcher','research','queued')"
+        )
+        record("research run starts from an idea, no worktree (B2)", "run", True)
     except Exception as exc:  # noqa: BLE001
-        record("schema-v2 applies additively", "v2", False, str(exc))
+        record("research run starts from an idea, no worktree (B2)", "run", False, str(exc))
+
+    def run_rejects(label: str, sql: str, needle: str) -> None:
+        try:
+            conn.execute(sql)
+            record(label, "run", False, "accepted")
+        except sqlite3.IntegrityError as exc:
+            record(label, "run", needle in str(exc), str(exc))
+
+    run_rejects(
+        "run refuses a screen as its task",
+        "INSERT INTO run(id,task_id,agent,mode,state)"
+        " VALUES('R_hhhhhhhh0001','S_cccccccccccc','researcher','research','queued')",
+        "run_task_must_be_specnode_pin_or_idea")
+    run_rejects(
+        "run refuses an unknown mode",
+        "INSERT INTO run(id,task_id,agent,mode,state)"
+        " VALUES('R_hhhhhhhh0002','I_gggggggggggg','researcher','writ','queued')",
+        "mode")
+    run_rejects(
+        "run refuses an unknown state",
+        "INSERT INTO run(id,task_id,agent,mode,state)"
+        " VALUES('R_hhhhhhhh0003','I_gggggggggggg','researcher','research','paused')",
+        "state")
+    run_rejects(
+        "done run must carry ended_at",
+        "INSERT INTO run(id,task_id,agent,mode,state)"
+        " VALUES('R_hhhhhhhh0004','I_gggggggggggg','researcher','research','done')",
+        "ended_at")
+    try:
+        conn.execute(
+            "INSERT INTO run_log(run_id,seq,at,stream,line)"
+            " VALUES('R_hhhhhhhhhhhh',1,'t','event','{}')")
+        conn.execute(
+            "INSERT INTO checkpoint(id,run_id,seq,git_ref,summary,created_at)"
+            " VALUES('C_iiiiiiiiiiii','R_hhhhhhhhhhhh',1,NULL,'대기 상태','t')")
+        conn.execute(
+            "INSERT INTO thread(id,kind,last_seq,created_at)"
+            " VALUES('agent:R_hhhhhhhhhhhh','agent',0,'t')")
+        record("run log · git-less checkpoint · agent thread all land", "run", True)
+    except Exception as exc:  # noqa: BLE001
+        record("run log · git-less checkpoint · agent thread all land", "run", False, str(exc))
+
 
     # ── report ─────────────────────────────────────────────────────────────
     width = max(len(label) for label, _, _, _ in results)
@@ -535,7 +588,7 @@ def main() -> int:
         "accept": 0,
         "plan": 0,
         "search": 0,
-        "v2": 0,
+        "run": 0,
     }
     totals = dict(groups)
     for _, group, status, _ in results:
@@ -544,7 +597,7 @@ def main() -> int:
             groups[group] += 1
 
     print()
-    for group in ("schema", "reject", "accept", "plan", "search", "v2"):
+    for group in ("schema", "reject", "accept", "plan", "search", "run"):
         print(f"{group:7s} {groups[group]:2d}/{totals[group]:2d}")
 
     failed = [label for label, _, status, _ in results if status != "OK"]

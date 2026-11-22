@@ -2,13 +2,14 @@
 -- spec-studio · graph.db — v1.1  (verified on SQLite 3.46.1)
 -- This file is the single source of truth. External tools only ever hold
 -- copies; the database is where a project actually lives.
--- The v2 tables (run · run_log · checkpoint) are split into schema-v2.sql.
+-- The run surface (run · run_log · checkpoint) lives here since v17 — the
+-- former reserved schema-v2.sql was activated and removed (E3 W0).
 -- ═══════════════════════════════════════════════════════════════════
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -454,4 +455,52 @@ CREATE VIRTUAL TABLE search USING fts5(
 CREATE VIRTUAL TABLE search_bi USING fts5(
   bi,                                           -- 음절 바이그램을 공백으로 이어 붙인 토큰 열
   tokenize = 'unicode61'
+);
+
+-- 13. 런 서페이스 (v17 — E3 W0): 예약 DDL을 B2 정정과 함께 활성화 ──
+--   ①task_id 트리거에 idea 허용 ②mode 'research' ③worktree·branch NULL
+--   ④checkpoint.git_ref NULL — 리서치런(아이디어→브리프)은 git이 없다.
+--   migrate-16-17.sql과 문장이 동일해야 한다 (v17.test.ts 파리티).
+CREATE TABLE run (
+  id          TEXT PRIMARY KEY,                 -- R_...
+  task_id     TEXT NOT NULL REFERENCES obj(id) ON DELETE RESTRICT,  -- specnode|pin|idea
+  worktree    TEXT,                             -- B2 ③: 코딩런에만 있다
+  branch      TEXT,                             -- B2 ③
+  agent       TEXT NOT NULL,
+  mode        TEXT NOT NULL CHECK (mode IN ('plan','build','research')),  -- B2 ②
+  state       TEXT NOT NULL
+              CHECK (state IN ('queued','running','waiting','needs_input','review','done','failed','cancelled')),
+  interrupted INTEGER NOT NULL DEFAULT 0 CHECK (interrupted IN (0,1)),  -- outward 후 재시작
+  outward_at  TEXT,                             -- 바깥으로 나간 행동 시각
+  started_at  TEXT,
+  ended_at    TEXT,
+  CHECK (state NOT IN ('done','failed') OR ended_at IS NOT NULL)
+);
+CREATE INDEX run_task ON run(task_id, state);
+
+-- 참조 일관성: 과제는 그래프에 실재하는 객체여야 한다 (B2 ① — idea 포함)
+CREATE TRIGGER run_task_kind BEFORE INSERT ON run FOR EACH ROW
+WHEN (SELECT kind FROM obj WHERE id = NEW.task_id) NOT IN ('specnode','pin','idea')
+BEGIN
+  SELECT RAISE(ABORT, 'run_task_must_be_specnode_pin_or_idea');
+END;
+
+-- 런 로그는 메모리 링이 아니라 표에 남는다 (B4: 재기동 후 빈 화면 방지)
+CREATE TABLE run_log (
+  run_id TEXT NOT NULL REFERENCES run(id) ON DELETE CASCADE,
+  seq    INTEGER NOT NULL,
+  at     TEXT NOT NULL,
+  stream TEXT NOT NULL CHECK (stream IN ('stdout','stderr','event')),
+  line   TEXT NOT NULL,
+  PRIMARY KEY (run_id, seq)
+);
+
+CREATE TABLE checkpoint (
+  id         TEXT PRIMARY KEY,
+  run_id     TEXT NOT NULL REFERENCES run(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  git_ref    TEXT,                              -- B2 ④: 코딩런 체크포인트에만 있다
+  summary    TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (run_id, seq)
 );

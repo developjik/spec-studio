@@ -262,7 +262,7 @@ describe('the v11 → v12 migration', () => {
     `);
 
     const info = applySchema(legacy);
-    expect(info.actual).toBe(16);
+    expect(info.actual).toBe(17); // the chain now carries on to the run surface
     expect(info.created).toBe(false);
 
     const columns = legacy
