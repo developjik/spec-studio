@@ -143,7 +143,11 @@ describe('v14 → v15 → v16 → v17 migration chain', () => {
     expect(count('SELECT count(*) c FROM checkpoint')).toBe(0);
   });
 
-  it('gives a migrated file exactly the DDL a fresh v17 file gets', () => {
+  it('keeps the run surface (5 objects) byte-identical between a migrated and a fresh v17 file', () => {
+    // W0 검증 Minor-1 정정: 이 검사는 런 서페이스 5객체(run·run_log·checkpoint·
+    // run_task·run_task_kind)만 대상이다. 전체 DDL은 아니다 — 6표(doc·event·
+    // meta·obj·op_log·proposal)에 부모 커밋부터 내려온 코스메틱 드리프트(따옴표
+    // 식별자·주석·개행)가 있어 전체 파리티를 주장하면 안 된다(검증자 판정서 참조).
     applyV14(file);
     seedV14(file);
     const migrated = open();
