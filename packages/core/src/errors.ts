@@ -1,4 +1,4 @@
-/** Shared domain error: the store maps `code` onto an HTTP 400. */
+/** Shared domain error: the daemon maps `code` onto an HTTP status (default 400). */
 export type DomainErrorCode =
   | 'screen_missing'
   | 'screen_mismatch'
@@ -9,6 +9,7 @@ export type DomainErrorCode =
   | 'proposal_decided'
   | 'node_not_found'
   | 'run_missing'
+  | 'run_scope'
   | 'invalid_input';
 
 export class DomainError extends Error {

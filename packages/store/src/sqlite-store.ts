@@ -495,6 +495,25 @@ export class SqliteStore implements StorePort {
       if (command.type !== 'run.start' && before === null) {
         throw new DomainError('run_missing', `런을 찾지 못했습니다: ${command.runId}`);
       }
+      // Project scope (W2): a run belongs to the project its task lives in.
+      // The URL's project is the request's only context — a mismatch means
+      // the command arrived through a foreign channel and is refused before
+      // the state machine is even asked (QA A4/A5).
+      if (command.type === 'run.start') {
+        const owner = oneRow<{ project_id: string }>(
+          this.#db,
+          'SELECT project_id FROM obj WHERE id = ?',
+          command.taskId,
+        );
+        if (owner === undefined) {
+          throw new DomainError('invalid_input', `런의 과제를 찾지 못했습니다: ${command.taskId}`);
+        }
+        if (owner.project_id !== projectId) {
+          throw new DomainError('run_scope', `다른 프로젝트의 과제입니다: ${command.taskId}`);
+        }
+      } else if ((before as RunRecord).projectId !== projectId) {
+        throw new DomainError('run_scope', `다른 프로젝트의 런입니다: ${command.runId}`);
+      }
       const seed: RunSeed | RunRecord =
         command.type === 'run.start'
           ? {

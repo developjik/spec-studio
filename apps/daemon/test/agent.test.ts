@@ -69,7 +69,12 @@ async function api<T>(
   return { status: response.status, body: (await response.json()) as T };
 }
 
-type CommandBody = { project: Project; opSeq?: number; events?: Array<{ type: string; run?: { id: string } }> };
+type CommandBody = {
+  project: Project;
+  opSeq?: number;
+  events?: Array<{ type: string; run?: { id: string } }>;
+  error?: { code?: string; message?: string };
+};
 
 async function command(target: Daemon, projectId: string, body: unknown) {
   return api<CommandBody>(target, `/api/projects/${projectId}/commands`, {
@@ -235,6 +240,68 @@ describe('a run, end to end (AC-1 · AC-2 · AC-4)', () => {
     const answer = await command(daemon, projectId, { type: 'run.answer', runId, text: '늦은 답' });
     expect(answer.status).toBeGreaterThanOrEqual(400);
     release = null;
+  });
+});
+
+describe('cross-project scope (QA A4/A5 — a run answers its own project only)', () => {
+  it('a run.* command through another project\'s channel is refused and the run keeps running', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: 't1', name: 'ask_human', input: { question: '계속할까요?' } }] },
+    ]);
+    const daemon = await boot(model);
+    const { projectId, ideaId } = await seed(daemon);
+
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'needs_input');
+
+    // the second channel: another project on the same daemon
+    const other = await api<{ project: Project }>(daemon, '/api/projects', {
+      method: 'POST',
+      body: { name: '다른 프로젝트' },
+    });
+    const otherId = other.body.project.id;
+
+    for (const body of [
+      { type: 'run.cancel', runId, reason: '타 프로젝트' },
+      { type: 'run.resume', runId },
+      { type: 'run.answer', runId, text: '타 프로젝트 답' },
+    ]) {
+      const refused = await command(daemon, otherId, body);
+      expect(refused.status).toBe(403);
+      expect(refused.body.error?.code).toBe('run_scope');
+    }
+
+    // the run never noticed the foreign channel — still parked on its question
+    const after = await api<{ run: RunRecord }>(daemon, `/api/projects/${projectId}/runs/${runId}`);
+    expect(after.body.run.state).toBe('needs_input');
+    expect(after.body.run.endedAt).toBeNull();
+  });
+
+  it('run.start aimed at another project\'s task is refused over HTTP too', async () => {
+    const model = scriptedModel([FINAL]);
+    const daemon = await boot(model);
+    const { ideaId } = await seed(daemon);
+    const other = await api<{ project: Project }>(daemon, '/api/projects', {
+      method: 'POST',
+      body: { name: '다른 프로젝트' },
+    });
+    const otherId = other.body.project.id;
+
+    const refused = await command(daemon, otherId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error?.code).toBe('run_scope');
+
+    const runs = await api<{ runs: RunRecord[] }>(daemon, `/api/projects/${otherId}/runs`);
+    expect(runs.body.runs).toHaveLength(0);
   });
 });
 

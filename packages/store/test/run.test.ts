@@ -143,6 +143,42 @@ describe('run lifecycle commands (§4.2)', () => {
     expect(answer.some((row) => row.line.includes('예산 3만원까지'))).toBe(true);
   });
 
+  it('a run answers only to its own project — a foreign channel is refused and the run is untouched', async () => {
+    const store = open();
+    const { projectId, runId } = await seedIdeaAndRun(store);
+    const other = await store.createProject({ name: '다른 프로젝트', id: 'PRJ_othertest01' });
+    store.transitionRun(runId, 'running');
+
+    for (const command of [
+      { type: 'run.cancel', runId, reason: '타 채널' } as const,
+      { type: 'run.resume', runId } as const,
+      { type: 'run.answer', runId, text: '타 채널 답' } as const,
+    ]) {
+      await expect(store.execute(other.id, command)).rejects.toMatchObject({
+        name: 'DomainError',
+        code: 'run_scope',
+      });
+    }
+    const run = db(store).prepare('SELECT state, ended_at FROM run WHERE id = ?').get(runId) as Record<
+      string,
+      unknown
+    >;
+    expect(run['state']).toBe('running');
+    expect(run['ended_at']).toBeNull();
+    expect(projectId).toBe('PRJ_runtest0001');
+  });
+
+  it('run.start on another project\'s task is refused before a run row exists', async () => {
+    const store = open();
+    const { ideaId } = await seedIdeaAndRun(store);
+    const other = await store.createProject({ name: '다른 프로젝트', id: 'PRJ_othertest02' });
+
+    await expect(
+      store.execute(other.id, { type: 'run.start', taskId: ideaId, agent: 'researcher', mode: 'research' }),
+    ).rejects.toMatchObject({ name: 'DomainError', code: 'run_scope' });
+    expect(store.listRuns()).toHaveLength(1); // only the seed's run exists
+  });
+
   it('run.cancel is terminal and journaled with before/after', async () => {
     const store = open();
     const { projectId, runId } = await seedIdeaAndRun(store);

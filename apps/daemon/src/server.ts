@@ -11,7 +11,7 @@ import {
   type Project,
   type ProjectBundle,
 } from '@spec-studio/protocol';
-import { DomainError, remapProject, ungroundedRequirements } from '@spec-studio/core';
+import { DomainError, remapProject, ungroundedRequirements, type DomainErrorCode } from '@spec-studio/core';
 import {
   openSqliteStore,
   SCHEMA_VERSION,
@@ -657,10 +657,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
 }
 
+/** Domain refusal codes that answer with a status other than the 400 default. */
+const DOMAIN_ERROR_STATUS: Readonly<Partial<Record<DomainErrorCode, number>>> = {
+  run_scope: 403,
+};
+
 function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
   if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
-  if (error instanceof DomainError) return new HttpError(400, error.code, error.message);
+  if (error instanceof DomainError) {
+    return new HttpError(DOMAIN_ERROR_STATUS[error.code] ?? 400, error.code, error.message);
+  }
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {
     return new HttpError(502, 'confluence_error', error.message, error.detail);
