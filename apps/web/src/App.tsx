@@ -17,6 +17,7 @@ import { AiSettingsModal } from './components/AiSettingsModal';
 import { DocPanel } from './components/DocPanel';
 import { RunPanel } from './components/RunPanel';
 import { useNotices } from './hooks/useNotices';
+import { useUiMode } from './hooks/useUiMode';
 import { useDaemonProject } from './hooks/useDaemonProject';
 import { useDocRegistry } from './hooks/useDocRegistry';
 import { useGraphRtm } from './hooks/useGraphRtm';
@@ -27,7 +28,7 @@ import { useAgentRuns } from './hooks/useAgentRuns';
 import { useOutputs } from './hooks/useOutputs';
 import { useProjectFlow } from './hooks/useProjectFlow';
 import { EMPTY_MATURITY } from './model/appUtils';
-import { surfaceProps } from './model/surfaces';
+import { surfaceProps, surfaceVisible } from './model/surfaces';
 
 /**
  * Composition root (E4 F0): every domain lives in its hook — 데몬·프로젝트,
@@ -36,6 +37,7 @@ import { surfaceProps } from './model/surfaces';
  */
 export default function App() {
   const notices = useNotices();
+  const uiMode = useUiMode();
   const session = useDaemonProject({ setNotice: notices.setNotice });
   const docsApi = useDocRegistry({
     client: session.client,
@@ -153,6 +155,7 @@ export default function App() {
     aiSettings,
   } = ai;
   const { outputOpen, publishOpen, importInput } = outputs;
+  const { mode } = uiMode;
 
   const screen = project?.screen ?? null;
   const pins = project?.pins ?? [];
@@ -182,10 +185,13 @@ export default function App() {
         onOpenPublish={() => outputs.setPublishOpen(true)}
         onOpenAi={ai.openAiPanel}
         aiSource={aiSource}
+        uiMode={mode}
+        onToggleMode={uiMode.toggleMode}
       />
 
       {aiOpen && (
         <AiSettingsModal
+          uiMode={mode}
           value={aiSettings}
           status={aiStatus}
           busy={aiBusy}
@@ -222,7 +228,11 @@ export default function App() {
           <span className="boot-mark" aria-hidden="true" />
           로컬 SQLite 데몬(127.0.0.1)을 확인하는 중…
         </div>
-      ) : screen !== null && project !== null && view === 'graph' && report !== null ? (
+      ) : screen !== null &&
+        project !== null &&
+        surfaceVisible('graphView', mode) &&
+        view === 'graph' &&
+        report !== null ? (
         <GraphView
           project={project}
           nodes={graphNodes}
@@ -275,7 +285,9 @@ export default function App() {
               <span className="tool-hint">이미지 클릭 → 번호 핀</span>
             </div>
 
-            <FigmaBar screen={screen} onSave={pinsApi.saveFigmaUrl} />
+            {surfaceVisible('figmaBar', mode) && (
+              <FigmaBar screen={screen} onSave={pinsApi.saveFigmaUrl} />
+            )}
 
             <CanvasStage
               screen={screen}
@@ -306,6 +318,7 @@ export default function App() {
           </section>
 
           <DocPanel
+            uiMode={mode}
             doc={doc}
             docs={docs}
             pins={pins}
@@ -339,7 +352,7 @@ export default function App() {
             onFocusHandled={() => docsApi.setFocusBlockId(null)}
           />
 
-          {doc !== null && doc.kind === 'research' && (
+          {surfaceVisible('evidencePanel', mode) && doc !== null && doc.kind === 'research' && (
             <EvidencePanel
               evidence={project.evidence}
               requirements={reqOptions}
@@ -352,6 +365,7 @@ export default function App() {
 
           <div className="side-rail">
             <PinPanel
+              uiMode={mode}
               doc={doc}
               onFocusBlock={docsApi.setFocusBlockId}
               pins={pins}
@@ -367,6 +381,7 @@ export default function App() {
               onCloseEditor={() => pinsApi.setSelectedPinId(null)}
             />
 
+            {surfaceVisible('ideaInbox', mode) && (
             <IdeaInboxPanel
               ideas={project.ideas}
               evidence={project.evidence}
@@ -382,8 +397,9 @@ export default function App() {
               onRunBrief={(ideaId, evidenceIds) => void ai.runBrief(ideaId, evidenceIds)}
               onRunAgent={(ideaId) => void runsApi.startAgentRun(ideaId)}
             />
+            )}
 
-            {sqliteMode && runsApi.runs.length > 0 && (
+            {surfaceVisible('runPanel', mode) && sqliteMode && runsApi.runs.length > 0 && (
               <RunPanel
                 runs={runsApi.runs}
                 activeId={runsApi.activeRunId}
@@ -427,7 +443,8 @@ export default function App() {
           onClose={() => outputs.setOutputOpen(false)}
         />
       )}
-      {publishOpen &&
+      {surfaceVisible('publishModal', mode) &&
+        publishOpen &&
         screen !== null &&
         project !== null &&
         daemonProjectId !== null &&

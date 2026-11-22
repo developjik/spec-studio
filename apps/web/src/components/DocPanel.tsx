@@ -11,6 +11,7 @@ import {
   type Proposal,
 } from '@spec-studio/protocol';
 import { proseOf, staleForBlock, staleBadges } from '@spec-studio/core';
+import type { UiMode } from '../model/settings';
 import { surfaceProps } from '../model/surfaces';
 
 export type DocMode = 'direct' | 'proposal';
@@ -34,6 +35,8 @@ export interface RevertableView {
 }
 
 interface DocPanelProps {
+  /** E4 F1: easy mode hides registry management on the tab bar (rename·delete stay pro). */
+  uiMode: UiMode;
   doc: Doc | null;
   /** The registry; one tab each, the active one is `doc`. */
   docs: Doc[];
@@ -77,6 +80,7 @@ interface DocPanelProps {
 }
 
 interface DocTabsProps {
+  uiMode: UiMode;
   docs: Doc[];
   activeDocId: string | null;
   busy: boolean;
@@ -182,7 +186,7 @@ function DocTabs(props: DocTabsProps) {
         >
           +
         </button>
-        {props.activeDocId !== null && (
+        {props.activeDocId !== null && props.uiMode === 'pro' && (
           <button
             type="button"
             className="doc-tab doc-tab--rename"
@@ -195,7 +199,7 @@ function DocTabs(props: DocTabsProps) {
             ✎
           </button>
         )}
-        {props.activeDocId !== null && (
+        {props.activeDocId !== null && props.uiMode === 'pro' && (
           <button
             type="button"
             className={`doc-tab doc-tab--delete${armed ? ' is-armed' : ''}`}
@@ -324,6 +328,7 @@ export function DocPanel(props: DocPanelProps) {
         {...surfaceProps('docPanel')}
       >
         <DocTabs
+          uiMode={props.uiMode}
           docs={props.docs}
           activeDocId={null}
           busy={props.busy}
@@ -365,6 +370,7 @@ export function DocPanel(props: DocPanelProps) {
       {...surfaceProps('docPanel')}
     >
       <DocTabs
+        uiMode={props.uiMode}
         docs={props.docs}
         activeDocId={doc.id}
         busy={props.busy}

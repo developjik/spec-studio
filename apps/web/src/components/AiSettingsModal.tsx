@@ -6,6 +6,7 @@ import {
   type AiProvider,
 } from '@spec-studio/protocol';
 import type { AiStatusView } from '../model/daemon';
+import type { UiMode } from '../model/settings';
 import { surfaceProps } from '../model/surfaces';
 
 /**
@@ -38,6 +39,8 @@ export interface AiPanelResult {
 }
 
 interface AiSettingsModalProps {
+  /** E4 F1: easy mode hides the graph-mode proposal (its card lives in the pro-only graph view). */
+  uiMode: UiMode;
   value: AiSettingsValue;
   status: AiStatusView | null;
   busy: boolean;
@@ -287,16 +290,18 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
 
         <div className="ai-propose">
           <span className="ai-label">제안 추출</span>
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            onClick={() => props.onPropose('graph')}
-            disabled={busy || !props.sqliteMode}
-            data-testid="ai-extract-graph"
-            title="핀에서 요구사항·정책·계약·QA 초안을 뽑아 결정 카드 1장으로 만듭니다"
-          >
-            그래프 제안
-          </button>
+          {props.uiMode === 'pro' && (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => props.onPropose('graph')}
+              disabled={busy || !props.sqliteMode}
+              data-testid="ai-extract-graph"
+              title="핀에서 요구사항·정책·계약·QA 초안을 뽑아 결정 카드 1장으로 만듭니다"
+            >
+              그래프 제안
+            </button>
+          )}
           <button
             type="button"
             className="btn btn--sm"
@@ -309,11 +314,17 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
           </button>
         </div>
 
-        {!props.sqliteMode && (
+        {!props.sqliteMode && props.uiMode === 'pro' && (
           <p className="ai-note ai-note--warn">
             LLM 제안 추출은 로컬 SQLite 데몬 모드에서만 동작합니다. 브라우저 임시 모드에서는
             <strong> 그래프 · RTM</strong> 탭의 <strong>핀에서 정책 · 요구사항 · QA 추출</strong>
             (로컬 규칙 폴백)을 쓰세요.
+          </p>
+        )}
+        {!props.sqliteMode && props.uiMode === 'easy' && (
+          <p className="ai-note ai-note--warn">
+            LLM 제안 추출은 로컬 SQLite 데몬 모드에서만 동작합니다. 브라우저 임시 모드에서는
+            문서 탭의 <strong>제안 사용 → 제안 만들기</strong>(로컬 규칙 폴백)를 쓰세요.
           </p>
         )}
       </section>

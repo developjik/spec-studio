@@ -15,9 +15,12 @@ import {
   type PinFilter,
 } from '@spec-studio/core';
 import { PinEditor, type PinEditInput } from './PinEditor';
+import type { UiMode } from '../model/settings';
 import { surfaceProps } from '../model/surfaces';
 
 interface PinPanelProps {
+  /** E4 F1: easy mode hides the type-filter row — 분류 체계는 전문 개념 (핀 6종→3종 선례). */
+  uiMode: UiMode;
   pins: Pin[];
   /** The document, so a selected pin can list the paragraphs that cite it. */
   doc: Doc | null;
@@ -35,6 +38,7 @@ interface PinPanelProps {
 }
 
 export function PinPanel({
+  uiMode,
   pins,
   doc,
   onFocusBlock,
@@ -118,6 +122,7 @@ export function PinPanel({
         </div>
       )}
 
+      {uiMode === 'pro' && (
       <div className="filters" role="group" aria-label="핀 타입 필터">
         <button
           type="button"
@@ -142,6 +147,7 @@ export function PinPanel({
           </button>
         ))}
       </div>
+      )}
 
       {allCount === 0 ? (
         <div className="panel-empty">

@@ -111,6 +111,12 @@ def main() -> int:
             )
             page.on("pageerror", lambda error: console_errors.append(str(error)))
 
+            # E4 F1: E2 exercises pro surfaces. A fresh profile boots easy, so
+            # declare the pro choice the way the mode switch persists it —
+            # the local settings key, written before the app boots.
+            page.add_init_script(
+                "localStorage.setItem('spec-studio.settings.v1', JSON.stringify({mode:'pro'}))"
+            )
             page.goto(WEB_URL, wait_until="networkidle")
             page.wait_for_selector(
                 "[data-testid=daemon-status][data-status=connected]", timeout=20000
@@ -224,12 +230,14 @@ def main() -> int:
             check("브리프 제안이 idea_id를 영속", len(carried) == 1, str(carried))
 
             # ── 8. MN-A: daemon restart, then promote — the seed survived ─
+            # A fresh page after the restart: the old tab can hold sockets to
+            # the daemon that just died, which is not what is being tested.
+            # It must close *before* terminate — its open SSE op stream keeps
+            # server.close() waiting on the socket past the 15s grace.
+            page.close()
             daemon.terminate()
             daemon.wait(timeout=15)
             daemon = start_daemon()
-            # A fresh page after the restart: the old tab can hold sockets to
-            # the daemon that just died, which is not what is being tested.
-            page.close()
             page = browser.new_page(viewport={"width": 1600, "height": 950})
             page.on(
                 "console",
@@ -238,6 +246,9 @@ def main() -> int:
                 else None,
             )
             page.on("pageerror", lambda error: console_errors.append(str(error)))
+            page.add_init_script(
+                "localStorage.setItem('spec-studio.settings.v1', JSON.stringify({mode:'pro'}))"
+            )
             page.goto(WEB_URL, wait_until="domcontentloaded")
             page.wait_for_selector(
                 "[data-testid=daemon-status][data-status=connected]", timeout=20000

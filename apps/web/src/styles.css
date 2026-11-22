@@ -196,6 +196,18 @@ button {
   color: var(--ink-3);
 }
 
+/* F1's one-click mode switch reads as a preference pill, not another action. */
+.mode-switch {
+  flex: none;
+  border-radius: 999px;
+}
+
+.mode-switch[data-mode='easy'] {
+  background: var(--bg-sub);
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* ── buttons and fields ──────────────────────────────────────────────── */
 
 .btn {

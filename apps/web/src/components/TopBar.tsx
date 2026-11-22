@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Screen } from '@spec-studio/protocol';
 import type { Maturity } from '@spec-studio/core';
 import type { DaemonStatus } from '../model/daemon';
+import type { UiMode } from '../model/settings';
 import { surfaceProps } from '../model/surfaces';
 
 export type StudioView = 'studio' | 'graph';
@@ -11,6 +12,9 @@ interface TopBarProps {
   daemonStatus: DaemonStatus;
   view: StudioView;
   maturity: Maturity;
+  /** E4 F1: the easy/pro preference — gates pro-only controls in this bar. */
+  uiMode: UiMode;
+  onToggleMode: () => void;
   onView: (view: StudioView) => void;
   onExport: () => void;
   onImport: () => void;
@@ -147,6 +151,8 @@ export function TopBar({
   daemonStatus,
   view,
   maturity,
+  uiMode,
+  onToggleMode,
   onView,
   onExport,
   onImport,
@@ -167,8 +173,24 @@ export function TopBar({
 
       <DaemonBadge status={daemonStatus} />
 
+      <button
+        type="button"
+        className="btn btn--sm mode-switch"
+        onClick={onToggleMode}
+        data-testid="mode-switch"
+        data-mode={uiMode}
+        title={
+          uiMode === 'easy'
+            ? '전문 모드로 전환 — 그래프·인박스·근거·에이전트·발행·백업을 엽니다'
+            : '간편 모드로 전환 — 캔버스·문서·제안 카드·출력만 둡니다'
+        }
+      >
+        {uiMode === 'easy' ? '간편 모드' : '전문 모드'}
+      </button>
+
       {screen !== null && (
         <>
+          {uiMode === 'pro' && (
           <div className="view-tabs" role="tablist" aria-label="표면">
             <button
               type="button"
@@ -191,6 +213,7 @@ export function TopBar({
               그래프 · RTM
             </button>
           </div>
+          )}
 
           <div className="screen-id">
             <span className="screen-title" title={screen.title}>
@@ -200,7 +223,9 @@ export function TopBar({
             <span className="screen-source">{sourceLabel(screen)}</span>
           </div>
 
-          <MaturityBadge maturity={maturity} />
+          {/* DG-1: the raw L0→L2 checklist is pro's presentation — easy gets
+              the "다음 할 일" card instead (F4), never the checklist itself. */}
+          {uiMode === 'pro' && <MaturityBadge maturity={maturity} />}
         </>
       )}
 
@@ -238,50 +263,54 @@ export function TopBar({
           </span>
         ) : (
           <>
-            {view === 'studio' ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={onOpenOutputs}
-                  data-testid="open-outputs"
-                  title="오버레이 PNG · 정적 HTML · QA CSV"
-                >
-                  출력 3종
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={onOpenPublish}
-                  data-testid="open-publish"
-                  disabled={daemonStatus !== 'connected'}
-                  title={
-                    daemonStatus === 'connected'
-                      ? 'Confluence로 단방향 발행'
-                      : '발행하려면 SQLite 데몬 연결이 필요합니다'
-                  }
-                >
-                  Confluence 발행
-                </button>
-              </>
-            ) : null}
+            {(uiMode === 'easy' || view === 'studio') && (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={onOpenOutputs}
+                data-testid="open-outputs"
+                title="오버레이 PNG · 정적 HTML · QA CSV"
+              >
+                출력 3종
+              </button>
+            )}
+            {uiMode === 'pro' && view === 'studio' && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onOpenPublish}
+                data-testid="open-publish"
+                disabled={daemonStatus !== 'connected'}
+                title={
+                  daemonStatus === 'connected'
+                    ? 'Confluence로 단방향 발행'
+                    : '발행하려면 SQLite 데몬 연결이 필요합니다'
+                }
+              >
+                Confluence 발행
+              </button>
+            )}
             <span className="topbar-divider" aria-hidden="true" />
             <button type="button" className="btn" onClick={onExport} data-testid="export-project">
               JSON 내보내기
             </button>
-            <button type="button" className="btn" onClick={onImport} data-testid="import-project">
-              불러오기
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={onBackup}
-              disabled={daemonStatus !== 'connected'}
-              title="SQLite 파일을 그대로 복제합니다"
-              data-testid="backup-project"
-            >
-              SQLite 백업
-            </button>
+            {uiMode === 'pro' && (
+              <button type="button" className="btn" onClick={onImport} data-testid="import-project">
+                불러오기
+              </button>
+            )}
+            {uiMode === 'pro' && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onBackup}
+                disabled={daemonStatus !== 'connected'}
+                title="SQLite 파일을 그대로 복제합니다"
+                data-testid="backup-project"
+              >
+                SQLite 백업
+              </button>
+            )}
             <button type="button" className="btn" onClick={onReset}>
               새 화면
             </button>
