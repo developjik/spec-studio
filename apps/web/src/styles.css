@@ -518,10 +518,14 @@ button {
   color: var(--ink-3);
 }
 
-/* Inside the dock the run panel keeps its own chrome — a separator, a cap. */
+/* Inside the dock the run panel keeps its own chrome — a separator, a cap.
+   The cap only holds when the panel scrolls: without it, content past 38vh
+   spills over main.studio below and its paint order decides what still
+   answers the mouse (QA R1 — the answer button was covered). */
 .chat-dock .run-panel {
   border-top: 1px solid var(--line);
   max-height: 38vh;
+  overflow-y: auto;
 }
 
 /* ── pins on the screen ──────────────────────────────────────────────── */
