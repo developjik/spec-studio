@@ -141,3 +141,60 @@ export function eventSummary(line: string): string | null {
     return null;
   }
 }
+
+/** One rendered row of the run log: an event line, one joined stdout run, or a stderr line. */
+export type RunLogItem =
+  | { kind: 'event'; line: string }
+  | { kind: 'stdout'; text: string }
+  | { kind: 'stderr'; line: string };
+
+/**
+ * P3-1: stdout arrives as coalesced ~120-char rows, so the model's streamed
+ * answer reads as JSON shrapnel. Consecutive rows become one text — the raw
+ * stays in run_log (기획: 원문 보존), the screen decides what a person reads.
+ */
+export function runLogItems(log: readonly RunLogLineView[]): RunLogItem[] {
+  const items: RunLogItem[] = [];
+  let pending: string[] | null = null;
+  const flush = () => {
+    if (pending !== null && pending.length > 0) {
+      items.push({ kind: 'stdout', text: pending.join('') });
+    }
+    pending = null;
+  };
+  for (const entry of log) {
+    if (entry.stream === 'stdout') {
+      (pending ??= []).push(entry.line);
+      continue;
+    }
+    flush();
+    if (entry.stream === 'event') items.push({ kind: 'event', line: entry.line });
+    else items.push({ kind: 'stderr', line: entry.line });
+  }
+  flush();
+  return items;
+}
+
+/**
+ * P3-1: a complete answer envelope is machine traffic — the person reads one
+ * line, never the raw JSON. A partial envelope is progress still streaming
+ * and stays visible as-is; prose is the model talking and always stays.
+ */
+export function summarizeStdout(text: string): string | null {
+  let trimmed = text.trim();
+  if (trimmed.startsWith('```')) {
+    const fence = trimmed.slice(3).indexOf('\n');
+    if (fence !== -1) trimmed = trimmed.slice(3 + fence + 1);
+    if (trimmed.endsWith('```')) trimmed = trimmed.slice(0, -3);
+  }
+  if (!trimmed.startsWith('{')) return null;
+  let parsed: { action?: string };
+  try {
+    parsed = JSON.parse(trimmed) as { action?: string };
+  } catch {
+    return null;
+  }
+  if (parsed.action === 'final') return '최종 브리프 초안을 작성했습니다.';
+  if (parsed.action === 'ask') return '확인이 필요해 질문을 올렸습니다 — 아래 답변으로 이어집니다.';
+  return null;
+}

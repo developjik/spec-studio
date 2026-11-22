@@ -8,6 +8,8 @@ import {
   eventSummary,
   questionOf,
   runLabel,
+  runLogItems,
+  summarizeStdout,
   webSearchNotice,
 } from '../model/runview';
 
@@ -119,18 +121,35 @@ export function RunPanel(props: RunPanelProps) {
             {log.length === 0 ? (
               <p className="run-log-empty">런 저널이 아직 비어 있습니다.</p>
             ) : (
-              log.map((entry, index) => {
-                if (entry.stream === 'event') {
-                  const summary = eventSummary(entry.line);
+              runLogItems(log).map((item, index) => {
+                if (item.kind === 'event') {
+                  const summary = eventSummary(item.line);
                   return summary === null ? null : (
                     <p key={index} className="run-log-event">
                       {summary}
                     </p>
                   );
                 }
+                if (item.kind === 'stdout') {
+                  // P3-1: a complete answer envelope collapses to one human
+                  // line; anything the model said as prose stays as said.
+                  const summary = summarizeStdout(item.text);
+                  if (summary !== null) {
+                    return (
+                      <p key={index} className="run-log-event">
+                        {summary}
+                      </p>
+                    );
+                  }
+                  return (
+                    <p key={index} className="run-log-line run-log-line--stdout">
+                      {item.text}
+                    </p>
+                  );
+                }
                 return (
-                  <p key={index} className={`run-log-line run-log-line--${entry.stream}`}>
-                    {entry.line}
+                  <p key={index} className="run-log-line run-log-line--stderr">
+                    {item.line}
                   </p>
                 );
               })

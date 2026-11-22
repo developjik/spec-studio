@@ -194,6 +194,13 @@ describe('a run, end to end (AC-1 · AC-2 · AC-4)', () => {
         .prepare("SELECT actor FROM op_log WHERE kind = 'proposal.adopt' ORDER BY seq DESC LIMIT 1")
         .get() as { actor: string };
       expect(op.actor).toBe(`ai:${runId}`);
+      // F1+P3 루프(W1 Minor-1 정정): the card's own creation row carries the
+      // run's name too — a ledger that sells an AI's card as a person's is a
+      // provenance hole the moment anyone audits only op_log.
+      const createOp = raw
+        .prepare("SELECT actor FROM op_log WHERE kind = 'proposal.create' ORDER BY seq DESC LIMIT 1")
+        .get() as { actor: string };
+      expect(createOp.actor).toBe(`ai:${runId}`);
       // AC-1, 채택 전 쓰기 0건: from the run's first ledger row on, the only
       // project-content op is the card's own creation — no block/doc/pin/
       // node/link row ever carries the run's fingerprints.
@@ -462,6 +469,41 @@ describe('run progress stream — the UI watches what the run does (AC-9 · W2)'
       reader.releaseLock();
     }
   }
+
+  it('F1: the project op stream announces a card from a run nobody is watching', async () => {
+    const model = scriptedModel([{ text: FINAL.text }]);
+    const daemon = await boot(model);
+    const { projectId, ideaId } = await seed(daemon);
+
+    // The QA repro: a run started over HTTP — no run stream open anywhere —
+    // files a card. A panel that refreshes only on the run it watches keeps
+    // a retired proposal whose adopt button 400s (F1). The project's own op
+    // stream is the refresh trigger that does not care who ran what.
+    const response = await fetch(`${daemon.url}/api/projects/${projectId}/events`, {
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    expect(started.status).toBe(200);
+
+    const frames = await collectSse(
+      response,
+      (list) => list.some((frame) => frame.event === 'op' && frame.data.opKind === 'proposal.create'),
+      10_000,
+    );
+    const opKinds = frames
+      .filter((frame) => frame.event === 'op')
+      .map((frame) => frame.data.opKind as string);
+    expect(opKinds).toContain('run.start'); // the runs list can catch up too
+    expect(opKinds).toContain('proposal.create'); // the card, from the unwatched run
+  });
 
   it('replays a snapshot, streams live progress, and closes at the terminal state', async () => {
     const model = scriptedModel([

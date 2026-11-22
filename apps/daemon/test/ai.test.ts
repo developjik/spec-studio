@@ -572,6 +572,72 @@ describe('the AI routes', () => {
     expect(cited.every((block) => titles.some((title) => block.text.includes(title)))).toBe(true);
   });
 
+  it('P3-2: washes invented source urls out of a single-shot LLM brief (일관 적용)', async () => {
+    const daemon = await boot();
+    const { projectId } = await seedScreen(daemon);
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'doc.create', title: '취소 리서치', kind: 'research' } },
+    });
+    const idea = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'idea.capture', text: '주문 취소 UX 개선\n경쟁 정책을 조사한다.' } },
+    });
+    const ideaId = idea.body.project?.ideas?.[0]?.id ?? '';
+    const captured = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: {
+          type: 'evidence.capture',
+          url: 'https://example.com/e/real',
+          title: '경쟁사 A 취소 정책',
+          excerpt: '결제 후 24시간 이내 무료 취소',
+          evidenceType: 'web',
+        },
+      },
+    });
+    const evidenceId = captured.body.project?.evidence?.[0]?.id ?? '';
+    expect(evidenceId).not.toBe('');
+
+    // the model leans on the project's own evidence (honest) and also cites a
+    // web url no tool ever returned — AC-3's enemy, now washed on this path too.
+    llm.setReply(() =>
+      JSON.stringify({
+        title: '취소 정책 브리프',
+        summary: '취소 정책 브리프',
+        claims: [
+          {
+            text: '경쟁사 A는 24시간 이내 무료 취소를 허용한다',
+            evidenceRefs: [evidenceId],
+            sourceUrls: ['https://example.com/e/real'],
+          },
+          { text: '업계 평균 환불율은 31%다', evidenceRefs: [], sourceUrls: ['https://made-up.example/refund'] },
+        ],
+      }),
+    );
+    const proposal = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: {
+        mode: 'brief',
+        provider: 'openai',
+        model: 'mock-1',
+        apiKey: 'sk-ui-secret-key',
+        endpoint: `${llm.url}/v1`,
+        ideaId,
+        evidenceIds: [evidenceId],
+      },
+    });
+    expect(proposal.status).toBe(200);
+    expect(proposal.body.source).toBe('llm');
+    expect(proposal.body.note).toContain('세척');
+
+    // the card's own text is the honest surface: the evidence citation stays,
+    // the invented url never lands, and the unsupported claim says so.
+    const research = proposal.body.project?.docs.find((doc) => doc.kind === 'research');
+    const card = proposal.body.project?.proposals?.find((row) => row.docId === research?.id);
+    expect(card).toBeDefined();
+    const texts = JSON.stringify(card?.patches ?? []);
+    expect(texts).toContain('경쟁사 A 취소 정책'); // evidenceRefs survive untouched
+    expect(texts).not.toContain('made-up.example'); // the invented url is gone
+    expect(texts).toContain('근거 없음'); // the washed claim says it honestly
+  });
+
   it('refuses a brief when the project has no research document', async () => {
     const daemon = await boot();
     const { projectId } = await seedScreen(daemon);

@@ -6,6 +6,8 @@ import {
   eventSummary,
   questionOf,
   runLabel,
+  runLogItems,
+  summarizeStdout,
   isLive,
   upsertRun,
   webSearchNotice,
@@ -154,5 +156,32 @@ describe('runLabel — the interrupted park shows one word (W3)', () => {
       eventSummary(JSON.stringify({ interrupted: true, reason: 'inactivity_timeout', detail: '활동 없이 600초' })),
     ).toBe('중단됨(타임아웃) — 활동 없이 600초');
     expect(eventSummary(JSON.stringify({ interrupted: true, reason: 'provider_error' }))).toBe('중단됨(오류)');
+  });
+});
+
+describe('P3-1 — the log a person reads, not the JSON the model said', () => {
+  it('joins consecutive stdout rows so a streamed envelope becomes one text', () => {
+    const items = runLogItems([
+      { stream: 'stdout', line: '{"action":"final","draft":' },
+      { stream: 'stdout', line: '{"title":"경쟁 브리프"}}' },
+      { stream: 'event', line: JSON.stringify({ card: true, taskId: 'I_1' }) },
+      { stream: 'stderr', line: '경고' },
+    ]);
+    expect(items).toEqual([
+      { kind: 'stdout', text: '{"action":"final","draft":{"title":"경쟁 브리프"}}' },
+      { kind: 'event', line: JSON.stringify({ card: true, taskId: 'I_1' }) },
+      { kind: 'stderr', line: '경고' },
+    ]);
+  });
+
+  it('collapses a complete final envelope into one human line', () => {
+    const envelope =
+      '{"action":"final","draft":{"title":"t","summary":"s","claims":[{"text":"주장","ungrounded":true}]}}';
+    expect(summarizeStdout(envelope)).toContain('최종');
+    expect(summarizeStdout('{"action":"ask","question":"예산은?"}')).toContain('질문');
+    // prose the model streams mid-run stays exactly what it said
+    expect(summarizeStdout('취소 정책을 조사하겠습니다.')).toBeNull();
+    // a partial envelope (stream still in flight) is progress, not noise to hide
+    expect(summarizeStdout('{"action":"final","draft":')).toBeNull();
   });
 });

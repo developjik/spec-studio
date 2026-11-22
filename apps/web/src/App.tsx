@@ -379,6 +379,41 @@ export default function App() {
   useEffect(() => () => runStream.current?.abort(), [daemonProjectId]);
 
   /**
+   * F1: a card any run files — watched or not — must reach this screen. The
+   * project's op stream is the refresh trigger; a burst of ops collapses
+   * into one trailing reload, and the run list catches up on the same beat,
+   * so a retired proposal's adopt button can never sit on a stale panel.
+   */
+  useEffect(() => {
+    if (!sqliteMode || daemonProjectId === null) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    void client
+      .streamProjectOps(
+        daemonProjectId,
+        () => {
+          if (timer !== null) clearTimeout(timer);
+          timer = setTimeout(() => {
+            timer = null;
+            void reload();
+            void client.listRuns(daemonProjectId).then(setRuns).catch(() => undefined);
+          }, 120);
+        },
+        controller.signal,
+      )
+      .catch(() => {
+        // the op stream is a convenience: without it the panel still has the
+        // per-run stream's review reload — degradation, never an error wall.
+      });
+    return () => {
+      controller.abort();
+      if (timer !== null) clearTimeout(timer);
+    };
+    // reload/setRuns keep their shape for this project; one subscription here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sqliteMode, daemonProjectId]);
+
+  /**
    * The run's label says what a new turn would call: the first provider with
    * a key, exactly the daemon's own pick order. No key — the badge says so,
    * because the run will honestly fail (no silent fallback).

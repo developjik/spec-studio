@@ -22,6 +22,8 @@ import {
   type Project as ProjectType,
 } from '@spec-studio/protocol';
 
+import { washBriefDraft } from '@spec-studio/agent';
+
 import {
   AiDraftError,
   AiProviderError,
@@ -267,11 +269,17 @@ export async function planAiProposal(
         },
         ...(runtime.fetchImpl === undefined ? {} : { fetchImpl: runtime.fetchImpl }),
       });
+      // P3-2 (기획 일관 적용 확정): this path runs no web tool, so no url is
+      // tool-reported — the same AC-3 wash empties every invented citation.
+      // Grounding here lives in evidenceRefs (E_…), which pass through
+      // untouched; a claim left with nothing says 근거 없음 honestly, and the
+      // golden set is unaffected (its brief family rides the rule fallback).
+      const washed = washBriefDraft(draft, new Set());
       return {
         command: {
           type: 'proposal.create',
           docId: doc.id,
-          draft,
+          draft: washed.draft,
           source: 'llm',
           provider: request.provider,
           model,
@@ -280,7 +288,9 @@ export async function planAiProposal(
         source: 'llm',
         provider: request.provider,
         model,
-        note: `LLM이 브리프 주장 ${draft.claims.length}개를 만들었습니다 (${latencyMs}ms).`,
+        note: `LLM이 브리프 주장 ${washed.draft.claims.length}개를 만들었습니다 (${latencyMs}ms)${
+          washed.removedUrls.length > 0 ? ` · 근거 없는 출처 ${washed.removedUrls.length}건 세척` : ''
+        }`,
       };
     }
 

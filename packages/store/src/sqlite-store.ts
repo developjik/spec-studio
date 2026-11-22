@@ -237,7 +237,11 @@ const DEFAULT_IDS = {
  * undo restores.
  */
 /** What moved — the SSE route and the activity clock read these (W3 Nit-1). */
-export type StoreChange = { kind: 'run' | 'log'; runId: string };
+export type StoreChange =
+  | { kind: 'run' | 'log'; runId: string }
+  /** F1: a committed op — the project stream refreshes panels that never
+   * watched the run whose card just retired the proposal they show. */
+  | { kind: 'op'; projectId: string; opKind: string };
 
 export class SqliteStore implements StorePort {
   readonly #db: DatabaseSync;
@@ -492,7 +496,7 @@ export class SqliteStore implements StorePort {
     const isExport = command.type === 'project.package.export';
     const after: Project = isExport ? result.project : { ...result.project, updatedAt: at };
 
-    return transaction(this.#db, () => {
+    const outcome = transaction(this.#db, () => {
       // Nothing to write: the event and the op row ARE the export's trace, and
       // #writeDoc would restamp every block's updated_at with this `at`.
       if (!isExport) this.#writeProject(before, after, at);
@@ -508,6 +512,11 @@ export class SqliteStore implements StorePort {
         events: result.events,
       };
     });
+    // F1: after commit, every write announces itself — the project's op
+    // stream is the refresh trigger that does not care which run ran. An
+    // export is a read wearing an op row; it announces nothing.
+    if (!isExport) this.#notify({ kind: 'op', projectId, opKind: command.type });
+    return outcome;
   }
 
   /** The person's run commands, applied against the run tables (§4.2). */
@@ -601,6 +610,9 @@ export class SqliteStore implements StorePort {
     });
     const moved = outcome.events[0]?.run?.id;
     if (moved !== undefined) this.#notify({ kind: 'run', runId: moved });
+    // F1: run commands are ops too — a run started over HTTP reaches the
+    // project stream, so a panel's run list catches up without polling.
+    this.#notify({ kind: 'op', projectId, opKind: command.type });
     return outcome;
   }
 
@@ -1535,9 +1547,16 @@ export class SqliteStore implements StorePort {
       }
       const snapshotBefore = blockId === null ? null : findBlockBefore(beforeDoc ?? null, blockId);
       const snapshotAfter = blockId === null ? null : findBlockBefore(afterDoc ?? null, blockId);
+      // F1+P3 루프(W1 Minor-1 정정): a card's creation row is its run's write,
+      // exactly like its adoption — `ai:<runId>`, never a person's name, so a
+      // ledger-only audit can tell an AI's card from a person's.
+      const createActor =
+        command.type === 'proposal.create' && command.runId !== undefined
+          ? `ai:${command.runId}`
+          : actor;
       return this.#insertLog({
         at,
-        actor,
+        actor: createActor,
         kind,
         target,
         before: { block: snapshotBefore },

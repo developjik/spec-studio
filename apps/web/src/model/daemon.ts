@@ -477,6 +477,64 @@ export class DaemonClient {
     }
   }
 
+  /**
+   * F1: the project's own op stream — every committed op, whatever ran it.
+   * The panel refreshes on this, not only on the run it happens to watch, so
+   * a card from an HTTP-started run can never leave a retired proposal on
+   * screen (QA 재현: 같은 아이디어 2회 연속 → 무갱신 채택 400).
+   */
+  async streamProjectOps(
+    projectId: string,
+    onOp: (op: { opKind: string }) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.baseUrl}/api/projects/${encodeURIComponent(projectId)}/events`,
+        { headers: daemonHeaders(false), signal },
+      );
+    } catch (error) {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+      throw new DaemonError('daemon_unreachable', 'SQLite 데몬에 연결하지 못했습니다.');
+    }
+    if (!response.ok || response.body === null) {
+      throw new DaemonError('daemon_error', `프로젝트 스트림 응답 ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventName = 'message';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut = buffer.indexOf('\n\n');
+        while (cut !== -1) {
+          const block = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          cut = buffer.indexOf('\n\n');
+          let data = '';
+          for (const line of block.split('\n')) {
+            const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+            if (trimmed.startsWith('event:')) eventName = trimmed.slice(6).trim();
+            else if (trimmed.startsWith('data:')) data += trimmed.slice(5).trim();
+          }
+          const name = eventName;
+          eventName = 'message';
+          if (data === '') continue;
+          if (name === 'op') {
+            const parsed = JSON.parse(data) as { opKind?: string };
+            if (typeof parsed.opKind === 'string') onOp({ opKind: parsed.opKind });
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   async publishes(projectId: string): Promise<PublishRecordView[]> {
     const body = await this.#request<{ records: PublishRecordView[] }>(
       `/api/projects/${encodeURIComponent(projectId)}/publishes`,

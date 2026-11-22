@@ -499,6 +499,40 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return send(res, 200, { runs: store.listRuns().filter((run) => run.projectId === projectId) });
     }
 
+    // GET /api/projects/:id/events — the project's own op stream (F1). A card
+    // can arrive from a run this screen never watched — HTTP-started, or an
+    // earlier pick whose stream a newer run replaced — so the panel's refresh
+    // trigger is the project, not whichever run it happens to be watching.
+    // Same contract as the run stream: change notices, never a polling scan.
+    if (action === 'events' && segments.length === 4) {
+      if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
+      if ((await store.readProject(projectId)) === null) {
+        throw new HttpError(404, 'project_not_found', '프로젝트를 찾지 못했습니다.');
+      }
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+      res.setHeader('cache-control', 'no-cache');
+      res.setHeader('connection', 'keep-alive');
+      res.flushHeaders();
+      const emit = (name: string, data: unknown) => {
+        if (!res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      const unsubscribe = store.subscribeRunChanges((change) => {
+        if (change.kind === 'op' && change.projectId === projectId) {
+          emit('op', { opKind: change.opKind });
+        }
+      });
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': keepalive\n\n');
+      }, 15_000);
+      heartbeat.unref?.();
+      res.on('close', () => {
+        unsubscribe();
+        clearInterval(heartbeat);
+      });
+      return;
+    }
+
     // GET /api/projects/:id/runs/:runId — one run, its log and checkpoint.
     if (action === 'runs' && segments.length === 5) {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
@@ -561,6 +595,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       emit('snapshot', { run: initial, log: store.runLog(runId) });
       let sent = store.runLog(runId).length;
       const unsubscribe = store.subscribeRunChanges((change) => {
+        if (change.kind === 'op') return; // the project stream's traffic
         if (change.runId === runId) pushDeltas();
       });
       const heartbeat = setInterval(() => {
