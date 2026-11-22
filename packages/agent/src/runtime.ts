@@ -60,17 +60,23 @@ export function personTransition(
       if (isTerminalRunState(current.state)) {
         throw new Error(`이미 끝난 런입니다 (${current.state}) — 취소는 반복되지 않습니다`);
       }
-      return { ...current, state: 'cancelled', endedAt: at };
+      // Cancelling is itself an acknowledgment — no restart flag outlives
+      // the run (AC-2: the flag lives only on runs that still are).
+      return { ...current, state: 'cancelled', interrupted: false, endedAt: at };
     }
     case 'run.answer': {
       if (current.state !== 'needs_input') {
         throw new Error(`답변은 needs_input 상태에서만 받습니다 (현재 ${current.state})`);
       }
       // The answer hands the run straight back to the queue; the runner
-      // appends the message and continues from the checkpoint.
-      return { ...current, state: 'queued', outwardAt: null };
+      // appends the message and continues from the checkpoint. Answering is
+      // also the acknowledgment a restart was waiting for, so the flag goes.
+      return { ...current, state: 'queued', outwardAt: null, interrupted: false };
     }
     case 'run.resume': {
+      if (isTerminalRunState(current.state)) {
+        throw new Error(`이미 끝난 런입니다 (${current.state}) — 재개할 수 없습니다`);
+      }
       if (!current.interrupted) {
         throw new Error('interrupted 표시가 없는 런은 재개할 수 없습니다');
       }
@@ -116,5 +122,8 @@ export function machineTransition(record: RunRecord, to: RunState, at: string): 
     startedAt: record.startedAt ?? (to === 'running' ? at : null),
     outwardAt: to === 'needs_input' || to === 'review' ? at : to === 'running' ? null : record.outwardAt,
     endedAt: isTerminalRunState(to) ? at : null,
+    // The restart flag is a question about a live run; a finished run has
+    // nothing left to ask (AC-2 종소점), so the flag never outlives it.
+    interrupted: isTerminalRunState(to) ? false : record.interrupted,
   };
 }

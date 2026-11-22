@@ -106,6 +106,30 @@ describe('run state machine (F1 · AC-2)', () => {
     ).toThrowError(/interrupted/);
   });
 
+  it('run.resume never reopens a finished run, even one carrying a stale interrupted flag (AC-2 endpoint)', () => {
+    // Major-1: a restart flag left on a run the person already finished must
+    // not become a door back into queued — done · failed · cancelled are
+    // endpoints with no outgoing moves, flag or no flag.
+    for (const state of ['done', 'failed', 'cancelled'] as const) {
+      expect(() =>
+        personTransition(run(state, true), { type: 'run.resume', runId: seed.id }, T1),
+      ).toThrowError(/이미 끝난/);
+    }
+  });
+
+  it('run.answer clears the interrupted flag — the answer is itself the acknowledgment', () => {
+    const asked = { ...machineTransition(run('running'), 'needs_input', T0), interrupted: true };
+    expect(
+      personTransition(asked, { type: 'run.answer', runId: seed.id, text: '예산 3만원까지' }, T1),
+    ).toMatchObject({ state: 'queued', interrupted: false });
+  });
+
+  it('run.cancel clears the interrupted flag on its way out', () => {
+    expect(
+      personTransition(run('running', true), { type: 'run.cancel', runId: seed.id, reason: '그만' }, T1),
+    ).toMatchObject({ state: 'cancelled', interrupted: false });
+  });
+
   // ── machine transitions (the daemon's half) ─────────────────────────
   it('walks the happy path queued → running → waiting → running → review → done', () => {
     let record = personTransition(
@@ -139,5 +163,16 @@ describe('run state machine (F1 · AC-2)', () => {
   it('failed and cancelled are reachable machine exits', () => {
     expect(machineTransition(run('running'), 'failed', T0).state).toBe('failed');
     expect(machineTransition(run('running'), 'cancelled', T0).state).toBe('cancelled');
+  });
+
+  it('a terminal machine move clears the interrupted flag — the flag never outlives the run', () => {
+    expect(machineTransition(run('review', true), 'done', T1)).toMatchObject({
+      state: 'done',
+      interrupted: false,
+    });
+    expect(machineTransition(run('running', true), 'failed', T1)).toMatchObject({
+      state: 'failed',
+      interrupted: false,
+    });
   });
 });

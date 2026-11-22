@@ -208,6 +208,37 @@ describe('run port — the machine half (daemon surface)', () => {
     expect(run['state']).toBe('queued');
     expect(run['interrupted']).toBe(0);
   });
+
+  it('a finished run stays finished — a restart flag left by an answered run cannot revive it (Major-1)', async () => {
+    const store = open();
+    const { projectId, runId } = await seedIdeaAndRun(store);
+    store.transitionRun(runId, 'running');
+    store.transitionRun(runId, 'needs_input');
+
+    // a daemon restart lands the flag on the open question (검증자 probe 1 prefix)
+    expect(store.markInterruptedRuns()).toBe(1);
+
+    // the person answers — the answer is itself the acknowledgment
+    await store.execute(projectId, { type: 'run.answer', runId, text: '이대로 마무리' });
+    let run = db(store).prepare('SELECT state, interrupted FROM run WHERE id = ?').get(runId) as Record<
+      string,
+      unknown
+    >;
+    expect(run['interrupted']).toBe(0);
+
+    // the run reaches its endpoint
+    store.transitionRun(runId, 'running');
+    store.transitionRun(runId, 'review');
+    store.transitionRun(runId, 'done');
+
+    await expect(store.execute(projectId, { type: 'run.resume', runId })).rejects.toThrowError(/이미 끝난/);
+    run = db(store).prepare('SELECT state, interrupted FROM run WHERE id = ?').get(runId) as Record<
+      string,
+      unknown
+    >;
+    expect(run['state']).toBe('done');
+    expect(run['interrupted']).toBe(0);
+  });
 });
 
 describe('AC-1 — the run leaves its name on the adoption, nothing else', () => {

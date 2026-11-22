@@ -274,4 +274,48 @@ describe('a daemon restart under a live run (AC-2 · checkpoint)', () => {
     const done = await waitRun(daemonB, projectId, runId, (run) => run.state === 'review' || run.state === 'done');
     expect(['review', 'done']).toContain(done.state);
   });
+
+  it('a finished run stays finished — a leftover restart flag cannot revive it over HTTP (Major-1)', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: 't1', name: 'ask_human', input: { question: '범위는 국내만?' } }] },
+    ]);
+    const daemonA = await boot(model);
+    const { projectId, ideaId } = await seed(daemonA);
+
+    const started = await command(daemonA, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemonA, projectId, runId, (run) => run.state === 'needs_input');
+
+    // the process dies with the question open; the restart lands the flag
+    await daemonA.close();
+    const daemonB = await boot(scriptedModel([FINAL]));
+    const flagged = await api<{ run: RunRecord }>(daemonB, `/api/projects/${projectId}/runs/${runId}`);
+    expect(flagged.body.run.interrupted).toBe(true);
+
+    // the person answers (acknowledging the restart) and adopts the card: done
+    await command(daemonB, projectId, { type: 'run.answer', runId, text: '국내만' });
+    await waitRun(daemonB, projectId, runId, (run) => run.state === 'review');
+    const withCard = await api<{ project: Project }>(daemonB, `/api/projects/${projectId}`);
+    const card = withCard.body.project.proposals.find((proposal) => proposal.authorId === runId);
+    expect(card).toBeDefined();
+    await command(daemonB, projectId, {
+      type: 'proposal.adopt',
+      docId: card!.docId,
+      proposalId: card!.id,
+    });
+    const done = await waitRun(daemonB, projectId, runId, (run) => run.state === 'done');
+    expect(done.endedAt).not.toBeNull();
+
+    // the endpoint holds: run.resume on the finished run is refused (AC-2),
+    // even if a restart flag survived somewhere, and the run stays done
+    const revived = await command(daemonB, projectId, { type: 'run.resume', runId });
+    expect(revived.status).toBeGreaterThanOrEqual(400);
+    const after = await api<{ run: RunRecord }>(daemonB, `/api/projects/${projectId}/runs/${runId}`);
+    expect(after.body.run.state).toBe('done');
+    expect(after.body.run.interrupted).toBe(false);
+  });
 });
