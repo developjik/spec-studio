@@ -52,7 +52,14 @@ export type RunOutcome =
   | { kind: 'final'; draft: unknown; messages: AgentMessage[] }
   | { kind: 'needs_input'; question: string; messages: AgentMessage[] }
   | { kind: 'cancelled'; messages: AgentMessage[] }
-  | { kind: 'failed'; reason: string; messages: AgentMessage[] };
+  | {
+      kind: 'failed';
+      reason: string;
+      messages: AgentMessage[];
+      /** W3: 'model' marks a provider/network failure — the daemon parks
+       * those as interrupted (재시도 의미 있음) instead of a terminal failed. */
+      cause?: 'model';
+    };
 
 export interface DriveOptions {
   messages: AgentMessage[];
@@ -128,6 +135,7 @@ export async function driveRun(options: DriveOptions): Promise<RunOutcome> {
         kind: 'failed',
         reason: error instanceof Error ? error.message : String(error),
         messages,
+        cause: 'model',
       };
     }
     clearInterval(checkTimer);
@@ -138,7 +146,9 @@ export async function driveRun(options: DriveOptions): Promise<RunOutcome> {
     // Tool calls first: a turn that asks for tools is not final.
     if (answer.toolCalls.length > 0) {
       const declared = new Set(options.toolbox.specs().map((spec) => spec.name));
-      for (const call of answer.toolCalls) {
+      for (let index = 0; index < answer.toolCalls.length; index += 1) {
+        const call = answer.toolCalls[index];
+        if (call === undefined) continue;
         if (await cancelledNow(options)) return { kind: 'cancelled', messages };
         if (!declared.has(call.name)) {
           // AC-4: the wall. Blocked and journaled — never executed, never
@@ -185,6 +195,26 @@ export async function driveRun(options: DriveOptions): Promise<RunOutcome> {
         if (call.name === 'ask_human' && outcome.ok) {
           const asked = parseAskOutput(outcome.output);
           if (asked !== null) {
+            // W3 Minor-2: parking mid-turn must not strand the turn's other
+            // calls. anthropic rejects a follow-up turn whose tool_use blocks
+            // carry no tool_result, so every remaining call of this turn is
+            // answered — blocked, journaled, never executed — before the run
+            // goes outward. run.answer then resumes without a provider 400.
+            for (const rest of answer.toolCalls.slice(index + 1)) {
+              options.journal.log(
+                'event',
+                JSON.stringify({ tool: rest.name, blocked: true, reason: 'parked_by_ask' }),
+              );
+              messages.push(
+                AgentMessageSchema.parse({
+                  role: 'tool',
+                  toolCallId: rest.id,
+                  name: rest.name,
+                  ok: false,
+                  output: '질문 대기 중이라 실행되지 않았습니다.',
+                }),
+              );
+            }
             options.journal.log('event', JSON.stringify({ needs_input: true, question: asked }));
             return { kind: 'needs_input', question: asked, messages };
           }

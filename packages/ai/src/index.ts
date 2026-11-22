@@ -182,3 +182,5 @@ export async function probeProvider(input: {
     return { ok: false, latencyMs: 0, message };
   }
 }
+
+export { callTavily, EXCERPT_MAX, type TavilyResult, type TavilySearchInput } from './web';

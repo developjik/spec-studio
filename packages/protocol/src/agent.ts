@@ -91,6 +91,29 @@ export const ASK_HUMAN_TOOL: AgentToolSpec = Object.freeze({
   },
 });
 
+/**
+ * Tool №1 of web research (E3 F2): search the web and fetch a page's body —
+ * one call, both halves. Returns `results`: title · url · excerpt per hit;
+ * the model cites those urls verbatim in `claims[].sourceUrls`, and the
+ * runner washes any url the tool never returned (AC-3). Fetching happens in
+ * the daemon process only (AC-4) — the pure runner sees a port, never a
+ * socket. No key means an honest '웹 검색 불가' failure, never a silent
+ * fallback.
+ */
+export const WEB_SEARCH_TOOL: AgentToolSpec = Object.freeze({
+  name: 'web_search',
+  description:
+    '웹을 검색해 출처(url)와 발췌를 가져옵니다. 인용은 결과의 url을 그대로 쓰고, 발췌 이상 복사하지 않습니다.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: '검색 질의' },
+      url: { type: 'string', description: '본문을 가져올 페이지 url (선택)' },
+    },
+    required: ['query'],
+  },
+});
+
 export const AgentToolCallSchema = z.object({
   id: z.string().min(1).max(80),
   name: z.string().min(1).max(40),

@@ -51,6 +51,16 @@ Every case is built by the same commands the app sends (`screen.attach`, `pin.cr
 proposal goes through `execute(project, { type: 'graph.proposal.create', … })` — the daemon's own
 path — so a draft that would be rejected in the app is rejected here too.
 
+## The agent-research set (E3 F2 · AC-3)
+
+`golden/agent-research.json` — ten cases running the run's own driver (`driveRun`) with a
+scripted model and a scripted `web_search` tool. The gate is the wash law: a brief's web
+citations are grounded or gone. Every kept `sourceUrls` entry must be a url the tool
+reported, planted hallucinations must wash out to exactly the expected list, washed claims
+keep the honest `ungrounded` marker, and question cases must route through `needs_input`
+and finish. The wash the eval scores (`washBriefDraft`) is the same pure function the
+daemon calls before the card — the gate and the product cannot drift apart. Threshold: 10/10.
+
 ## The brief set (E1 §7-B-3)
 
 `golden/brief.json` — ten research-brief cases after the golden thirty: five where every evidence

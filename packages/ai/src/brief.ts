@@ -62,16 +62,19 @@ export function buildFallbackBrief(project: Project, input: BriefInput): AiBrief
   const claims: AiBriefDraft['claims'] = selectedEvidence(project, input).map((row) => ({
     text: row.title.slice(0, 800),
     evidenceRefs: [row.id],
+    sourceUrls: [],
     ungrounded: false,
   }));
   claims.push({
     text: `기회: ${title}에서 증거 없이 가정한 기회이다.`.slice(0, 800),
     evidenceRefs: [],
+    sourceUrls: [],
     ungrounded: true,
   });
   claims.push({
     text: `다음 질문: ${title}에서 다음에 확인해야 할 질문이다.`.slice(0, 800),
     evidenceRefs: [],
+    sourceUrls: [],
     ungrounded: true,
   });
 

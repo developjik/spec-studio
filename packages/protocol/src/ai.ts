@@ -37,6 +37,10 @@ export const AI_ENV_KEYS: Record<AiRemoteProvider, string> = {
   openai: 'OPENAI_API_KEY',
 };
 
+/** E3 F2: the web-research key (Tavily). Missing key is an honest
+ * '웹 검색 불가' — never a silent fallback. BYOK 체인은 승계(E2). */
+export const TAVILY_ENV_KEY = 'TAVILY_API_KEY';
+
 /**
  * Where a resolved key came from. `subscription` exists in the enum as an
  * extension point only — no preset uses it and nothing resolves it yet.
@@ -222,6 +226,12 @@ export const AiBriefClaimSchema = z.object({
   text: z.string().trim().min(1).max(800),
   /** Evidence ids only — an id the project does not have is rejected before 채택. */
   evidenceRefs: z.array(EvidenceIdSchema).max(6).default([]),
+  /**
+   * Web sources (E3 F2): URLs the run's web_search tool actually returned —
+   * the runner washes any URL the tool never reported before the card is
+   * written (AC-3: 환각 출처 0), so what lands here is grounded or gone.
+   */
+  sourceUrls: z.array(z.string().url().max(2048)).max(6).default([]),
   /** The honest marker: a claim with no source says so instead of inventing one. */
   ungrounded: z.boolean().default(false),
 });
@@ -240,10 +250,10 @@ export const AiBriefDraftSchema = z
   })
   .superRefine((value, ctx) => {
     for (const [index, claim] of value.claims.entries()) {
-      if (claim.evidenceRefs.length === 0 && !claim.ungrounded) {
+      if (claim.evidenceRefs.length === 0 && claim.sourceUrls.length === 0 && !claim.ungrounded) {
         ctx.addIssue({
           code: 'custom',
-          message: '주장에는 근거 참조 또는 근거 없음 표시가 필요합니다',
+          message: '주장에는 근거 참조(evidenceRefs·sourceUrls) 또는 근거 없음 표시가 필요합니다',
           path: ['claims', index],
         });
       }

@@ -4,6 +4,7 @@ import {
   canCancel,
   canResume,
   eventSummary,
+  runLabel,
   isLive,
   questionOf,
   upsertRun,
@@ -108,5 +109,24 @@ describe('labels', () => {
     for (const state of ['queued', 'running', 'waiting', 'needs_input', 'review', 'done', 'failed', 'cancelled'] as const) {
       expect(RUN_STATE_LABEL[state].length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('runLabel — the interrupted park shows one word (W3)', () => {
+  it('a parked live run reads 중단됨, whatever state it parked from', () => {
+    expect(runLabel({ state: 'waiting', interrupted: true })).toBe('중단됨');
+    expect(runLabel({ state: 'running', interrupted: true })).toBe('중단됨');
+  });
+
+  it('an unparked run keeps its state label, and terminal flags never say 중단됨', () => {
+    expect(runLabel({ state: 'waiting', interrupted: false })).toBe('도구 대기');
+    expect(runLabel({ state: 'needs_input', interrupted: true })).toBe('중단됨'); // interrupted·live 표기 우선
+  });
+
+  it('the journal spells out why it stopped', () => {
+    expect(
+      eventSummary(JSON.stringify({ interrupted: true, reason: 'inactivity_timeout', detail: '활동 없이 600초' })),
+    ).toBe('중단됨(타임아웃) — 활동 없이 600초');
+    expect(eventSummary(JSON.stringify({ interrupted: true, reason: 'provider_error' }))).toBe('중단됨(오류)');
   });
 });

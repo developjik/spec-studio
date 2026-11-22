@@ -236,6 +236,9 @@ const DEFAULT_IDS = {
  * keeps a snapshot of the blocks an adopted proposal touched, which is what an
  * undo restores.
  */
+/** What moved — the SSE route and the activity clock read these (W3 Nit-1). */
+export type StoreChange = { kind: 'run' | 'log'; runId: string };
+
 export class SqliteStore implements StorePort {
   readonly #db: DatabaseSync;
   readonly #clock: () => string;
@@ -244,6 +247,8 @@ export class SqliteStore implements StorePort {
   readonly #deviceId: string;
   readonly #actor: string;
   #closed = false;
+  /** W3 Nit-1: in-process change notices — the SSE stream stops polling. */
+  readonly #listeners = new Set<(change: StoreChange) => void>();
 
   private constructor(options: SqliteStoreOptions) {
     this.#db = new Database(options.file);
@@ -264,6 +269,30 @@ export class SqliteStore implements StorePort {
 
   static open(options: SqliteStoreOptions): SqliteStore {
     return new SqliteStore(options);
+  }
+
+  /**
+   * W3 Nit-1: run surfaces stopped polling. Every write that moves a run or
+   * appends to its log notifies the listeners synchronously after commit —
+   * the daemon's SSE route subscribes instead of interval-scanning, and the
+   * inactivity sweeper reads activity the same way. A listener must not
+   * throw into the store: a bad one is logged and dropped.
+   */
+  subscribeRunChanges(listener: (change: StoreChange) => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #notify(change: StoreChange): void {
+    for (const listener of this.#listeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        console.error('store change listener failed:', error);
+      }
+    }
   }
 
   get schema(): SchemaInfo {
@@ -489,7 +518,7 @@ export class SqliteStore implements StorePort {
     at: string,
     context?: { actor?: string },
   ): ExecuteOutcome {
-    return transaction(this.#db, () => {
+    const outcome = transaction(this.#db, () => {
       const before =
         command.type === 'run.start' ? null : this.#readRunRow(command.runId);
       if (command.type !== 'run.start' && before === null) {
@@ -570,19 +599,60 @@ export class SqliteStore implements StorePort {
       ];
       return { project, seq: this.#lastSeq(projectId), opSeq, events };
     });
+    const moved = outcome.events[0]?.run?.id;
+    if (moved !== undefined) this.#notify({ kind: 'run', runId: moved });
+    return outcome;
   }
 
   /** The daemon's half of the machine — one legal move, journaled and evented. */
   transitionRun(runId: string, to: RunRecord['state']): RunRecord {
     const at = this.#clock();
-    return transaction(this.#db, () => {
+    const next = transaction(this.#db, () => {
       const record = this.#readRunRow(runId);
       if (record === null) throw new DomainError('run_missing', `런을 찾지 못했습니다: ${runId}`);
-      const next = machineTransition(record, to, at);
-      this.#writeRun(next, at);
-      this.#appendRunEvents(next, [{ type: 'run.updated', run: next }], at);
-      return next;
+      const moved = machineTransition(record, to, at);
+      this.#writeRun(moved, at);
+      this.#appendRunEvents(moved, [{ type: 'run.updated', run: moved }], at);
+      return moved;
     });
+    this.#notify({ kind: 'run', runId });
+    return next;
+  }
+
+  /**
+   * W3 waiting 데드 상태(제품 결정 2026-11-22): a live run that stopped
+   * making progress — an unrecoverable provider error was confirmed, or the
+   * inactivity backstop fired — parks on the existing `interrupted` flag,
+   * never a new state: state moves to `waiting` (machine-legal from running),
+   * the flag goes up, and run.resume · run.cancel — AC-2's existing UX — are
+   * the way out. `needs_input` and `review` wait on a person, not on
+   * progress, so A4 keeps them out of automatic closing. run_log is never
+   * deleted; the reason rides one `event` line the UI shows as '중단됨'.
+   */
+  parkRun(
+    runId: string,
+    reason: 'provider_error' | 'inactivity_timeout',
+    detail?: string,
+  ): RunRecord | null {
+    const at = this.#clock();
+    const parked = transaction(this.#db, () => {
+      const record = this.#readRunRow(runId);
+      if (record === null) return null;
+      if (isTerminalRunState(record.state)) return record;
+      if (record.state !== 'running' && record.state !== 'waiting') return record;
+      const moved = record.state === 'running' ? machineTransition(record, 'waiting', at) : record;
+      const flagged = { ...moved, interrupted: true };
+      this.#writeRun(flagged, at);
+      this.#appendRunEvents(flagged, [{ type: 'run.updated', run: flagged }], at);
+      this.appendRunLog(
+        runId,
+        'event',
+        JSON.stringify({ interrupted: true, reason, ...(detail === undefined ? {} : { detail }) }),
+      );
+      return flagged;
+    });
+    if (parked !== null) this.#notify({ kind: 'run', runId });
+    return parked;
   }
 
   /** One `run_log` line — the run's own memory, never the project's (A5). */
@@ -596,6 +666,7 @@ export class SqliteStore implements StorePort {
     this.#db
       .prepare('INSERT INTO run_log(run_id, seq, at, stream, line) VALUES (?, ?, ?, ?, ?)')
       .run(runId, row.next, at, stream, line.slice(0, 16_000));
+    this.#notify({ kind: 'log', runId });
   }
 
   runLog(runId: string): JournalLine[] {
@@ -642,7 +713,7 @@ export class SqliteStore implements StorePort {
    */
   markInterruptedRuns(): number {
     const at = this.#clock();
-    return transaction(this.#db, () => {
+    const flagged = transaction(this.#db, () => {
       const result = this.#db
         .prepare(
           "UPDATE run SET interrupted = 1 WHERE interrupted = 0 AND state IN ('queued','running','waiting','needs_input','review')",
@@ -658,6 +729,14 @@ export class SqliteStore implements StorePort {
       }
       return count;
     });
+    if (flagged > 0) {
+      for (const record of this.listRuns()) {
+        if (record.interrupted && !isTerminalRunState(record.state)) {
+          this.#notify({ kind: 'run', runId: record.id });
+        }
+      }
+    }
+    return flagged;
   }
 
   #readRunRow(runId: string): RunRecord | null {

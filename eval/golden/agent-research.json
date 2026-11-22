@@ -1,0 +1,156 @@
+[
+  {
+    "id": "AR-01",
+    "note": "모든 주장이 도구가 준 출처만 인용 — 세척 0건",
+    "group": "정상인용",
+    "toolResults": [
+      { "title": "경쟁사 동향 리포트", "url": "https://r.example/a", "excerpt": "A사 점유율 31%." },
+      { "title": "시장 규모 전망", "url": "https://r.example/b", "excerpt": "연 12% 성장." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "경쟁 브리프" } }] },
+      { "final": { "title": "경쟁 브리프", "summary": "두 출처 근거", "claims": [
+        { "text": "A사 점유율 31%", "sourceUrls": ["https://r.example/a"], "evidenceRefs": [], "ungrounded": false },
+        { "text": "시장 연 12% 성장", "sourceUrls": ["https://r.example/b"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/a", "https://r.example/b"], "washedUrls": [], "ungroundedAfter": 0 }
+  },
+  {
+    "id": "AR-02",
+    "note": "한 주장이 두 출처를 동시 인용",
+    "group": "정상인용",
+    "toolResults": [
+      { "title": "가격 정책", "url": "https://r.example/p1", "excerpt": "무료 티어 축소." },
+      { "title": "요금표", "url": "https://r.example/p2", "excerpt": "Pro 월 19달러." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "가격" } }] },
+      { "final": { "title": "가격 변화 브리프", "summary": "가격 인상 징후", "claims": [
+        { "text": "무료 티어 축소와 Pro 인상이 함께 관측됐다", "sourceUrls": ["https://r.example/p1", "https://r.example/p2"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/p1", "https://r.example/p2"], "washedUrls": [], "ungroundedAfter": 0 }
+  },
+  {
+    "id": "AR-03",
+    "note": "검색 결과가 0건 — 솔직한 무근거 마커",
+    "group": "정상인용",
+    "toolResults": [],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "없는 것" } }] },
+      { "final": { "title": "무결과 브리프", "summary": "근거를 찾지 못함", "claims": [
+        { "text": "공개 출처를 찾지 못한 주장", "sourceUrls": [], "evidenceRefs": [], "ungrounded": true }
+      ] } }
+    ],
+    "expect": { "keptUrls": [], "washedUrls": [], "ungroundedAfter": 1 }
+  },
+  {
+    "id": "AR-04",
+    "note": "진짜·가짜 혼합 — 가짜만 세척되고 진짜는 산다",
+    "group": "혼합",
+    "toolResults": [
+      { "title": "실제 출처", "url": "https://r.example/real", "excerpt": "사실." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "혼합" } }] },
+      { "final": { "title": "혼합 브리프", "summary": "한 줄은 진짜, 한 줄은 지어냄", "claims": [
+        { "text": "진짜 인용", "sourceUrls": ["https://r.example/real"], "evidenceRefs": [], "ungrounded": false },
+        { "text": "지어낸 인용", "sourceUrls": ["https://fake.example/one"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/real"], "washedUrls": ["https://fake.example/one"], "ungroundedAfter": 1 }
+  },
+  {
+    "id": "AR-05",
+    "note": "한 주장에 진짜+가짜 병렬 인용 — 진짜만 남고 grounded 유지",
+    "group": "혼합",
+    "toolResults": [
+      { "title": "실제", "url": "https://r.example/mix-real", "excerpt": "사실." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "병렬" } }] },
+      { "final": { "title": "병렬 인용 브리프", "summary": "섞인 인용", "claims": [
+        { "text": "병렬 인용 주장", "sourceUrls": ["https://r.example/mix-real", "https://fake.example/two"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/mix-real"], "washedUrls": ["https://fake.example/two"], "ungroundedAfter": 0 }
+  },
+  {
+    "id": "AR-06",
+    "note": "전 주장이 지어낸 URL — 전부 세척·전부 무근거 강등",
+    "group": "환각시도",
+    "toolResults": [
+      { "title": "무관 출처", "url": "https://r.example/other", "excerpt": "다른 이야기." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "환각" } }] },
+      { "final": { "title": "환각 브리프", "summary": "전부 지어냄", "claims": [
+        { "text": "지어낸 주장 1", "sourceUrls": ["https://fake.example/h1"], "evidenceRefs": [], "ungrounded": false },
+        { "text": "지어낸 주장 2", "sourceUrls": ["https://fake.example/h2"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": [], "washedUrls": ["https://fake.example/h1", "https://fake.example/h2"], "ungroundedAfter": 2 }
+  },
+  {
+    "id": "AR-07",
+    "note": "도구를 안 쓰고 URL 인용 — 도구가 보고한 적 없으니 세척",
+    "group": "환각시도",
+    "toolResults": [],
+    "modelTurns": [
+      { "final": { "title": "무도구 환각 브리프", "summary": "검색 없이 인용 시도", "claims": [
+        { "text": "도구 없이 인용한 주장", "sourceUrls": ["https://fake.example/no-tool"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": [], "washedUrls": ["https://fake.example/no-tool"], "ungroundedAfter": 1 }
+  },
+  {
+    "id": "AR-08",
+    "note": "근거 없음을 솔직히 표기 — 세척이 건드리지 않음",
+    "group": "무근거",
+    "toolResults": [
+      { "title": "있지만 안 씀", "url": "https://r.example/unused", "excerpt": "쓰이지 않은 출처." }
+    ],
+    "modelTurns": [
+      { "final": { "title": "솔직 브리프", "summary": "마커 사용", "claims": [
+        { "text": "판단이 필요한 가정", "sourceUrls": [], "evidenceRefs": [], "ungrounded": true }
+      ] } }
+    ],
+    "expect": { "keptUrls": [], "washedUrls": [], "ungroundedAfter": 1 }
+  },
+  {
+    "id": "AR-09",
+    "note": "질문→답변→인용 완결 — needs_input 경유 정상 경로",
+    "group": "질문완결",
+    "toolResults": [
+      { "title": "예산 반영 조사", "url": "https://r.example/budget", "excerpt": "예산 범위 내 관측." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [{ "id": "a1", "name": "ask_human", "input": { "question": "조사 범위를 어디까지 할까요?" } }] },
+      { "toolCalls": [{ "id": "w1", "name": "web_search", "input": { "query": "범위 내 조사" } }] },
+      { "final": { "title": "범위 확정 브리프", "summary": "답변 반영", "claims": [
+        { "text": "범위 내 관측", "sourceUrls": ["https://r.example/budget"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/budget"], "washedUrls": [], "ungroundedAfter": 0, "askedQuestion": "조사 범위를 어디까지 할까요?" }
+  },
+  {
+    "id": "AR-10",
+    "note": "병렬 호출에서 ask_human 선행 — 잔여 호출 응답 후 재개 완결(Minor-2 경유)",
+    "group": "질문완결",
+    "toolResults": [
+      { "title": "후속 조사", "url": "https://r.example/after", "excerpt": "재개 후 근거." }
+    ],
+    "modelTurns": [
+      { "toolCalls": [
+        { "id": "a1", "name": "ask_human", "input": { "question": "우선순위가 뭐예요?" } },
+        { "id": "w1", "name": "web_search", "input": { "query": "선행 질문 뒤의 호출" } }
+      ] },
+      { "toolCalls": [{ "id": "w2", "name": "web_search", "input": { "query": "재개 후 조사" } }] },
+      { "final": { "title": "재개 브리프", "summary": "재개 후 완결", "claims": [
+        { "text": "재개 후 관측", "sourceUrls": ["https://r.example/after"], "evidenceRefs": [], "ungrounded": false }
+      ] } }
+    ],
+    "expect": { "keptUrls": ["https://r.example/after"], "washedUrls": [], "ungroundedAfter": 0, "askedQuestion": "우선순위가 뭐예요?" }
+  }
+]

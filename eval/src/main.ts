@@ -15,6 +15,12 @@ import {
   type BriefCaseScore,
 } from './brief.js';
 import { failuresOf, scoreProposal, totalsOf, type CaseScore } from './score.js';
+import {
+  agentResearchFailuresOf,
+  loadAgentResearchCases,
+  runAgentResearchCase,
+  type AgentResearchScore,
+} from './agent-research.js';
 
 /**
  * `pnpm eval` — the quality gate for the proposal engine.
@@ -166,6 +172,21 @@ function printBriefTable(scores: readonly BriefCaseScore[]): void {
   }
 }
 
+function printAgentTable(scores: readonly AgentResearchScore[]): void {
+  console.log(
+    `\n${pad('id', 9)}${pad('분류', 11)}${pad('완결', 7)}${pad('스키마', 8)}${pad('인용정확', 10)}${pad('세척정확', 10)}${pad('무근거정확', 12)}${pad('판정', 6)}`,
+  );
+  console.log('─'.repeat(76));
+  for (const score of scores) {
+    console.log(
+      `${pad(score.id, 9)}${pad(score.group, 11)}${pad(score.reachedFinal ? 'OK' : '실패', 7)}` +
+        `${pad(score.schemaValid ? 'OK' : '실패', 8)}${pad(score.citationAccuracy ? '100%' : '위반', 10)}` +
+        `${pad(score.washExact ? 'OK' : '다름', 10)}${pad(score.ungroundedExact ? 'OK' : '다름', 12)}` +
+        `${pad(score.pass ? 'PASS' : 'FAIL', 6)}`,
+    );
+  }
+}
+
 /**
  * The brief set (§7-B-3). Mock grades the fallback the daemon ships; live
  * asks the real model the same question and is 참고치 — the gates stay the
@@ -275,11 +296,27 @@ async function main(): Promise<number> {
   console.log(`${pad('임계치', 20)}${pad('', 15)}${pad('100%', 20)}≥90%`);
   failures.push(...briefFailuresOf(briefTotals));
 
+  // ── the agent-research set (E3 F2 · AC-3) ──────────────────────────
+  // The run's own driver with a scripted model and a scripted web_search:
+  // the wash law is the gate — grounded or gone, 10 cases, both modes.
+  const agentCases = loadAgentResearchCases(GOLDEN_DIR);
+  const agentScores: AgentResearchScore[] = [];
+  for (const agentCase of agentCases) {
+    agentScores.push(await runAgentResearchCase(agentCase));
+  }
+  printAgentTable(agentScores);
+  const agentPassed = agentScores.filter((score) => score.pass).length;
+  console.log('─'.repeat(76));
+  console.log(`${pad('에이전트 합계', 20)}${pad(`${agentPassed}/${agentScores.length}`, 15)}${pad('임계치 100%', 20)}(AC-3)`);
+  failures.push(...agentResearchFailuresOf(agentScores));
+
   if (failures.length > 0) {
     console.log(`\nFAIL — ${failures.join(' · ')}`);
     return 1;
   }
-  console.log(`\nPASS — 골든 ${totals.cases}건 · 브리프 ${briefTotals.cases}건이 임계치를 넘었습니다.`);
+  console.log(
+    `\nPASS — 골든 ${totals.cases}건 · 브리프 ${briefTotals.cases}건 · 에이전트 ${agentPassed}건이 임계치를 넘었습니다.`,
+  );
   return 0;
 }
 

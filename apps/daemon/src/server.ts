@@ -28,6 +28,7 @@ import {
 } from '@spec-studio/publish';
 import { AiRequestError, aiStatus, planAiProposal, testAiConnection } from './ai.js';
 import { AgentService, dispatchAgentCommand, type DeclaredTool } from './agent.js';
+import { webSearchTool } from './web-research.js';
 import { createIpcKeychainPort } from './keychain.js';
 import { isTerminalRunState, RunRefusal, type ModelPort } from '@spec-studio/agent';
 
@@ -78,7 +79,14 @@ export interface DaemonOptions {
    */
   authToken?: string;
   /** The agent runtime's doubles — a scripted model in tests, declared tools. */
-  agent?: { modelPort?: ModelPort; tools?: DeclaredTool[]; fetchImpl?: typeof fetch };
+  agent?: {
+    modelPort?: ModelPort;
+    tools?: DeclaredTool[];
+    fetchImpl?: typeof fetch;
+    /** W3 backstop knobs — see AgentRuntimeOptions. */
+    waitingTimeoutMs?: number;
+    sweepIntervalMs?: number;
+  };
 }
 
 export interface Daemon {
@@ -251,12 +259,19 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   // E3 F1 (AC-2): a daemon that comes back marks every run that was live
   // when it left — the person then chooses resume or cancel for each.
   store.markInterruptedRuns();
+  // E3 F2: web research ships as a declared tool beside ask_human — tests
+  // may add their own; the whitelist stays data the service declares.
+  const webTool = webSearchTool({
+    env,
+    ...(options.agent?.fetchImpl === undefined ? {} : { fetchImpl: options.agent.fetchImpl }),
+  });
   const agent = new AgentService({
     store,
     env,
+    tools: [...(options.agent?.tools ?? []), webTool],
     ...(options.agent?.modelPort === undefined ? {} : { modelPort: options.agent.modelPort }),
-    ...(options.agent?.tools === undefined ? {} : { tools: options.agent.tools }),
-    ...(options.agent?.fetchImpl === undefined ? {} : { fetchImpl: options.agent.fetchImpl }),
+    ...(options.agent?.waitingTimeoutMs === undefined ? {} : { waitingTimeoutMs: options.agent.waitingTimeoutMs }),
+    ...(options.agent?.sweepIntervalMs === undefined ? {} : { sweepIntervalMs: options.agent.sweepIntervalMs }),
     ...(options.aiFetch === undefined ? {} : { fetchImpl: options.aiFetch }),
   });
   const backupDir =
@@ -498,6 +513,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // GET /api/projects/:id/runs/:runId/events — AC-9 progress as an SSE
     // stream: a snapshot first, then run and log deltas until the run ends.
+    // W3 Nit-1: the deltas ride the store's change notices now — no polling
+    // loop scans runs on a timer; a 15s comment heartbeat only keeps the
+    // connection alive.
     if (action === 'runs' && segments.length === 6 && segments[5] === 'events') {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
       const runId = segments[4] ?? '';
@@ -514,10 +532,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         if (!res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
       };
       let lastRun = initial;
-      let sent = 0;
-      emit('snapshot', { run: initial, log: store.runLog(runId) });
-      sent = store.runLog(runId).length;
-      const timer = setInterval(() => {
+      const pushDeltas = () => {
         if (res.writableEnded) return;
         const record = store.getRun(runId);
         if (
@@ -535,11 +550,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           emit('log', { seq: sent + 1, ...lines[sent] });
         }
         if (record !== null && isTerminalRunState(record.state)) {
-          clearInterval(timer);
+          unsubscribe();
+          clearInterval(heartbeat);
           res.end();
         }
-      }, 200);
-      res.on('close', () => clearInterval(timer));
+      };
+      emit('snapshot', { run: initial, log: store.runLog(runId) });
+      let sent = store.runLog(runId).length;
+      const unsubscribe = store.subscribeRunChanges((change) => {
+        if (change.runId === runId) pushDeltas();
+      });
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': keepalive\n\n');
+      }, 15_000);
+      heartbeat.unref?.();
+      res.on('close', () => {
+        unsubscribe();
+        clearInterval(heartbeat);
+      });
       return;
     }
 
@@ -699,6 +727,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     url: `http://${host}:${port}`,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      agent.stop();
       await store.close();
     },
   };
@@ -709,40 +738,61 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
  * can branch on — `code` carries the cause, never the message text.
  *
  *   404 run_missing         the runId names nothing in this database
- *   403 run_scope           the run (or the task) belongs to another project
+ *   404 run_not_found       the run belongs to another project — hidden
+ *                           behind the same body as a missing run, so ids
+ *                           cannot be probed across projects (W3: the read
+ *                           routes' hiding policy, applied to writes too)
  *   409 run_terminal        the run already ended — every command refuses
  *   409 run_not_asking      run.answer outside needs_input
  *   409 run_not_interrupted run.resume without a restart flag
- *   400 invalid_input       a sqlite constraint the domain guards let through
+ *   400 invalid_input       a sqlite CONSTRAINT the domain guards let through
+ *   500 internal_error      any other sqlite failure — BUSY while another
+ *                           process holds the file, IOERR, CORRUPT, FULL,
+ *                           READONLY, NOMEM — an unhealthy server, never a
+ *                           disguised 400 (W3 Minor-3: classify by errcode)
  *
  * node:sqlite throws plain `Error`s stamped with `errcode`/`errstr` — no
- * dedicated class to `instanceof`. Whatever reaches here past the domain
- * checks is still a rejected input, not a crashed server: the answer is a
- * sanitized 400 and the raw sqlite wording stays in the daemon's log, never
- * in the response body.
+ * dedicated class to `instanceof`. Only a constraint means the input was
+ * rejected; the errcode says so: base 19, or an extended 19|(ext<<8) whose
+ * low byte is still 19. Everything else keeps the raw wording in the
+ * daemon's log and answers a sanitized 500.
  */
-function isSqliteFailure(error: unknown): error is Error & { errcode: number; errstr: string } {
-  return error instanceof Error && 'errcode' in error && 'errstr' in error;
+const SQLITE_CONSTRAINT = 19;
+function isSqliteConstraint(error: unknown): error is Error & { errcode: number; errstr: string } {
+  if (!(error instanceof Error)) return false;
+  if (!(('errcode' in error && 'errstr' in error))) return false;
+  const code = (error as { errcode: number }).errcode;
+  return code === SQLITE_CONSTRAINT || (code > 0xff && (code & 0xff) === SQLITE_CONSTRAINT);
 }
 const DOMAIN_ERROR_STATUS: Readonly<Partial<Record<DomainErrorCode, number>>> = {
   run_missing: 404,
-  run_scope: 403,
 };
 
-function toHttpError(error: unknown): HttpError {
+export function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
   if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
   if (error instanceof RunRefusal) return new HttpError(409, error.code, error.message);
   if (error instanceof DomainError) {
+    // 존재 은닉: another project's run answers exactly what a missing run
+    // answers — same status, same code, same body (W3 통일).
+    if (error.code === 'run_scope') {
+      return new HttpError(404, 'run_not_found', '그런 런이 없습니다.');
+    }
     return new HttpError(DOMAIN_ERROR_STATUS[error.code] ?? 400, error.code, error.message);
   }
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {
     return new HttpError(502, 'confluence_error', error.message, error.detail);
   }
-  if (isSqliteFailure(error)) {
-    console.error('sqlite refusal reached the safety net:', error.message);
+  if (isSqliteConstraint(error)) {
+    console.error('sqlite constraint reached the safety net:', error.message);
     return new HttpError(400, 'invalid_input', '저장소가 거절한 요청입니다.');
+  }
+  if (error instanceof Error && 'errcode' in error && 'errstr' in error) {
+    // A sqlite failure that is not a constraint (BUSY · IOERR · CORRUPT · …)
+    // is this server having a bad time — the honest 500, details in the log.
+    console.error('sqlite failure reached the safety net:', error.message);
+    return new HttpError(500, 'internal_error', '저장소가 일시적으로 응답하지 못합니다.');
   }
   return new HttpError(
     500,

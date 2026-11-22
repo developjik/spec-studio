@@ -7,7 +7,7 @@ import {
   canResume,
   eventSummary,
   questionOf,
-  RUN_STATE_LABEL,
+  runLabel,
 } from '../model/runview';
 
 /**
@@ -75,7 +75,7 @@ export function RunPanel(props: RunPanelProps) {
                 data-id={run.id}
               >
                 <span className={`run-state run-state--${run.state}`}>
-                  {RUN_STATE_LABEL[run.state]}
+                  {runLabel(run)}
                 </span>
                 <span className="run-task">{run.taskId}</span>
               </button>
@@ -94,7 +94,7 @@ export function RunPanel(props: RunPanelProps) {
               data-testid="run-state"
               data-state={active.state}
             >
-              {RUN_STATE_LABEL[active.state]}
+              {runLabel(active)}
             </span>
             <span className="run-meta mono">
               {active.id} · {active.agent} · {active.taskId}

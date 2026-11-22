@@ -143,7 +143,7 @@ describe('a run, end to end (AC-1 · AC-2 · AC-4)', () => {
   it('asks, is answered, blocks an undeclared tool, cards, and stamps its adoption', async () => {
     const model = scriptedModel([
       { toolCalls: [{ id: 't1', name: 'ask_human', input: { question: '예산은 얼마까지?' } }] },
-      { toolCalls: [{ id: 't2', name: 'web_search', input: { q: '경쟁사' } }] },
+      { toolCalls: [{ id: 't2', name: 'shell.exec', input: { cmd: 'rm -rf /' } }] },
       FINAL,
     ]);
     const daemon = await boot(model);
@@ -173,7 +173,7 @@ describe('a run, end to end (AC-1 · AC-2 · AC-4)', () => {
       daemon,
       `/api/projects/${projectId}/runs/${runId}`,
     );
-    const blocked = detail.body.log.find((line) => line.line.includes('web_search') && line.line.includes('blocked'));
+    const blocked = detail.body.log.find((line) => line.line.includes('shell.exec') && line.line.includes('blocked'));
     expect(blocked).toBeDefined(); // the wall is in the journal
     expect(detail.body.log.some((line) => line.line.includes('예산 3만원까지'))).toBe(true);
 
@@ -280,8 +280,10 @@ describe('cross-project scope (QA A4/A5 — a run answers its own project only)'
       { type: 'run.answer', runId, text: '타 프로젝트 답' },
     ]) {
       const refused = await command(daemon, otherId, body);
-      expect(refused.status).toBe(403);
-      expect(refused.body.error?.code).toBe('run_scope');
+      // W3 존재 은닉: a foreign run answers exactly what a missing run
+      // answers — same status, same code, same body, no id probing.
+      expect(refused.status).toBe(404);
+      expect(refused.body.error?.code).toBe('run_not_found');
     }
 
     // the run never noticed the foreign channel — still parked on its question
@@ -305,8 +307,8 @@ describe('cross-project scope (QA A4/A5 — a run answers its own project only)'
       taskId: ideaId,
       agent: 'researcher',
     });
-    expect(refused.status).toBe(403);
-    expect(refused.body.error?.code).toBe('run_scope');
+    expect(refused.status).toBe(404);
+    expect(refused.body.error?.code).toBe('run_not_found');
 
     const runs = await api<{ runs: RunRecord[] }>(daemon, `/api/projects/${otherId}/runs`);
     expect(runs.body.runs).toHaveLength(0);
@@ -650,5 +652,268 @@ describe('a daemon restart under a live run (AC-2 · checkpoint)', () => {
     const after = await api<{ run: RunRecord }>(daemonB, `/api/projects/${projectId}/runs/${runId}`);
     expect(after.body.run.state).toBe('done');
     expect(after.body.run.interrupted).toBe(false);
+  });
+});
+
+describe('waiting 데드 상태 — the interrupted park (W3, 제품 결정 2026-11-22)', () => {
+  /** A model whose turn never resolves until the run is aborted. */
+  const stalledModel: ModelPort = {
+    turn: (request) =>
+      new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      }),
+  };
+  const failingModel: ModelPort = {
+    async turn() {
+      throw new Error('공급자가 일시적으로 응답하지 않습니다 (503)');
+    },
+  };
+  function switchableModel(initial: ModelPort): ModelPort & { swap(next: ModelPort): void } {
+    let current = initial;
+    return {
+      swap(next) {
+        current = next;
+      },
+      async turn(request) {
+        return current.turn(request);
+      },
+    };
+  }
+  async function bootBackstop(model: ModelPort): Promise<Daemon> {
+    const started = await startDaemon({
+      dbPath,
+      port: 0,
+      now: () => '2026-11-22T07:00:00.000Z',
+      agent: { modelPort: model, waitingTimeoutMs: 150, sweepIntervalMs: 40 },
+    });
+    daemons.push(started);
+    return started;
+  }
+
+  it('an inactive live run parks on interrupted (backstop) and resumes to the card', async () => {
+    const model = switchableModel(stalledModel);
+    const daemon = await bootBackstop(model);
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+
+    const parked = await waitRun(daemon, projectId, runId, (run) => run.interrupted && run.state === 'waiting');
+    expect(parked.endedAt).toBeNull(); // parked, not ended — AC-2's UX answers
+
+    const detail = await api<{ run: RunRecord; log: Array<{ stream: string; line: string }> }>(
+      daemon,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    const parkLine = detail.body.log.find(
+      (line) => line.stream === 'event' && line.line.includes('"interrupted":true'),
+    );
+    expect(parkLine).toBeDefined();
+    expect(parkLine!.line).toContain('inactivity_timeout');
+
+    // the way out is the existing resume UX — and this time the model answers
+    model.swap(scriptedModel([FINAL]));
+    const resumed = await command(daemon, projectId, { type: 'run.resume', runId });
+    expect(resumed.status).toBe(200);
+    const finished = await waitRun(daemon, projectId, runId, (run) => run.state === 'review');
+    expect(finished.interrupted).toBe(false);
+  });
+
+  it('a confirmed provider failure parks immediately (provider_error), never a dead failed', async () => {
+    const model = switchableModel(failingModel);
+    const daemon = await bootBackstop(model);
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+
+    const parked = await waitRun(daemon, projectId, runId, (run) => run.interrupted && run.state === 'waiting');
+    expect(parked.state).not.toBe('failed'); // 재개 가능 출구 — the key may come back
+
+    const detail = await api<{ log: Array<{ stream: string; line: string }> }>(
+      daemon,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    expect(
+      detail.body.log.some(
+        (line) => line.stream === 'event' && line.line.includes('provider_error'),
+      ),
+    ).toBe(true);
+
+    model.swap(scriptedModel([FINAL]));
+    const resumed = await command(daemon, projectId, { type: 'run.resume', runId });
+    expect(resumed.status).toBe(200);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'review');
+  });
+
+  it('needs_input waits on a person — the backstop never closes it (A4)', async () => {
+    const ask = {
+      text: '{"action":"ask","question":"예산 한도는?"}',
+    };
+    const daemon = await bootBackstop(scriptedModel([ask]));
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'needs_input');
+
+    // several backstop windows pass — the question is still a question
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const detail = await api<{ run: RunRecord }>(daemon, `/api/projects/${projectId}/runs/${runId}`);
+    expect(detail.body.run.state).toBe('needs_input');
+    expect(detail.body.run.interrupted).toBe(false);
+  });
+});
+
+describe('웹 리서치 런 (E3 F2 · AC-3)', () => {
+  const GOOD_A = 'https://research.example/rivals';
+  const GOOD_B = 'https://research.example/market';
+  const MADE_UP = 'https://made-up.example/hallucination';
+
+  function tavilyFetch(): typeof fetch {
+    return (async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            { title: '경쟁사 동향', url: GOOD_A, content: 'A사가 시장을 이끌고 있다는 발췌.' },
+            { title: '시장 규모', url: GOOD_B, content: '시장은 연 12% 성장 중이라는 발췌.' },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+  }
+
+  async function bootWeb(
+    model: ModelPort,
+    env: Record<string, string | undefined>,
+    fetchImpl?: typeof fetch,
+  ): Promise<Daemon> {
+    const started = await startDaemon({
+      dbPath,
+      port: 0,
+      now: () => '2026-11-22T07:00:00.000Z',
+      env,
+      agent: {
+        modelPort: model,
+        ...(fetchImpl === undefined ? {} : { fetchImpl }),
+      },
+    });
+    daemons.push(started);
+    return started;
+  }
+
+  const SEARCH_TURN = {
+    toolCalls: [{ id: 'w1', name: 'web_search', input: { query: '경쟁 브리프' } }],
+  };
+  const CITED_FINAL = {
+    text: JSON.stringify({
+      action: 'final',
+      draft: {
+        title: '경쟁 브리프',
+        summary: '두 출처에 근거한 요약',
+        claims: [
+          { text: 'A사가 시장을 이끈다', sourceUrls: [GOOD_A], evidenceRefs: [], ungrounded: false },
+          { text: '지어낸 주장', sourceUrls: [MADE_UP], evidenceRefs: [], ungrounded: false },
+          { text: '근거 없는 솔직한 주장', evidenceRefs: [], ungrounded: true },
+        ],
+      },
+    }),
+  };
+
+  it('cites the urls the tool returned, washes the invented one, and adopts clean (AC-3)', async () => {
+    const daemon = await bootWeb(scriptedModel([SEARCH_TURN, CITED_FINAL]), { TAVILY_API_KEY: 'tvly-test' }, tavilyFetch());
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'review');
+
+    // the badge said the search was available, and the tool really ran
+    const detail = await api<{ run: RunRecord; log: Array<{ stream: string; line: string }> }>(
+      daemon,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    expect(detail.body.log.some((line) => line.line.includes('"web_search":"available"'))).toBe(true);
+    expect(detail.body.log.some((line) => line.line.includes(`"tool":"web_search","blocked":false`))).toBe(true);
+
+    // the wash is in the journal: exactly the invented url
+    const wash = detail.body.log.find((line) => line.line.includes('hallucinated_refs'));
+    expect(wash).toBeDefined();
+    expect(wash!.line).toContain(MADE_UP);
+    expect(wash!.line).not.toContain(GOOD_A);
+
+    // the card: a grounded citation spelled out, a washed claim honest
+    // enough to say so — the card's surface is its inserted paragraphs
+    const withCard = await api<{ project: Project }>(daemon, `/api/projects/${projectId}`);
+    const card = withCard.body.project.proposals.find((proposal) => proposal.authorId === runId);
+    expect(card).toBeDefined();
+    const paragraphs = card!.patches.map((patch) => patch.after?.text ?? '');
+    expect(paragraphs.some((text) => text.includes('A사가 시장을 이끈다') && text.includes(GOOD_A))).toBe(true);
+    expect(paragraphs.some((text) => text.includes('지어낸 주장') && text.includes('(근거 없음)'))).toBe(true);
+    // AC-3, 환각 출처 0: no paragraph on the card carries an invented url
+    expect(paragraphs.some((text) => text.includes(MADE_UP))).toBe(false);
+
+    // the adoption still stamps the run (AC-1 회귀)
+    await command(daemon, projectId, { type: 'proposal.adopt', docId: card!.docId, proposalId: card!.id });
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'done');
+  });
+
+  it('no key is an honest badge and an honest tool answer — never a silent fallback', async () => {
+    // the model tries to search anyway; the tool refuses out loud, and the
+    // model's final carries no invented url (it was told there is none).
+    const honestFinal = {
+      text: JSON.stringify({
+        action: 'final',
+        draft: {
+          title: '무키 브리프',
+          summary: '검색 없이 쓴 요약',
+          claims: [
+            { text: '웹 근거를 얻지 못한 주장', evidenceRefs: [], ungrounded: true },
+          ],
+        },
+      }),
+    };
+    const daemon = await bootWeb(scriptedModel([SEARCH_TURN, honestFinal]), {});
+    const { projectId, ideaId } = await seed(daemon);
+    const started = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: ideaId,
+      agent: 'researcher',
+      mode: 'research',
+    });
+    const runId = runIdOf(started);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'review');
+
+    const detail = await api<{ run: RunRecord; log: Array<{ stream: string; line: string }> }>(
+      daemon,
+      `/api/projects/${projectId}/runs/${runId}`,
+    );
+    expect(detail.body.log.some((line) => line.line.includes('"web_search":"unavailable"'))).toBe(true);
+    expect(detail.body.log.some((line) => line.line.includes('no_api_key'))).toBe(true);
+
+    const withCard = await api<{ project: Project }>(daemon, `/api/projects/${projectId}`);
+    const card = withCard.body.project.proposals.find((proposal) => proposal.authorId === runId);
+    expect(card).toBeDefined();
+    for (const patch of card!.patches) {
+      // 조용한 폴백 없음 — no url was invented anywhere on the card
+      expect(patch.after?.text ?? '').not.toMatch(/https?:\/\/made-up/);
+      expect(patch.after?.text ?? '').not.toContain(MADE_UP);
+    }
   });
 });

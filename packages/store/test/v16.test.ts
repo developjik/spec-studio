@@ -310,7 +310,7 @@ describe('v16 — doc kind and proposal idea', () => {
       draft: {
         title: '재시도 브리프',
         summary: '실패 결제는 3회 재시도한다',
-        claims: [{ text: '3회 재시도가 표준', evidenceRefs: [], ungrounded: true }],
+        claims: [{ text: '3회 재시도가 표준', evidenceRefs: [], sourceUrls: [], ungrounded: true }],
       },
       source: 'rule',
       ideaId: idea!.id,
@@ -363,7 +363,7 @@ describe('v16 — journey marks (AC-1/F0-6)', () => {
       draft: {
         title: '브리프',
         summary: '요약',
-        claims: [{ text: '주장', evidenceRefs: [], ungrounded: true }],
+        claims: [{ text: '주장', evidenceRefs: [], sourceUrls: [], ungrounded: true }],
       },
       source: 'rule',
       ideaId: idea.id,

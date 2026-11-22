@@ -393,9 +393,16 @@ export function buildProposalFromBrief(input: {
   }
 
   const claimText = (claim: AiBriefDraft['claims'][number]): string => {
-    if (claim.evidenceRefs.length === 0) return `${claim.text} (근거 없음)`;
-    const titles = claim.evidenceRefs.map((ref) => byId.get(ref)?.title ?? ref);
-    return `${claim.text} (출처: ${titles.join(', ')})`;
+    // F2: web sources ride beside evidence ids — the url is the citation a
+    // person can open, spelled out on the card (AC-3: 출처 URL 100%). A raw
+    // draft built before F2 carries no sourceUrls at all — tolerate it.
+    const claimUrls: string[] = Array.isArray(claim.sourceUrls) ? claim.sourceUrls : [];
+    const sources: string[] = [
+      ...claim.evidenceRefs.map((ref) => byId.get(ref)?.title ?? ref),
+      ...claimUrls,
+    ];
+    if (sources.length === 0) return `${claim.text} (근거 없음)`;
+    return `${claim.text} (출처: ${sources.join(', ')})`;
   };
 
   const blocks: Array<{ type: Block['type']; text: string }> = [

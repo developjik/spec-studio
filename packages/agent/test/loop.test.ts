@@ -71,7 +71,7 @@ describe('run driver — happy paths', () => {
     const outcome = await driveRun({
       messages: [...start],
       model,
-      toolbox: toolbox([echoTool], executed),
+      toolbox: toolbox([ASK_HUMAN_TOOL, echoTool], executed),
       journal: j,
       isCancelled: async () => false,
       maxTurns: 6,
@@ -113,7 +113,7 @@ describe('run driver — the wall (AC-4 · AC-2)', () => {
     const outcome = await driveRun({
       messages: [...start],
       model,
-      toolbox: toolbox([echoTool], executed),
+      toolbox: toolbox([ASK_HUMAN_TOOL, echoTool], executed),
       journal: j,
       isCancelled: async () => false,
       maxTurns: 6,
@@ -224,5 +224,85 @@ describe('run driver — streaming progress (W2 · AC-9)', () => {
       },
     });
     expect(outcome.kind).toBe('final');
+  });
+});
+
+describe('run driver — parallel tool_calls with ask_human (W3 Minor-2)', () => {
+  /**
+   * A provider (anthropic above all) rejects the follow-up turn when an
+   * assistant message's tool_use blocks have no tool_result. When ask_human
+   * parks the run mid-turn, every remaining tool_call of that same turn must
+   * still be answered — blocked, journaled, never executed — so run.answer
+   * can resume without a provider 400.
+   */
+  function toolAnswersFor(messages: AgentMessage[], assistantToolCalls: AgentToolCall[]): AgentToolCall[] {
+    const answered = messages.filter((m) => m.role === 'tool').map((m) => (m as { toolCallId: string }).toolCallId);
+    return assistantToolCalls.filter((call) => !answered.includes(call.id));
+  }
+
+  it('ask_human first parks the run and answers the trailing calls — none executed', async () => {
+    const calls: AgentToolCall[] = [
+      { id: 'a1', name: 'ask_human', input: { question: '예산이 어느 정도인가요?' } },
+      { id: 't1', name: 'echo', input: { text: '뒤에 남은 호출' } },
+      { id: 't2', name: 'echo', input: { text: '더 뒤' } },
+    ];
+    const model = scriptedModel([{ toolCalls: calls }]);
+    const executed: string[] = [];
+    const j = journal();
+    const outcome = await driveRun({
+      messages: [...start],
+      model,
+      toolbox: toolbox([ASK_HUMAN_TOOL, echoTool], executed),
+      journal: j,
+      isCancelled: async () => false,
+      maxTurns: 4,
+    });
+    expect(outcome.kind).toBe('needs_input');
+    if (outcome.kind !== 'needs_input') return;
+    expect(outcome.question).toBe('예산이 어느 정도인가요?');
+    expect(executed).toEqual(['ask_human']);
+    expect(toolAnswersFor(outcome.messages, calls)).toEqual([]);
+    expect(j.lines.some((line) => line.line.includes('parked_by_ask'))).toBe(true);
+  });
+
+  it('a tool before ask_human is executed and answered; nothing trails unanswered', async () => {
+    const calls: AgentToolCall[] = [
+      { id: 't0', name: 'echo', input: { text: '앞' } },
+      { id: 'a1', name: 'ask_human', input: { question: '범위 확인' } },
+    ];
+    const model = scriptedModel([{ toolCalls: calls }]);
+    const executed: string[] = [];
+    const outcome = await driveRun({
+      messages: [...start],
+      model,
+      toolbox: toolbox([ASK_HUMAN_TOOL, echoTool], executed),
+      journal: journal(),
+      isCancelled: async () => false,
+      maxTurns: 4,
+    });
+    expect(outcome.kind).toBe('needs_input');
+    if (outcome.kind !== 'needs_input') return;
+    expect(executed).toEqual(['echo', 'ask_human']);
+    expect(toolAnswersFor(outcome.messages, calls)).toEqual([]);
+  });
+
+  it('an undeclared call after ask_human is answered too — not silently stranded', async () => {
+    const calls: AgentToolCall[] = [
+      { id: 'a1', name: 'ask_human', input: { question: 'q' } },
+      { id: 'x1', name: 'not_declared', input: {} },
+    ];
+    const model = scriptedModel([{ toolCalls: calls }]);
+    const executed: string[] = [];
+    const outcome = await driveRun({
+      messages: [...start],
+      model,
+      toolbox: toolbox([ASK_HUMAN_TOOL, echoTool], executed),
+      journal: journal(),
+      isCancelled: async () => false,
+      maxTurns: 4,
+    });
+    expect(outcome.kind).toBe('needs_input');
+    if (outcome.kind !== 'needs_input') return;
+    expect(toolAnswersFor(outcome.messages, calls)).toEqual([]);
   });
 });

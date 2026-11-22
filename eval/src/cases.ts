@@ -44,7 +44,7 @@ const AT = '2026-11-19T09:00:00.000Z';
 
 export function loadGoldenCases(dir: string): LoadedCase[] {
   const files = readdirSync(dir)
-    .filter((name) => name.endsWith('.json') && name !== 'brief.json')
+    .filter((name) => name.endsWith('.json') && name !== 'brief.json' && name !== 'agent-research.json')
     .sort();
   const cases: LoadedCase[] = [];
   for (const file of files) {

@@ -27,3 +27,4 @@ export {
   type RunOutcome,
   type ToolBox,
 } from './loop';
+export { washBriefDraft, type WashResult } from './grounding';

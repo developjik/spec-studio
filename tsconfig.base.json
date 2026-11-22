@@ -29,6 +29,9 @@
       "@spec-studio/core": [
         "packages/core/src/index.ts"
       ],
+      "@spec-studio/agent": [
+        "packages/agent/src/index.ts"
+      ],
       "@spec-studio/store": [
         "packages/store/src/index.ts"
       ],

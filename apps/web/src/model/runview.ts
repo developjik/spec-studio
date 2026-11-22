@@ -20,6 +20,16 @@ export const RUN_STATE_LABEL: Record<RunState, string> = {
   cancelled: '취소됨',
 };
 
+/**
+ * W3 waiting 데드 상태: a parked run shows one word — 중단됨 — not the
+ * machine's `waiting`. The reason rides the journal's `interrupted` event
+ * (eventSummary spells it out); resume·cancel are the same AC-2 buttons.
+ */
+export function runLabel(run: Pick<RunRecord, 'state' | 'interrupted'> | null): string {
+  if (run !== null && run.interrupted && !RUN_TERMINAL.has(run.state)) return '중단됨';
+  return run === null ? '' : RUN_STATE_LABEL[run.state];
+}
+
 /** A1: the answer field exists only while the run waits on the person. */
 export function canAnswer(run: Pick<RunRecord, 'state'> | null): boolean {
   return run?.state === 'needs_input';
@@ -80,7 +90,14 @@ export function eventSummary(line: string): string | null {
       blocked?: boolean;
       final?: boolean;
       card?: boolean;
+      interrupted?: boolean;
+      reason?: string;
+      detail?: string;
     };
+    if (parsed.interrupted === true) {
+      const why = parsed.reason === 'inactivity_timeout' ? '타임아웃' : '오류';
+      return `중단됨(${why})${parsed.detail === undefined ? '' : ` — ${parsed.detail}`}`;
+    }
     if (parsed.needs_input === true) return `질문: ${parsed.question ?? ''}`;
     if (parsed.final === true) return '최종 초안 작성 완료';
     if (parsed.card === true) return '리서치 문서에 결정카드 등록';
