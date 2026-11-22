@@ -21,22 +21,21 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "baseUrl": ".",
     "paths": {
       "@spec-studio/protocol": [
-        "packages/protocol/src/index.ts"
+        "./packages/protocol/src/index.ts"
       ],
       "@spec-studio/core": [
-        "packages/core/src/index.ts"
+        "./packages/core/src/index.ts"
       ],
       "@spec-studio/store": [
-        "packages/store/src/index.ts"
+        "./packages/store/src/index.ts"
       ],
       "@spec-studio/publish": [
-        "packages/publish/src/index.ts"
+        "./packages/publish/src/index.ts"
       ],
       "@spec-studio/ai": [
-        "packages/ai/src/index.ts"
+        "./packages/ai/src/index.ts"
       ]
     }
   }
