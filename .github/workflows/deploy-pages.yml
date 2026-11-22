@@ -37,7 +37,7 @@ jobs:
       - name: Build web (Pages base)
         run: VITE_BASE=/spec-studio/ pnpm --filter @spec-studio/web build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/web/dist
 
