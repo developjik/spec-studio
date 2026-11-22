@@ -500,9 +500,9 @@ export class SqliteStore implements StorePort {
       // the command arrived through a foreign channel and is refused before
       // the state machine is even asked (QA A4/A5).
       if (command.type === 'run.start') {
-        const owner = oneRow<{ project_id: string }>(
+        const owner = oneRow<{ project_id: string; kind: string }>(
           this.#db,
-          'SELECT project_id FROM obj WHERE id = ?',
+          'SELECT project_id, kind FROM obj WHERE id = ?',
           command.taskId,
         );
         if (owner === undefined) {
@@ -510,6 +510,16 @@ export class SqliteStore implements StorePort {
         }
         if (owner.project_id !== projectId) {
           throw new DomainError('run_scope', `다른 프로젝트의 과제입니다: ${command.taskId}`);
+        }
+        // A run's task is an idea being researched, a pin being built, or a
+        // specnode being worked — the v17 trigger `run_task_kind` enforces the
+        // same set at the row level. The guard answers first so a predictable
+        // bad kind is a domain refusal, never a raw sqlite 500.
+        if (owner.kind !== 'specnode' && owner.kind !== 'pin' && owner.kind !== 'idea') {
+          throw new DomainError(
+            'invalid_input',
+            `런의 과제는 specnode·pin·idea뿐입니다: ${command.taskId} (${owner.kind})`,
+          );
         }
       } else if ((before as RunRecord).projectId !== projectId) {
         throw new DomainError('run_scope', `다른 프로젝트의 런입니다: ${command.runId}`);

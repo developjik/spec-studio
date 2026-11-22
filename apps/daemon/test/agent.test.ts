@@ -362,6 +362,40 @@ describe('run.* refusal mapping — a predictable rejection is never a 500 (W2)'
     }
   });
 
+  it('run.start on a same-project screen is 400 invalid_input, never a trigger 500 (Major-1)', async () => {
+    const daemon = await boot(scriptedModel([FINAL]));
+    const { projectId } = await seed(daemon);
+
+    // a real screen object — the exact attack the verifier ran (S_ id, same project)
+    await command(daemon, projectId, {
+      type: 'screen.attach',
+      screen: {
+        id: 'S_attack000001',
+        title: '공격용 화면',
+        code: 'SCR-101',
+        ref: { kind: 'image', value: 'data:image/png;base64,iVBORw0KGgo=' },
+        viewport: { width: 100, height: 100 },
+        createdAt: '2026-11-22T00:00:00.000Z',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+      },
+    });
+
+    const refused = await command(daemon, projectId, {
+      type: 'run.start',
+      taskId: 'S_attack000001',
+      agent: 'researcher',
+      mode: 'research',
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error?.code).toBe('invalid_input');
+    // the trigger's raw SQLite message never reaches the client — the
+    // refusal is a domain sentence naming the allowed kinds instead.
+    expect(refused.body.error?.message).not.toContain('run_task_must_be_specnode_pin_or_idea');
+
+    const runs = await api<{ runs: RunRecord[] }>(daemon, `/api/projects/${projectId}/runs`);
+    expect(runs.body.runs).toHaveLength(0); // the refused start left no run row
+  });
+
   it('live-state refusals answer 409: answer outside needs_input · resume without the flag', async () => {
     const daemon = await boot(scriptedModel([FINAL]));
     const { projectId, ideaId } = await seed(daemon);

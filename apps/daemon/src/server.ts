@@ -713,7 +713,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
  *   409 run_terminal        the run already ended — every command refuses
  *   409 run_not_asking      run.answer outside needs_input
  *   409 run_not_interrupted run.resume without a restart flag
+ *   400 invalid_input       a sqlite constraint the domain guards let through
+ *
+ * node:sqlite throws plain `Error`s stamped with `errcode`/`errstr` — no
+ * dedicated class to `instanceof`. Whatever reaches here past the domain
+ * checks is still a rejected input, not a crashed server: the answer is a
+ * sanitized 400 and the raw sqlite wording stays in the daemon's log, never
+ * in the response body.
  */
+function isSqliteFailure(error: unknown): error is Error & { errcode: number; errstr: string } {
+  return error instanceof Error && 'errcode' in error && 'errstr' in error;
+}
 const DOMAIN_ERROR_STATUS: Readonly<Partial<Record<DomainErrorCode, number>>> = {
   run_missing: 404,
   run_scope: 403,
@@ -729,6 +739,10 @@ function toHttpError(error: unknown): HttpError {
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {
     return new HttpError(502, 'confluence_error', error.message, error.detail);
+  }
+  if (isSqliteFailure(error)) {
+    console.error('sqlite refusal reached the safety net:', error.message);
+    return new HttpError(400, 'invalid_input', '저장소가 거절한 요청입니다.');
   }
   return new HttpError(
     500,

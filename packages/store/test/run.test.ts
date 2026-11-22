@@ -179,6 +179,55 @@ describe('run lifecycle commands (§4.2)', () => {
     expect(store.listRuns()).toHaveLength(1); // only the seed's run exists
   });
 
+  /**
+   * 검증 Major-1: a same-project object that is not a run task (screen,
+   * evidence, goal, insight, contract, verification) must be refused at the
+   * guard — before the v17 trigger has a word to say. Predictable refusals
+   * are 4xx-shaped domain errors, never a raw SqliteError.
+   */
+  it.each([
+    { kind: 'screen', id: 'S_attackscr01', state: 'observed' },
+    { kind: 'evidence', id: 'E_attackev001', state: 'captured' },
+    { kind: 'goal', id: 'G_attackgoal01', state: 'proposed' },
+    { kind: 'insight', id: 'I_attackins001', state: 'ai' },
+    { kind: 'contract', id: 'C_attackcon001', state: 'draft' },
+    { kind: 'verification', id: 'V_attackver001', state: 'pass' },
+  ])('run.start on a same-project $kind object is invalid_input, not a trigger 500', async ({ kind, id, state }) => {
+    const store = open();
+    const { projectId } = await seedIdeaAndRun(store);
+    // the object really exists in this project — only its kind disqualifies it
+    db(store)
+      .prepare(
+        `INSERT INTO obj (id, project_id, kind, subtype, title, props, state, hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, '{}', ?, 'hash', '2026-11-22T00:00:00Z', '2026-11-22T00:00:00Z')`,
+      )
+      .run(id, projectId, kind, kind === 'contract' ? 'api' : null, `공격용 ${kind}`, state);
+
+    await expect(
+      store.execute(projectId, { type: 'run.start', taskId: id, agent: 'researcher', mode: 'research' }),
+    ).rejects.toMatchObject({ name: 'DomainError', code: 'invalid_input' });
+    expect(store.listRuns()).toHaveLength(1); // the refused start left no run row
+  });
+
+  it('a foreign kind that is also foreign-owned still answers scope first (authz before shape)', async () => {
+    const store = open();
+    await seedIdeaAndRun(store);
+    const other = await store.createProject({ name: '다른 프로젝트', id: 'PRJ_othertest03' });
+    db(store)
+      .prepare(
+        `INSERT INTO obj (id, project_id, kind, subtype, title, props, state, hash, created_at, updated_at)
+         VALUES ('S_foreignscr01', ?, 'screen', NULL, '타 프로젝트 화면', '{}', 'observed', 'hash', '2026-11-22T00:00:00Z', '2026-11-22T00:00:00Z')`,
+      )
+      .run(other.id);
+
+    // our project asks for a run on their screen: scope answers first — the
+    // refusal never reveals what kind the foreign object is.
+    await expect(
+      store.execute('PRJ_runtest0001', { type: 'run.start', taskId: 'S_foreignscr01', agent: 'researcher', mode: 'research' }),
+    ).rejects.toMatchObject({ name: 'DomainError', code: 'run_scope' });
+    expect(store.listRuns()).toHaveLength(1);
+  });
+
   it('run.cancel is terminal and journaled with before/after', async () => {
     const store = open();
     const { projectId, runId } = await seedIdeaAndRun(store);
