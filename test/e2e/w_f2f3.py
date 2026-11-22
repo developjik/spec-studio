@@ -300,7 +300,9 @@ def main() -> int:
             )
 
             # ── 10. AC-3: 리로드로 키가 사라지면 로컬 규칙 ────────────────
-            page.reload(wait_until="networkidle")
+            # networkidle은 프로젝트 op SSE 스트림과 경합한다 — w_e4 패턴:
+            # domcontentloaded + 데몬 연결 대기로 readiness를 잡는다.
+            page.reload(wait_until="domcontentloaded")
             page.wait_for_selector(
                 "[data-testid=daemon-status][data-status=connected]", timeout=20000
             )
@@ -314,7 +316,8 @@ def main() -> int:
             check(
                 "키 없는 브리프 → 로컬 규칙",
                 fallback.get_attribute("data-source") == "rule"
-                and "로컬 규칙" in fallback.inner_text(),
+                and "AI 없음" in fallback.inner_text()
+                and "규칙 기반" in fallback.inner_text(),
                 f"{fallback.get_attribute('data-source')} / {fallback.inner_text()}",
             )
 

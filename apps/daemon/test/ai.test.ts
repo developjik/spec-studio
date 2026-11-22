@@ -136,7 +136,14 @@ interface AiEnvelope {
       kind: string;
       blocks: Array<{ id: string; text: string; pinRefs: Array<{ pinId: string }> }>;
     }>;
-    proposals?: Array<{ id: string; docId: string; origin: string; state: string; patches: unknown[] }>;
+    proposals?: Array<{
+      id: string;
+      docId: string;
+      origin: string;
+      state: string;
+      source?: string | null;
+      patches: unknown[];
+    }>;
     graph?: { nodes: Array<{ id: string; type: string; title: string }>; links: unknown[] };
     graphProposal?: {
       id: string;
@@ -156,6 +163,7 @@ interface AiEnvelope {
   status?: {
     providers: Array<{ provider: string; hasEnvKey: boolean }>;
     localAvailable: boolean;
+    localServers?: Array<{ id: string; baseUrl: string; reachable: boolean }>;
     keychainAvailable?: boolean;
     presets?: Array<{ id: string; hasKeychainKey: boolean }>;
   };
@@ -171,6 +179,7 @@ let llm: Awaited<ReturnType<typeof startMockLlm>>;
 async function boot(
   env: Record<string, string | undefined> = {},
   keychain: CredentialPort | null = null,
+  aiFetch?: typeof fetch,
 ): Promise<Daemon> {
   const started = await startDaemon({
     dbPath,
@@ -178,6 +187,7 @@ async function boot(
     now: () => '2026-11-19T09:30:00.000Z',
     env,
     keychain,
+    ...(aiFetch === undefined ? {} : { aiFetch }),
   });
   daemons.push(started);
   return started;
@@ -648,6 +658,113 @@ describe('the AI routes', () => {
     expect(proposal.body.error?.code).toBe('doc_missing');
     expect(proposal.body.error?.message).toContain('리서치 문서를 먼저 만들어 주세요');
     expect(llm.requests).toHaveLength(0);
+  });
+});
+
+/**
+ * E4 F3-②: the status route's local-runtime probe — which keyless presets are
+ * actually listening, aimed only at their own loopback baseUrls. `aiFetch`
+ * stands in for the wire so both directions are deterministic.
+ */
+describe('the local runtime probe (E4 F3)', () => {
+  it('reports a reachable local server and an absent one, loopback only', async () => {
+    const probed: string[] = [];
+    const aiFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      probed.push(url);
+      if (url === 'http://localhost:11434/v1/models') {
+        return new Response('{"object":"list","data":[]}', { status: 200 });
+      }
+      throw new Error('connection refused');
+    }) as typeof fetch;
+    const daemon = await boot({}, null, aiFetch);
+    const answer = await api<AiEnvelope>(daemon, '/api/ai');
+    expect(answer.status).toBe(200);
+    expect(answer.body.status?.localServers).toEqual([
+      { id: 'ollama', baseUrl: 'http://localhost:11434/v1', reachable: true },
+      { id: 'lmstudio', baseUrl: 'http://localhost:1234/v1', reachable: false },
+    ]);
+    // The probe only ever aimed at the presets' own loopback URLs.
+    expect(probed.sort()).toEqual([
+      'http://localhost:11434/v1/models',
+      'http://localhost:1234/v1/models',
+    ]);
+  });
+
+  it('answers silent false when nothing listens — never an error', async () => {
+    const aiFetch = (async () => {
+      throw new Error('connection refused');
+    }) as typeof fetch;
+    const daemon = await boot({}, null, aiFetch);
+    const answer = await api<AiEnvelope>(daemon, '/api/ai');
+    expect(answer.status).toBe(200);
+    expect(
+      answer.body.status?.localServers?.every((entry) => entry.reachable === false),
+    ).toBe(true);
+    // Rule fallback availability is unrelated to runtime detection — still true.
+    expect(answer.body.status?.localAvailable).toBe(true);
+  });
+});
+
+/**
+ * E4 F3-③: the card's llm/rule provenance persists — a reload reads the same
+ * answer the session heard, instead of guessing 'llm' from a doc-chat origin.
+ */
+describe('proposal source persistence (E4 F3)', () => {
+  it('keeps a rule brief and an llm patch honest across a daemon restart', async () => {
+    const daemon = await boot();
+    const { projectId, pins } = await seedScreen(daemon);
+    const seeded = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
+    const specDocId = seeded.body.project?.docs[0]?.id ?? '';
+    const research = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'doc.create', title: '취소 리서치', kind: 'research' } },
+    });
+    const researchDocId = research.body.project?.docs.at(-1)?.id ?? '';
+    await api(daemon, `/api/projects/${projectId}/commands`, {
+      body: {
+        command: {
+          type: 'doc.block.create',
+          docId: specDocId,
+          blockType: 'paragraph',
+          text: '취소는 언제든 가능하다.',
+        },
+      },
+    });
+    const withDoc = await api<AiEnvelope>(daemon, `/api/projects/${projectId}`);
+    const specBlock = withDoc.body.project?.docs.find((doc) => doc.id === specDocId)?.blocks[0];
+
+    // The previously-dishonest cell: a rule-built brief (doc-chat origin)…
+    const brief = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'brief', provider: 'local', topic: '주문 취소 UX 개선' },
+    });
+    expect(brief.status).toBe(200);
+    expect(brief.body.source).toBe('rule');
+    expect(brief.body.project?.proposals?.[0]?.origin).toBe('doc-chat');
+
+    // …and a model-made patch.
+    llm.setReply(() =>
+      JSON.stringify({
+        summary: '문단을 맞춘다',
+        patches: [
+          { blockId: specBlock?.id, text: '배송 준비 중에만 취소 가능하다.', pins: [pins[0]?.number ?? 1] },
+        ],
+      }),
+    );
+    const patch = await api<AiEnvelope>(daemon, `/api/projects/${projectId}/ai/proposal`, {
+      body: { mode: 'doc', provider: 'openai', model: 'mock-1', endpoint: `${llm.url}/v1`, apiKey: 'sk-doc' },
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body.source).toBe('llm');
+
+    // A restart: the answers are read back from rows, not session memory.
+    await daemon.close();
+    const second = await boot();
+    const detail = await api<AiEnvelope>(second, `/api/projects/${projectId}`);
+    const byDoc = new Map(
+      (detail.body.project?.proposals ?? []).map((row) => [row.docId, row.source]),
+    );
+    expect(byDoc.get(specDocId)).toBe('llm');
+    expect(byDoc.get(researchDocId)).toBe('rule');
   });
 });
 

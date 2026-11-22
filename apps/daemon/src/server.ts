@@ -314,7 +314,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // It answers with booleans: the key itself never leaves the process.
     if (segments[1] === 'ai' && segments.length === 2) {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
-      return send(res, 200, { status: await aiStatus(env, keychain) });
+      return send(res, 200, { status: await aiStatus(env, keychain, options.aiFetch) });
     }
 
     // POST /api/ai/test — one small call, for the settings panel's badge.

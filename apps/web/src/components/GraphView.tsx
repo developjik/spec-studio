@@ -240,7 +240,7 @@ export function GraphView(props: GraphViewProps) {
         {showProposal && proposal !== null && (
           <section className="decision-card" data-testid="graph-proposal-card">
             <header className="decision-head">
-              <span className="decision-kicker">AI 제안 · 결정 카드</span>
+              <span className="decision-kicker">제안 · 결정 카드</span>
               <span
                 className={`decision-source decision-source--${proposal.source ?? 'rule'}`}
                 data-testid="graph-proposal-source"
@@ -248,10 +248,10 @@ export function GraphView(props: GraphViewProps) {
                 title={
                   proposal.source === 'llm'
                     ? `${proposal.provider ?? ''}${proposal.model === null || proposal.model === undefined ? '' : ` · ${proposal.model}`} 가 만든 초안입니다. 본문은 채택 전까지 그대로입니다.`
-                    : 'API 키 없이 로컬 규칙으로 만든 초안입니다. 키를 넣으면 LLM 제안을 씁니다.'
+                    : 'AI(모델)·API 키 없이 로컬 규칙으로 만든 초안입니다. 키를 넣으면 LLM 제안을 씁니다.'
                 }
               >
-                {proposal.source === 'llm' ? 'LLM 제안' : '로컬 규칙 폴백'}
+                {proposal.source === 'llm' ? 'LLM 제안' : 'AI 없음·규칙 기반 제안'}
                 {proposal.source === 'llm' && proposal.provider !== null && (
                   <span className="decision-source-model">
                     {proposal.provider}

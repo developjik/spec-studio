@@ -556,6 +556,13 @@ interface ProposalOpView {
   afterBlockId: string | null;
   before: ProposalPatch['before'];
   after: ProposalPatch['after'];
+  /**
+   * E4 F3-③: the card's provenance rides inside the ops' view JSON — the
+   * proposal table has no source column and may not grow one, so each op
+   * carries the same value and the reader takes the first. Rows written
+   * before F3 have no key and read back as `null` (provenance unknown).
+   */
+  source?: Proposal['source'];
 }
 
 export function proposalToRow(proposal: Proposal): ProposalRow {
@@ -584,6 +591,7 @@ export function proposalOpToRow(
     afterBlockId: patch.afterBlockId,
     before: patch.before,
     after: patch.after,
+    source: proposal.source,
   };
   return {
     id: opId,
@@ -596,17 +604,15 @@ export function proposalOpToRow(
 }
 
 export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Proposal {
-  const patches: ProposalPatch[] = [...ops]
+  const views = [...ops]
     .sort((a, b) => a.seq - b.seq)
-    .map((op) => {
-      const view = parseJson<ProposalOpView>(op.view);
-      return {
-        blockId: view.blockId,
-        afterBlockId: view.afterBlockId ?? null,
-        before: view.before ?? null,
-        after: view.after,
-      };
-    });
+    .map((op) => parseJson<ProposalOpView>(op.view));
+  const patches: ProposalPatch[] = views.map((view) => ({
+    blockId: view.blockId,
+    afterBlockId: view.afterBlockId ?? null,
+    before: view.before ?? null,
+    after: view.after,
+  }));
   return {
     id: row.id,
     docId: row.doc_id,
@@ -617,6 +623,7 @@ export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Propos
     patches,
     ideaId: row.idea_id as Proposal['ideaId'],
     authorId: (row.author_id as Proposal['authorId']) ?? null,
+    source: views[0]?.source ?? null,
     createdAt: row.created_at,
     decidedAt: row.decided_at,
   };

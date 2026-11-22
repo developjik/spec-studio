@@ -38,6 +38,16 @@ export interface AiPanelResult {
   text: string;
 }
 
+/**
+ * E4 F3-①: where each vendor spells out what a key costs. Kept beside the
+ * component (not in the preset schema) — the preset carries the console
+ * deep link (`docsUrl`), the pricing page is guide copy.
+ */
+const PRESET_PRICING_URL: Record<string, string> = {
+  anthropic: 'https://www.anthropic.com/pricing',
+  openai: 'https://openai.com/api/pricing/',
+};
+
 interface AiSettingsModalProps {
   /** E4 F1: easy mode hides the graph-mode proposal (its card lives in the pro-only graph view). */
   uiMode: UiMode;
@@ -65,6 +75,9 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
   const hasKeychainKey =
     status?.presets?.find((entry) => entry.id === value.presetId)?.hasKeychainKey === true;
   const keychainAvailable = status?.keychainAvailable === true;
+  // E4 F3-②: local servers the daemon's live probe could actually reach.
+  const detectedServers = status?.localServers?.filter((entry) => entry.reachable) ?? [];
+  const pricingUrl = preset !== undefined ? PRESET_PRICING_URL[preset.id] : undefined;
 
   const changePreset = (presetId: string) => {
     if (presetId === 'local') {
@@ -139,13 +152,35 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
             role="tab"
             aria-selected="false"
             disabled
-            title="구독(관리형 AI)은 E2에서 제공 예정입니다"
+            title="구독(관리형 AI)은 준비 중입니다 — 개시 전까지 직접 발급한 키나 로컬 서버를 쓰세요"
             data-testid="ai-tab-subscription"
           >
             <span className="modal-tab-title">구독</span>
             <span className="modal-tab-hint">준비 중</span>
           </button>
         </div>
+
+        {detectedServers.length > 0 && (
+          <div className="ai-note ai-local" data-testid="ai-local-detected">
+            <span>
+              이 컴퓨터에서 로컬 AI 서버를 발견했습니다 — 설치·가입·API 키 없이 로컬 AI를 쓸 수
+              있습니다.
+            </span>
+            {detectedServers
+              .filter((entry) => entry.id !== value.presetId)
+              .map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={() => changePreset(entry.id)}
+                  data-testid={`ai-local-use-${entry.id}`}
+                >
+                  {findPreset(entry.id)?.label ?? entry.id} 사용
+                </button>
+              ))}
+          </div>
+        )}
 
         <div className="ai-form">
           <label className="ai-field ai-field--wide">
@@ -193,6 +228,15 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
           {remote && keyless && (
             <p className="ai-note ai-field--wide" data-testid="ai-keyless-note">
               이 프리셋은 키가 필요 없습니다. 로컬 모델 서버에 바로 연결됩니다.
+              {detectedServers.some((entry) => entry.id === value.presetId) &&
+                ' 이 컴퓨터에서 서버가 실행 중입니다 — 모델 이름만 입력하면 됩니다.'}
+            </p>
+          )}
+
+          {local && (
+            <p className="ai-note ai-field--wide" data-testid="ai-local-note">
+              규칙 기반 제안은 키 없이 무료로 동작합니다. LLM 제안을 쓰려면 프리셋에서
+              Anthropic·OpenAI 호환을 고르고 각 서비스 콘솔에서 발급한 키(유료)를 넣으세요.
             </p>
           )}
 
@@ -251,6 +295,46 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
                 </span>
               </label>
             </>
+          )}
+
+          {remote && !keyless && (
+            <div className="ai-guide ai-field--wide" data-testid="ai-key-guide">
+              <span className="ai-label">키 발급 가이드</span>
+              <ol className="ai-guide-steps">
+                <li>
+                  {preset?.docsUrl !== undefined ? (
+                    <a
+                      href={preset.docsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid="ai-docs-link"
+                    >
+                      {preset.label} 콘솔에서 API 키 발급 ↗
+                    </a>
+                  ) : (
+                    '사용하려는 서비스의 콘솔에서 API 키를 발급받습니다'
+                  )}
+                </li>
+                <li>위 API 키 칸에 붙여넣습니다</li>
+                <li>아래 연결 확인으로 바로 쓸 수 있는지 점검합니다</li>
+              </ol>
+              <p className="ai-guide-cost" data-testid="ai-cost-note">
+                유료 API — 쓴 만큼 해당 서비스에 과금됩니다.
+                {pricingUrl !== undefined && (
+                  <>
+                    {' '}
+                    <a
+                      href={pricingUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid="ai-pricing-link"
+                    >
+                      요금 안내 ↗
+                    </a>
+                  </>
+                )}
+              </p>
+            </div>
           )}
         </div>
 
@@ -318,13 +402,13 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
           <p className="ai-note ai-note--warn">
             LLM 제안 추출은 로컬 SQLite 데몬 모드에서만 동작합니다. 브라우저 임시 모드에서는
             <strong> 그래프 · RTM</strong> 탭의 <strong>핀에서 정책 · 요구사항 · QA 추출</strong>
-            (로컬 규칙 폴백)을 쓰세요.
+            (AI 없음·규칙 기반 제안)을 쓰세요.
           </p>
         )}
         {!props.sqliteMode && props.uiMode === 'easy' && (
           <p className="ai-note ai-note--warn">
             LLM 제안 추출은 로컬 SQLite 데몬 모드에서만 동작합니다. 브라우저 임시 모드에서는
-            문서 탭의 <strong>제안 사용 → 제안 만들기</strong>(로컬 규칙 폴백)를 쓰세요.
+            문서 탭의 <strong>제안 사용 → 제안 만들기</strong>(AI 없음·규칙 기반 제안)를 쓰세요.
           </p>
         )}
       </section>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AI_PRESETS,
+  AiStatusSchema,
   CommandSchema,
   ObjectSchema,
   ProjectBundleSchema,
@@ -233,6 +235,46 @@ describe('project', () => {
     const parsed = ProjectSchema.safeParse(project);
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.pins[0]?.number).toBe(1);
+  });
+});
+
+/**
+ * E4 F3-①: the key-issuance guide reads its deep link off the preset itself,
+ * so every api-key preset that can name a console must name it here — and
+ * `docsUrl` stays a validated URL, never free text.
+ */
+describe('AI presets (E4 F3)', () => {
+  it('gives the two vendor presets a console deep link for key issuance', () => {
+    const byId = new Map(AI_PRESETS.map((preset) => [preset.id, preset]));
+    expect(byId.get('anthropic')?.docsUrl).toBe('https://console.anthropic.com/settings/keys');
+    expect(byId.get('openai')?.docsUrl).toBe('https://platform.openai.com/api-keys');
+    for (const preset of AI_PRESETS) {
+      const docsUrl = preset.docsUrl;
+      if (docsUrl !== undefined) {
+        expect(() => new URL(docsUrl)).not.toThrow();
+        expect(new URL(docsUrl).protocol).toBe('https:');
+      }
+    }
+  });
+
+  it('probes only loopback presets in the status answer', () => {
+    const probeTargets = AI_PRESETS.filter(
+      (preset) => preset.authMode === 'none' && preset.baseUrl !== undefined,
+    ).map((preset) => preset.id);
+    expect(probeTargets.sort()).toEqual(['lmstudio', 'ollama']);
+    for (const preset of AI_PRESETS) {
+      if (preset.authMode === 'none' && preset.baseUrl !== undefined) {
+        expect(['localhost', '127.0.0.1', '::1', '[::1]']).toContain(
+          new URL(preset.baseUrl).hostname,
+        );
+      }
+    }
+  });
+
+  it('defaults localServers to empty for a pre-F3 status answer', () => {
+    const parsed = AiStatusSchema.safeParse({ providers: [] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.localServers).toEqual([]);
   });
 });
 

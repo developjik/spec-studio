@@ -283,6 +283,7 @@ export function buildProposal(input: {
     patches,
     ideaId: null,
     authorId: null,
+    source: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -360,6 +361,7 @@ export function buildProposalFromDraft(input: {
     patches,
     ideaId: null,
     authorId: null,
+    source: null,
     createdAt: input.at,
     decidedAt: null,
   };
@@ -437,6 +439,7 @@ export function buildProposalFromBrief(input: {
     patches,
     ideaId: null,
     authorId: null,
+    source: null,
     createdAt: input.at,
     decidedAt: null,
   };

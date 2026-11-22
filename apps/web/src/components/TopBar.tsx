@@ -240,7 +240,7 @@ export function TopBar({
             aiSource === 'llm'
               ? '마지막 제안은 LLM이 만들었습니다. 프로바이더 · 모델 · 키는 이 창의 메모리에만 있습니다.'
               : aiSource === 'rule'
-                ? '마지막 제안은 로컬 규칙이 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.'
+                ? '마지막 제안은 AI 없이 규칙으로 만들었습니다. 키를 넣으면 LLM 제안을 씁니다.'
                 : 'LLM 프로바이더 · 모델 · 키를 이 창에만 두고 제안을 추출합니다'
           }
         >
@@ -253,6 +253,11 @@ export function TopBar({
               className={`ai-origin-dot${aiSource === 'llm' ? ' ai-origin-dot--llm' : ''}`}
               aria-hidden="true"
             />
+          )}
+          {aiSource === 'rule' && uiMode === 'easy' && (
+            <span className="ai-origin-tag" data-testid="ai-origin-tag">
+              AI 없음·규칙 기반 제안
+            </span>
           )}
         </button>
         {screen === null ? (

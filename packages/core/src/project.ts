@@ -616,10 +616,14 @@ export function execute(
       // MN-A (v16): the proposal remembers which idea it answers, so a
       // promotion can find its seed again after a restart. E3 (W1): it also
       // remembers the run that produced it — author_id, the adoption stamp.
+      // E4 F3-③: and who authored it (DG-4). A draft-less create is always
+      // the pin/rule extractor; a draft the caller did not sign stays null —
+      // the badge then admits the gap instead of guessing 'llm'.
       const carried: Proposal = {
         ...proposal,
         ideaId: command.ideaId ?? null,
         authorId: command.runId ?? null,
+        source: command.source ?? (command.draft === undefined ? 'rule' : null),
       };
       // One open proposal per doc: a new card retires the one still on the
       // table for the same doc, the same way a refusal would.

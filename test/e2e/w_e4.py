@@ -33,6 +33,16 @@ F1 section (implemented — 간편/전문 모드 이원화, U-3):
      exported bundle's project payload hashes identically.
   5. 기존 사용자 판정 — a stored project with no saved choice resolves pro.
 
+F3 section (implemented — AI 접근 경로 정비):
+
+  1. 키 발급 가이드 — 콘솔 딥링크(Anthropic·OpenAI)·단계·유료 안내·요금 링크,
+     BYOK 우선순위 문구 승계.
+  2. 로컬 런타임 감지 — /api/ai localServers와 모달 배너의 정합(미발견 침묵;
+     도달 양성 케이스는 유닛 테스트의 aiFetch 모의가 담당).
+  3. 폴백 정직화 — 규칙 카드의 통일 마커 'AI 없음·규칙 기반 제안' + 간편 강조
+     + proposal_op.view JSON 영속(재기동 후에도 같은 배지).
+  4. 구독 탭 — 'E2에서 제공 예정' 잘못 표기 제거, 준비 중 + BYOK·로컬 경로.
+
 Extension points for the later waves (spec §5-B-4): the F4 tour/next-task
 card section and the F6 덩어리 임포트 section plug in below — see
 check_f4() and check_f6() stubs.
@@ -511,6 +521,184 @@ def main() -> int:
             mode = page.locator("[data-testid=mode-switch]").get_attribute("data-mode")
             check("F1-5c 판정된 모드가 재기동 후에도 기억", mode == "pro", str(mode))
 
+            # ── F3-1 인앱 키 발급 가이드 — 콘솔 딥링크·단계·유료·BYOK 승계 ──
+            # journey 참고치의 시작점: 키 없는 신규 사용자가 가이드를 여는 순간.
+            journey_t0 = time.monotonic()
+            page.locator("[data-testid=ai-settings-open]").click()
+            page.wait_for_selector("[data-testid=ai-modal]", timeout=5000)
+            check(
+                "F3-1a 키 발급 가이드 블록 노출",
+                page.locator("[data-testid=ai-key-guide]").count() == 1,
+            )
+            docs_href = (
+                page.locator("[data-testid=ai-docs-link]").get_attribute("href") or ""
+            )
+            check(
+                "F3-1b Anthropic 콘솔 딥링크",
+                "console.anthropic.com" in docs_href,
+                docs_href,
+            )
+            cost_note = page.locator("[data-testid=ai-cost-note]").inner_text()
+            check(
+                "F3-1c 유료 안내 + 요금 페이지 링크",
+                "유료" in cost_note
+                and page.locator("[data-testid=ai-pricing-link]").count() == 1,
+                cost_note[:60],
+            )
+            byok_note = page.locator("[data-testid=ai-source-badge]").inner_text()
+            check(
+                "F3-1d BYOK 우선순위 문구 승계(입력 키>키체인>환경변수>규칙)",
+                all(token in byok_note for token in ("지금 입력 키", "키체인", "환경변수")),
+                byok_note[:80],
+            )
+            page.locator("[data-testid=ai-provider]").select_option("openai")
+            docs_href2 = (
+                page.locator("[data-testid=ai-docs-link]").get_attribute("href") or ""
+            )
+            check(
+                "F3-1e OpenAI 콘솔 딥링크",
+                "platform.openai.com" in docs_href2,
+                docs_href2,
+            )
+            page.locator("[data-testid=ai-provider]").select_option("local")
+            check(
+                "F3-1f 로컬(규칙) 선택 시 무료·키 불필요 안내",
+                "키 없이" in page.locator("[data-testid=ai-local-note]").inner_text()
+                and "무료" in page.locator("[data-testid=ai-local-note]").inner_text(),
+            )
+            page.locator("[data-testid=ai-provider]").select_option("anthropic")
+
+            # ── F3-4 구독 탭 연결점 정정 — 실개시·과금 없이 문구만 ─────────
+            sub_title = (
+                page.locator("[data-testid=ai-tab-subscription]").get_attribute("title")
+                or ""
+            )
+            check(
+                "F3-4a 구독 탭 'E2에서 제공 예정' 잘못된 표기 제거",
+                "E2에서 제공 예정" not in sub_title,
+                sub_title,
+            )
+            check(
+                "F3-4b 구독 탭 준비 중 + BYOK·로컬 경로 안내",
+                "준비 중" in sub_title and "키" in sub_title and "로컬" in sub_title,
+                sub_title,
+            )
+
+            # ── F3-2 Ollama·로컬 런타임 자동 감지 ──────────────────────
+            # 도달 여부는 환경 의존 — /api/ai 응답과 배너 노출이 정합이면 된다.
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{DAEMON_PORT}/api/ai", timeout=5
+            ) as resp:
+                ai_status = json.loads(resp.read())["status"]
+            servers = ai_status.get("localServers", [])
+            check(
+                "F3-2a aiStatus.localServers — ollama·lmstudio 프로브 대상",
+                sorted(entry["id"] for entry in servers) == ["lmstudio", "ollama"],
+                str(servers),
+            )
+            reachable = [entry for entry in servers if entry["reachable"]]
+            banner = page.locator("[data-testid=ai-local-detected]").count()
+            check(
+                "F3-2b 감지 배너 ↔ 도달 정합(미발견은 침묵)",
+                banner == (1 if reachable else 0),
+                f"reachable={len(reachable)} banner={banner}",
+            )
+            if reachable:
+                check(
+                    "F3-2c '설치 없이 로컬 AI 사용 가능' 안내 문구",
+                    "로컬 AI" in page.locator("[data-testid=ai-local-detected]").inner_text()
+                    and "키 없이" in page.locator("[data-testid=ai-local-detected]").inner_text(),
+                )
+            else:
+                print(
+                    "     참고: 이 환경에는 localhost 런타임이 없음 — 도달 양성 케이스는 "
+                    "apps/daemon ai.test.ts의 aiFetch 모의로 커버"
+                )
+            page.locator("[data-testid=ai-close]").click()
+            page.wait_for_timeout(300)
+
+            # ── F3-3 폴백 정직화 — 통일 마커·간편 강조·영속 ─────────────
+            mode = page.locator("[data-testid=mode-switch]").get_attribute("data-mode")
+            if mode != "easy":
+                page.locator("[data-testid=mode-switch]").click()
+                page.wait_for_timeout(400)
+
+            # 규칙 경로: 키 없는 브리프 요청 — daemon이 proposal.create(draft,
+            # source='rule')를 리서치 문서에 파일링한다. '제안 만들기' 핀 추출기는
+            # 이 시나리오에 핀이 없어 buildProposal이 거절한다 — 키 없는 사용자의
+            # 실제 폴백 카드는 브리프다.
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{DAEMON_PORT}/api/projects", timeout=5
+            ) as resp:
+                project_id = json.loads(resp.read())["projects"][0]["id"]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{DAEMON_PORT}/api/projects/{project_id}/ai/proposal",
+                data=json.dumps(
+                    {"mode": "brief", "provider": "local", "topic": "취소 정책 조사"}
+                ).encode(),
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=15) as resp:
+                brief = json.loads(resp.read())
+            check(
+                "F3-3a 규칙 브리프 발행(doc-chat origin — 구 오독 셀)",
+                brief.get("source") == "rule",
+                str(brief.get("source")),
+            )
+            op_view = query(
+                "SELECT view FROM proposal_op ORDER BY rowid DESC LIMIT 1"
+            )[0][0]
+            check(
+                "F3-3b 출처가 proposal_op.view JSON에 영속",
+                json.loads(op_view).get("source") == "rule",
+                op_view[:60],
+            )
+
+            # 카드는 리서치 문서 탭에 귀속 — 전환 후 통일 마커·간편 강조 확인.
+            # (op 스트림이 화면을 리로드할 때까지 짧게 걸린다.)
+            page.locator("[data-testid=doc-tab][data-kind=research]").click()
+            page.wait_for_selector("[data-testid=proposal-card]", timeout=10000)
+            badge = page.locator("[data-testid=proposal-source]")
+            badge_text = badge.inner_text()
+            check(
+                "F3-3c 규칙 카드 data-source=rule",
+                badge.get_attribute("data-source") == "rule",
+                badge_text,
+            )
+            check(
+                "F3-3d 통일 마커 'AI 없음·규칙 기반 제안'",
+                "AI 없음" in badge_text and "규칙 기반" in badge_text,
+                badge_text,
+            )
+            check(
+                "F3-3e 간편 모드 폴백 강조 문구 노출(DG-4)",
+                page.locator("[data-testid=proposal-source-note]").count() == 1,
+            )
+            journey_ms = int((time.monotonic() - journey_t0) * 1000)
+            print(
+                f"     참고(journey): 키 없는 신규 사용자 가이드→첫 제안 {journey_ms}ms — "
+                "게이트 아님, F3 참고치"
+            )
+
+            # 재기동 후에도 같은 마커 — 영속 source가 origin 추측을 이긴다.
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(
+                "[data-testid=daemon-status][data-status=connected]", timeout=20000
+            )
+            page.locator("[data-testid=doc-tab][data-kind=research]").click()
+            page.wait_for_selector("[data-testid=proposal-card]", timeout=10000)
+            badge2_text = page.locator("[data-testid=proposal-source]").inner_text()
+            check(
+                "F3-3f 재기동 후에도 규칙 마커(구현 전: LLM으로 잘못 읽힘)",
+                page.locator("[data-testid=proposal-source]").get_attribute("data-source")
+                == "rule"
+                and "규칙 기반" in badge2_text,
+                badge2_text,
+            )
+            page.locator("[data-testid=proposal-reject]").click()
+            page.wait_for_timeout(300)
+
             check("콘솔 오류 0건", console_errors == [], " | ".join(console_errors[:3]))
             browser.close()
     finally:
@@ -524,8 +712,9 @@ def main() -> int:
         print(f"\nFAILED: {len(failures)} — {', '.join(failures)}")
         return 1
     print(
-        "\nPASS: E4 F1+F2 — 간편 첫 세션 · 챗 퍼스트 입력층 · 챗 뼈대·답변 · "
-        "커맨드만 발행(DG-2) · 모드 왕복 무손실(AC-4) · EntryGate 용어"
+        "\nPASS: E4 F1+F2+F3 — 간편 첫 세션 · 챗 퍼스트 입력층 · 챗 뼈대·답변 · "
+        "커맨드만 발행(DG-2) · 모드 왕복 무손실(AC-4) · EntryGate 용어 · "
+        "AI 접근 경로(키 가이드·로컬 감지·정직 마커·구독 연결점)"
     )
     return 0
 

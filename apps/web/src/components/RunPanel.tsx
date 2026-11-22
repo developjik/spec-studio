@@ -164,7 +164,8 @@ export function RunPanel(props: RunPanelProps) {
 
           {active.state === 'review' && (
             <p className="run-hint" data-testid="run-review-hint">
-              결정카드가 리서치 문서의 제안으로 올라와 있습니다. 채택·반려는 문서 패널에서 결정합니다.
+              결정카드(LLM 제안)가 리서치 문서의 제안으로 올라와 있습니다. 채택·반려는 문서
+              패널에서 결정합니다.
             </p>
           )}
 

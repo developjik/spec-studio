@@ -92,6 +92,7 @@ const PRESET_DATA = [
     baseUrl: 'https://api.anthropic.com',
     defaultModel: 'claude-sonnet-4-5',
     authMode: 'api-key',
+    docsUrl: 'https://console.anthropic.com/settings/keys',
   },
   {
     id: 'openai',
@@ -100,6 +101,7 @@ const PRESET_DATA = [
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
     authMode: 'api-key',
+    docsUrl: 'https://platform.openai.com/api-keys',
   },
   {
     id: 'ollama',
@@ -149,7 +151,7 @@ export type AiProposalSource = (typeof AI_PROPOSAL_SOURCES)[number];
 
 export const AI_SOURCE_LABEL: Record<AiProposalSource, string> = {
   llm: 'LLM 제안',
-  rule: '로컬 규칙 폴백',
+  rule: 'AI 없음·규칙 기반 제안',
 };
 
 /**
@@ -359,6 +361,22 @@ export const AiStatusSchema = z.object({
   providers: z.array(AiProviderStatusSchema),
   /** The local rule extractor is always available; it needs no key. */
   localAvailable: z.boolean().default(true),
+  /**
+   * E4 F3-②: keyless local presets (Ollama·LM Studio) the daemon can actually
+   * reach right now — probed live at `/api/ai`, never persisted. `reachable`
+   * is honest in both directions: nothing listening is silent `false`, not an
+   * error.
+   */
+  localServers: z
+    .array(
+      z.object({
+        id: z.string(),
+        /** The preset's own baseUrl — where the probe was aimed. */
+        baseUrl: z.string().max(500),
+        reachable: z.boolean(),
+      }),
+    )
+    .default([]),
   /** Whether the daemon has a keychain port at all — the desktop app only. */
   keychainAvailable: z.boolean().default(false),
   /** Per preset: whether a key sits in the keychain. Booleans only, like `hasEnvKey`. */

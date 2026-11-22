@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AiProposalSourceSchema } from './ai.js';
 import { BlockIdSchema, BlockSchema, DocIdSchema, ProposalIdSchema } from './doc.js';
 import { IdeaIdSchema } from './idea.js';
 import { RunIdSchema } from './agent.js';
@@ -59,6 +60,14 @@ export const ProposalSchema = z.object({
    * actor `ai:<runId>` from it, which is AC-1's provenance rule.
    */
   authorId: RunIdSchema.nullable().default(null),
+  /**
+   * E4 F3-③: who authored the card — a model answer or the rule extractor.
+   * Written through the command's `source`; persisted inside the op's view
+   * JSON (no column, no migration) so a reloaded card keeps its honest badge
+   * instead of guessing `llm` from origin. `null` only on rows written
+   * before this field existed.
+   */
+  source: AiProposalSourceSchema.nullable().default(null),
   createdAt: z.string().min(1),
   decidedAt: z.string().min(1).nullable(),
 });

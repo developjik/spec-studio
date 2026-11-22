@@ -352,14 +352,20 @@ export function DocPanel(props: DocPanelProps) {
   const ours = proposal !== null && proposal.docId === doc.id ? proposal : null;
   const proposalOpen = ours !== null && ours.state === 'open';
   const directEditable = mode === 'direct' && !props.busy;
-  // The honest badge: what the daemon said filed this card wins; the origin
-  // fallback keeps the old meaning (핀 추출 = rule, 그 외 = LLM 문안).
-  const cardSource =
+  // The honest badge (E4 F3-③): the daemon's own answer wins; the persisted
+  // `source` keeps it across reloads; a run's card is always model-made. Only
+  // a pre-F3 card with no recorded source guesses from origin — and then a
+  // doc-chat card admits '출처 미기록' instead of claiming LLM it cannot prove.
+  const cardSource: 'llm' | 'rule' | 'unknown' =
     ours !== null && props.sourceHint !== null && props.sourceHint.proposalId === ours.id
       ? props.sourceHint.source
-      : ours?.origin === 'doc-chat'
-        ? 'llm'
-        : 'rule';
+      : ours !== null && ours.source !== null
+        ? ours.source
+        : ours !== null && ours.authorId !== null
+          ? 'llm'
+          : ours === null || ours.origin !== 'doc-chat'
+            ? 'rule'
+            : 'unknown';
 
 
   return (
@@ -499,12 +505,23 @@ export function DocPanel(props: DocPanelProps) {
                 title={
                   cardSource === 'llm'
                     ? '모델이 쓴 문단 patch입니다. 채택 전까지 본문은 그대로입니다.'
-                    : '로컬 규칙이 만든 문단 patch입니다.'
+                    : cardSource === 'rule'
+                      ? 'AI(모델) 없이 규칙으로 만든 문단 patch입니다. 키를 넣으면 LLM 제안을 씁니다.'
+                      : '이전 버전이 만든 제안이라 LLM·규칙 출처가 기록되지 않았습니다.'
                 }
               >
-                {cardSource === 'llm' ? 'LLM 제안' : '로컬 규칙'}
+                {cardSource === 'llm'
+                  ? 'LLM 제안'
+                  : cardSource === 'rule'
+                    ? 'AI 없음·규칙 기반 제안'
+                    : '출처 미기록'}
               </span>
             </p>
+            {cardSource === 'rule' && props.uiMode === 'easy' && (
+              <p className="proposal-source-note" data-testid="proposal-source-note">
+                AI(모델)를 쓰지 않고 규칙으로 만든 제안입니다 — 키 없이 무료로 동작했습니다.
+              </p>
+            )}
             <p className="proposal-summary" data-testid="proposal-summary">
               {ours.summary}
             </p>

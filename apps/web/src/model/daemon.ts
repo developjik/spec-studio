@@ -170,6 +170,11 @@ export interface AiProviderStatusView {
 export interface AiStatusView {
   providers: AiProviderStatusView[];
   localAvailable: boolean;
+  /**
+   * E4 F3-②: keyless local runtimes (Ollama·LM Studio) the daemon could
+   * actually reach at status time. Volatile — recomputed every call.
+   */
+  localServers: Array<{ id: string; baseUrl: string; reachable: boolean }>;
   /** Whether this daemon can reach an OS keychain (desktop app only). */
   keychainAvailable: boolean;
   /** Per preset: a key sits in the keychain — booleans only, like hasEnvKey. */

@@ -75,9 +75,44 @@ export interface AiCommandPlan {
   note: string;
 }
 
+/**
+ * E4 F3-②: how long a localhost probe may take before giving up. Refusals
+ * answer instantly; this cap only bites when something silently drops the
+ * connection — and the probes run in parallel, so the route's worst added
+ * latency is this, once.
+ */
+const LOCAL_PROBE_TIMEOUT_MS = 1000;
+
+/** Only loopback URLs may be probed — a local preset can never aim the daemon at the network. */
+function isLoopbackUrl(baseUrl: string): boolean {
+  try {
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * E4 F3-②: is a local model server actually listening? One GET to the
+ * preset's own `/models` — the OpenAI-compatible endpoint Ollama and LM
+ * Studio both answer. Refused, timed out, or non-ok is a silent `false`:
+ * not finding a runtime is absence of guidance, never an error.
+ */
+async function probeLocalServer(baseUrl: string, fetchImpl: typeof fetch): Promise<boolean> {
+  try {
+    const response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/models`, {
+      signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function aiStatus(
   env: Record<string, string | undefined>,
   keychain: CredentialPort | null,
+  fetchImpl?: typeof fetch,
 ): Promise<AiStatus> {
   const presets = await Promise.all(
     AI_PRESETS.map(async (preset) => {
@@ -90,6 +125,18 @@ export async function aiStatus(
       }
     }),
   );
+  // E4 F3-②: which keyless local runtimes are really there, probed live.
+  // Volatile status only — the answer is recomputed per call, never stored.
+  const localServers = await Promise.all(
+    AI_PRESETS.filter(
+      (preset) =>
+        preset.authMode === 'none' && preset.baseUrl !== undefined && isLoopbackUrl(preset.baseUrl),
+    ).map(async (preset) => ({
+      id: preset.id,
+      baseUrl: preset.baseUrl ?? '',
+      reachable: await probeLocalServer(preset.baseUrl ?? '', fetchImpl ?? fetch),
+    })),
+  );
   return {
     providers: AI_PROVIDERS.map((provider) => ({
       provider,
@@ -99,6 +146,7 @@ export async function aiStatus(
       defaultEndpoint: provider === 'local' ? null : AI_DEFAULT_ENDPOINTS[provider],
     })),
     localAvailable: true,
+    localServers,
     keychainAvailable: keychain !== null,
     presets,
   };
