@@ -3,6 +3,8 @@
 # Vite preview + Playwright.
 #   F1 — 간편/전문 모드 이원화: 첫 세션 판정 · 숨김 서피스(DG-3) · AC-1 실측 ·
 #        AI 제안 채택 · 모드 왕복 op_log 0건(DG-2) · 번들 해시(AC-4) · 기존 사용자 판정.
+#   F2 — 챗 퍼스트 점진 재배치: EntryGate 용어 · 챗 도크 입력층 · 챗 뼈대·
+#        needs_input 답변 · 커맨드만 발행(DG-2) · 전문 작업실 잔존·참고 계수.
 #   F4(투어)·F6(덩어리) 구간은 후속 웨이브 확장 포인트(w_e4.py의 check_f4/check_f6).
 # Usage: test/e2e/run_e4.sh   (from the repository root)
 # Artifacts (daemon log, bundles) persist in .e2e-e4/ — printed at exit.

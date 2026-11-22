@@ -2,6 +2,23 @@
 """End-to-end check for E4 — run_e4.sh drives one real daemon, one SQLite
 file, the built app on `vite preview`, the mock model server, and Playwright.
 
+F2 section (implemented — 챗 퍼스트 점진 재배치, U-2 · a안):
+
+  0. EntryGate 문구 — 내부 용어(W-n·E-n·AC-n·F-n-n·R-n 패턴) 0건.
+     `SCR-110-3` 같은 핀 코드(도메인 어휘)는 글자에 붙은 형태라 제외 —
+     AC-3의 전수 grep 게이트는 F4 소관.
+  1. 간편 첫 화면 챗 퍼스트 구성 — chatDock 서피스(입력·올리기·대화 시작)가
+     작업실 위에 노출되고, 런 0건이면 챗 뼈대(runPanel)는 아직 숨는다.
+  2. 챗 제출 → 커맨드만 발행(DG-2): op_log의 신규 행이 전부 기존 커맨드 종류
+     (idea.capture·doc.create·run.start)이고, 그 런이 간편 모드의 챗 뼈대로
+     노출된다. 리서치 문서(브리프·카드의 집)는 easy 서피스 그대로 전면 유지.
+  3. needs_input 답변 뼈대 — e2e 환경은 프로바이더 키가 없어 모델이 못
+     도니, needs_input 런을 스토어에 직접 심어(고정물) 질문·답변 UI와
+     run.answer 커맨드 발행을 검증한다. 챗 조작 자체는 커맨드만 발행.
+  4. 작업실 잔존(전문) — pro로 전환하면 chatDock은 숨고 캔버스·문서·핀·
+     인박스·런 레일이 현행 그대로다. 전문 첫 화면 상호작용 계수는 참고치
+     (A-F2-1 — 게이트 아님)로 출력만 한다.
+
 F1 section (implemented — 간편/전문 모드 이원화, U-3):
 
   1. 첫 세션 판정 — no stored project and no saved choice ⇒ easy mode; the
@@ -29,11 +46,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -88,8 +107,31 @@ def query(sql: str, params: tuple = ()) -> list[tuple]:
         connection.close()
 
 
+def query_write(sql: str, params: tuple = ()) -> None:
+    """Fixture writes (F2-3): the daemon's SQLite file, WAL-shared."""
+    connection = sqlite3.connect(DB, timeout=10)
+    try:
+        connection.execute(sql, params)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def op_log_count() -> int:
     return int(query("SELECT COUNT(*) FROM op_log")[0][0])
+
+
+def op_log_kinds_after(seq: int) -> list[str]:
+    return [row[0] for row in query("SELECT kind FROM op_log WHERE seq > ? ORDER BY seq", (seq,))]
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# F2-0: 내부 용어 패턴. 도메인 코드(SCR-110-3 — 화면-핀 번호 체계)가 false
+# positive 되지 않게, 글자에 바로 붙은 형태는 제외한다.
+INTERNAL_TERM = re.compile(r"(?<![A-Za-z])(?:W\d+|E\d+|AC-\d+|F\d+-\d+|R-\d+)")
 
 
 def project_hash(path: Path) -> str:
@@ -113,6 +155,19 @@ INTERACTIVE_JS = """() => {
     const style = getComputedStyle(el);
     return style.display !== 'none' && style.visibility !== 'hidden' && !el.hidden;
   }).length;
+}"""
+
+# Same rule, but names what it counted — the AC-1 재실측 evidence line in the
+# report lists every element instead of just the total.
+INTERACTIVE_LIST_JS = """() => {
+  const sel = [
+    'button', 'input', 'select', 'textarea',
+    'a[href]', '[role="tab"]', '[contenteditable="true"]', 'summary',
+  ].join(',');
+  return [...document.querySelectorAll(sel)].filter((el) => {
+    const style = getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && !el.hidden;
+  }).map((el) => el.dataset.testid ?? el.getAttribute('aria-label') ?? el.textContent.trim().slice(0, 24) ?? el.tagName);
 }"""
 
 
@@ -170,6 +225,15 @@ def main() -> int:
             mode = page.locator("[data-testid=mode-switch]").get_attribute("data-mode")
             check("F1-1a 신규 첫 세션은 간편 모드", mode == "easy", str(mode))
 
+            # ── F2-0 EntryGate 문구 — 내부 용어 제거 (F2 범위) ──────────
+            gate_text = page.locator("[data-surface=entryGate]").inner_text()
+            leaks = INTERNAL_TERM.findall(gate_text)
+            check(
+                "F2-0 EntryGate 내부 용어(W·E·AC·F-N·R-N) 0건",
+                leaks == [],
+                " ".join(leaks),
+            )
+
             page.locator("[data-testid=entry-sample]").click()
             page.wait_for_selector("[data-testid=stage]", timeout=10000)
 
@@ -193,9 +257,31 @@ def main() -> int:
                     page.locator(f"[data-surface={surface}]").count() == 1,
                 )
 
-            # ── F1-2 AC-1 지향 실측: 간편 첫 화면 상호작용 요소 ─────────
-            interactive = page.evaluate(INTERACTIVE_JS)
-            print(f"     AC-1 실측: 간편 첫 화면 상호작용 요소 {interactive}개 (기준 ≤12)")
+            # ── F2-1 간편 첫 화면 챗 퍼스트 구성 — 입력이 전면, 작업실은 유지 ──
+            check(
+                "F2-1a 챗 도크 서피스 노출(올리고·대화로 시작)",
+                page.locator("[data-surface=chatDock]").count() == 1,
+            )
+            check(
+                "F2-1b 챗 입력창·전송 버튼",
+                page.locator("[data-testid=chat-input]").count() == 1
+                and page.locator("[data-testid=chat-submit]").count() == 1,
+            )
+            check(
+                "F2-1c 올리기(화면 업로드) 입력 전면",
+                page.locator("[data-testid=chat-upload]").count() == 1,
+            )
+            check(
+                "F2-1d 런 0건 — 챗 뼈대(runPanel)는 대화 전까지 숨김",
+                page.locator("[data-surface=runPanel]").count() == 0,
+            )
+
+            # ── F1-2 AC-1 지향 실측: 간편 첫 화면 상호작용 요소 (F2 후 재실측) ──
+            interactive_items = page.evaluate(INTERACTIVE_LIST_JS)
+            interactive = len(interactive_items)
+            print(f"     AC-1 재실측(F2): 간편 첫 화면 상호작용 요소 {interactive}개 (기준 ≤12)")
+            for item in interactive_items:
+                print(f"        · {item}")
             check("AC-1 간편 첫 화면 상호작용 ≤12", interactive <= 12, str(interactive))
 
             # ── F1-3 AI 제안 카드 채택 (간편 모드) ──────────────────────
@@ -242,6 +328,95 @@ def main() -> int:
                 str(op_log_count()),
             )
 
+            # ── F2-2 챗 제출 → 커맨드만 발행(DG-2) + 챗 뼈대 노출 ────────
+            ops_before_chat = op_log_count()
+            page.locator("[data-testid=chat-input]").fill(
+                "취소 정책을 경쟁사 기준으로 정리해줘"
+            )
+            page.locator("[data-testid=chat-submit]").click()
+            page.wait_for_selector("[data-surface=runPanel]", timeout=15000)
+            check(
+                "F2-2a 챗 제출 후 간편 모드에 챗 뼈대(runPanel) 노출",
+                page.locator("[data-surface=runPanel]").count() == 1,
+            )
+            check(
+                "F2-2b 대화(런)가 도크에 잡힘",
+                page.locator("[data-testid=run-state]").count() >= 1,
+            )
+            # DG-2: the submission only spoke commands — every new op_log
+            # row is a pre-existing command kind (capture·doc·run), never a
+            # chat-owned write path. 채택 외 op_log 0건의 정확한 뜻: 챗 UI
+            # 자체는 쓰기 경로를 추가하지 않는다.
+            kinds = op_log_kinds_after(ops_before_chat)
+            allowed = {"idea.capture", "doc.create", "run.start"}
+            check(
+                "F2-2c DG-2 챗 제출은 기존 커맨드만 발행(신규 쓰기 경로 0건)",
+                len(kinds) > 0
+                and set(kinds) <= allowed
+                and "idea.capture" in kinds
+                and "run.start" in kinds,
+                ",".join(kinds),
+            )
+            check(
+                "F2-2d 브리프·제안 카드의 집(리서치 문서)이 easy 서피스 전면 유지",
+                page.locator("[data-testid=doc-tab][data-kind=research]").count() == 1,
+            )
+
+            # ── F2-3 needs_input 답변 뼈대 — 챗 UI의 정의 조각 ─────────
+            # The e2e env carries no provider key, so the model never
+            # reaches needs_input on its own. The fixture plants a run at
+            # that state in the same store the daemon serves — the answer
+            # field and the run.answer command are what F2 must prove.
+            idea_id = query(
+                "SELECT id FROM obj WHERE kind='idea' ORDER BY rowid DESC LIMIT 1"
+            )[0][0]
+            injected = "R_e2ef2chat01"
+            query_write(
+                "INSERT INTO run(id, task_id, worktree, branch, agent, mode, state,"
+                " interrupted, outward_at, started_at, ended_at) VALUES"
+                " (?, ?, NULL, NULL, 'researcher', 'research', 'needs_input', 0,"
+                " NULL, ?, NULL)",
+                (injected, idea_id, now_iso()),
+            )
+            query_write(
+                "INSERT INTO run_log(run_id, seq, at, stream, line) VALUES"
+                " (?, 1, ?, 'event', ?)",
+                (
+                    injected,
+                    now_iso(),
+                    json.dumps(
+                        {"needs_input": True, "question": "어떤 사용자층부터 조사할까요?"}
+                    ),
+                ),
+            )
+
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_selector(
+                "[data-testid=daemon-status][data-status=connected]", timeout=20000
+            )
+            page.wait_for_selector("[data-surface=runPanel]", timeout=15000)
+            page.wait_for_selector("[data-testid=run-question]", timeout=10000)
+            check(
+                "F2-3a needs_input 질문이 간편 챗 뼈대에 표시",
+                "사용자층" in page.locator("[data-testid=run-question]").inner_text(),
+            )
+            check(
+                "F2-3b 답변 입력 필드(챗 뼈대) 노출",
+                page.locator("[data-testid=run-answer-input]").count() == 1,
+            )
+            page.locator("[data-testid=run-answer-input]").fill("구매 이력 고객부터")
+            page.locator("[data-testid=run-answer-submit]").click()
+            for _ in range(50):
+                if query("SELECT COUNT(*) FROM op_log WHERE kind='run.answer'")[0][0] > 0:
+                    break
+                time.sleep(0.1)
+            answered = query("SELECT COUNT(*) FROM op_log WHERE kind='run.answer'")[0][0]
+            check(
+                "F2-3c 답변은 run.answer 커맨드로만 발행(챗 고유 쓰기 0건)",
+                answered == 1,
+                str(answered),
+            )
+
             # ── F1-4 DG-2 + AC-4: 왕복 무손실 ───────────────────────────
             ops_before = op_log_count()
             first_bundle = export_bundle(page)
@@ -257,6 +432,26 @@ def main() -> int:
                     page.locator(f"[data-testid={testid}]").count() >= 1,
                 )
 
+            # ── F2-4 작업실 잔존(전문) + 참고 계수 ──────────────────────
+            check(
+                "F2-4a 전문 모드는 챗 도크를 숨긴다(현행 작업실 유지)",
+                page.locator("[data-surface=chatDock]").count() == 0,
+            )
+            for surface in ("canvas", "docPanel", "pinPanel", "ideaInbox"):
+                check(
+                    f"F2-4b 전문 작업실 잔존: {surface}",
+                    page.locator(f"[data-surface={surface}]").count() >= 1,
+                )
+            check(
+                "F2-4c 전문 모드 런 패널(사이드 레일) 유지",
+                page.locator("[data-surface=runPanel]").count() == 1,
+            )
+            pro_interactive = page.evaluate(INTERACTIVE_JS)
+            print(
+                f"     참고: 전문 모드 첫 화면 상호작용 요소 {pro_interactive}개 "
+                "(동일 계수 규칙 — 게이트 아님, A-F2-1)"
+            )
+
             page.locator("[data-testid=mode-switch]").click()
             page.wait_for_timeout(400)
             mode = page.locator("[data-testid=mode-switch]").get_attribute("data-mode")
@@ -264,6 +459,10 @@ def main() -> int:
             check(
                 "F1-4d 왕복 후 인박스 재은닉",
                 page.locator("[data-testid=idea-inbox]").count() == 0,
+            )
+            check(
+                "F2-4e 왕복 후 챗 도크 복원",
+                page.locator("[data-surface=chatDock]").count() == 1,
             )
 
             ops_after = op_log_count()
@@ -324,7 +523,10 @@ def main() -> int:
     if failures:
         print(f"\nFAILED: {len(failures)} — {', '.join(failures)}")
         return 1
-    print("\nPASS: E4 F1 — 간편 첫 세션 · AI 제안 채택 · 모드 왕복 무손실(AC-4) · 커맨드 0건(DG-2)")
+    print(
+        "\nPASS: E4 F1+F2 — 간편 첫 세션 · 챗 퍼스트 입력층 · 챗 뼈대·답변 · "
+        "커맨드만 발행(DG-2) · 모드 왕복 무손실(AC-4) · EntryGate 용어"
+    )
     return 0
 
 

@@ -16,6 +16,7 @@ import { FigmaBar } from './components/FigmaBar';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { DocPanel } from './components/DocPanel';
 import { RunPanel } from './components/RunPanel';
+import { ChatDock } from './components/ChatDock';
 import { useNotices } from './hooks/useNotices';
 import { useUiMode } from './hooks/useUiMode';
 import { useDaemonProject } from './hooks/useDaemonProject';
@@ -260,6 +261,25 @@ export default function App() {
           onRevert={() => void docsApi.revertAdopted()}
         />
       ) : screen !== null && project !== null ? (
+        <>
+          {/* F2 챗 퍼스트 (a안 점진 재배치): easy's first screen fronts the
+              input layer; the workshop below is the same one pro keeps. */}
+          {surfaceVisible('chatDock', mode) && (
+            <ChatDock
+              sqliteMode={sqliteMode}
+              busy={busy}
+              runs={runsApi.runs}
+              activeId={runsApi.activeRunId}
+              log={runsApi.runLog}
+              modelLabel={runsApi.runModelLabel}
+              onSubmit={(text) => void runsApi.startChatRun(text)}
+              onUpload={(file) => void flow.attachFromFile(file)}
+              onSelect={runsApi.watchRun}
+              onCancel={runsApi.cancelRun}
+              onResume={runsApi.resumeRun}
+              onAnswer={runsApi.answerRun}
+            />
+          )}
         <main
           className={`studio${doc !== null && doc.kind === 'research' ? ' studio--research' : ''}`}
         >
@@ -272,16 +292,21 @@ export default function App() {
                   ? ` · ${screen.viewport.width}×${screen.viewport.height}`
                   : ' · Figma'}
               </span>
-              <button
-                type="button"
-                className="btn btn--sm tool-action"
-                onClick={() => {
-                  pinsApi.setDraftAnchor({ x: 0.5, y: 0.5 });
-                  pinsApi.setSelectedPinId(null);
-                }}
-              >
-                핀 추가
-              </button>
+              {/* F2 (AC-1): easy's first screen keeps one pin gesture — the
+                  canvas click below. The center-anchor accelerator stays in
+                  pro, where the workshop's full chrome lives. */}
+              {mode === 'pro' && (
+                <button
+                  type="button"
+                  className="btn btn--sm tool-action"
+                  onClick={() => {
+                    pinsApi.setDraftAnchor({ x: 0.5, y: 0.5 });
+                    pinsApi.setSelectedPinId(null);
+                  }}
+                >
+                  핀 추가
+                </button>
+              )}
               <span className="tool-hint">이미지 클릭 → 번호 핀</span>
             </div>
 
@@ -399,7 +424,9 @@ export default function App() {
             />
             )}
 
-            {surfaceVisible('runPanel', mode) && sqliteMode && runsApi.runs.length > 0 && (
+            {/* F2: easy's run surface lives in the dock (A-F2-2); the rail
+                placement below is the pro workshop's (A-F2-1, unchanged). */}
+            {mode === 'pro' && sqliteMode && runsApi.runs.length > 0 && (
               <RunPanel
                 runs={runsApi.runs}
                 activeId={runsApi.activeRunId}
@@ -414,6 +441,7 @@ export default function App() {
             )}
           </div>
         </main>
+        </>
       ) : (
         <EntryGate
           error={gateError}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Command, Doc, RunRecord } from '@spec-studio/protocol';
+import type { Command, Doc, DomainEvent, RunRecord } from '@spec-studio/protocol';
 import { RUN_TERMINAL, upsertRun } from '../model/runview';
 import {
   DaemonClient,
@@ -167,6 +167,38 @@ export function useAgentRuns({
     }
   };
 
+  /**
+   * E4 F2 챗 퍼스트: the dock's first message. The text becomes an idea
+   * (`idea.capture` — that id is the run's task), then the same researcher
+   * run starts, both through the command path (DG-2 — the chat issues
+   * commands, never its own storage). Without the daemon the idea is still
+   * saved and the notice says honestly where the conversation would resume.
+   */
+  const startChatRun = async (text: string) => {
+    const trimmed = text.trim();
+    if (trimmed === '') return;
+    setBusy(true);
+    try {
+      const captured = await applyCommand({ type: 'idea.capture', text: trimmed });
+      if (captured === null) return;
+      const idea = captured.events.find(
+        (event): event is Extract<DomainEvent, { type: 'idea.captured' }> =>
+          event.type === 'idea.captured',
+      )?.idea;
+      if (idea === undefined) return;
+      if (!sqliteMode || daemonProjectId === null) {
+        setNotice({
+          tone: 'info',
+          text: '아이디어로 저장했습니다 — 대화는 이 컴퓨터 저장소(SQLite 데몬) 연결 시 이어집니다.',
+        });
+        return;
+      }
+      await startAgentRun(idea.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** AC-9's cancel: one command — the daemon's abort lands in the same tick. */
   const cancelRun = (runId: string) => {
     void applyCommand({ type: 'run.cancel', runId });
@@ -205,6 +237,7 @@ export function useAgentRuns({
     runModelLabel,
     watchRun,
     startAgentRun,
+    startChatRun,
     cancelRun,
     resumeRun,
     answerRun,
