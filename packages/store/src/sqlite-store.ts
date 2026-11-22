@@ -469,12 +469,12 @@ export class SqliteStore implements StorePort {
     // proposal lookup, not by whichever adopted row the array happens to
     // hold first for this doc.
     const adoptPayload = JSON.parse(adopt.payload) as { proposalId?: string };
+    const adoptedById =
+      adoptPayload.proposalId === undefined
+        ? undefined
+        : project.proposals.find((candidate) => candidate.id === adoptPayload.proposalId);
     const adopted =
-      (adoptPayload.proposalId === undefined
-        ? null
-        : (project.proposals.find(
-            (candidate) => candidate.id === adoptPayload.proposalId,
-          ) ?? null)) ??
+      adoptedById ??
       project.proposals
         .filter(
           (candidate) => candidate.docId === snapshot.docId && candidate.state === 'adopted',
