@@ -62,6 +62,33 @@ export function resolveUiMode(hasStoredProject: boolean): UiMode {
   return mode;
 }
 
+/**
+ * DEV-100 — cross-tab sync. A mode flip in another tab only reaches this tab
+ * through the `storage` event (fired for other documents, never the writer),
+ * so subscribe to it; `key === null` is a `localStorage.clear()` elsewhere.
+ * Window `focus` re-reads too, for shells that do not deliver `storage`
+ * across windows. A missing/invalid saved mode is ignored: the tab keeps its
+ * current mode rather than re-detecting mid-session.
+ */
+export function subscribeUiMode(
+  onChange: (mode: UiMode) => void,
+  target: Pick<Window, 'addEventListener' | 'removeEventListener'> = window,
+): () => void {
+  const reread = () => {
+    const mode = loadUiMode();
+    if (mode !== null) onChange(mode);
+  };
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SETTINGS_KEY || event.key === null) reread();
+  };
+  target.addEventListener('storage', onStorage);
+  target.addEventListener('focus', reread);
+  return () => {
+    target.removeEventListener('storage', onStorage);
+    target.removeEventListener('focus', reread);
+  };
+}
+
 /** Convenience for the hook: detect + resolve in one call. */
 export function bootUiMode(): UiMode {
   return resolveUiMode(loadProject() !== null);

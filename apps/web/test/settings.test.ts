@@ -6,6 +6,7 @@ import {
   resolveUiMode,
   saveUiMode,
   SETTINGS_KEY,
+  subscribeUiMode,
 } from '../src/model/settings';
 import { loadProject, saveProject } from '../src/model/storage';
 
@@ -126,5 +127,76 @@ describe('saveUiMode — 로컬 설정 입출력', () => {
     expect(loadUiMode()).toBe('pro');
     saveUiMode('easy');
     expect(loadUiMode()).toBe('easy');
+  });
+});
+
+/**
+ * DEV-100 — tabs must not diverge. Another tab's write reaches this one only
+ * as a `storage` event (node has no StorageEvent, so a plain Event carrying
+ * `key` stands in); window focus re-reads as a fallback.
+ */
+function storageEvent(key: string | null): Event {
+  return Object.assign(new Event('storage'), { key });
+}
+
+function otherTabWritesMode(mode: string): void {
+  store.setItem(SETTINGS_KEY, JSON.stringify({ ...loadLocalSettings(), mode }));
+}
+
+describe('subscribeUiMode — 다중 탭 모드 동기화(DEV-100)', () => {
+  it('다른 탭의 settings 쓰기(storage 이벤트) → 새 모드로 갱신', () => {
+    saveUiMode('easy');
+    const target = new EventTarget();
+    const seen: string[] = [];
+    subscribeUiMode((m) => seen.push(m), target);
+
+    otherTabWritesMode('pro');
+    target.dispatchEvent(storageEvent(SETTINGS_KEY));
+    expect(seen).toEqual(['pro']);
+
+    otherTabWritesMode('easy');
+    target.dispatchEvent(storageEvent(SETTINGS_KEY));
+    expect(seen).toEqual(['pro', 'easy']);
+  });
+
+  it('다른 키의 storage 이벤트는 무시', () => {
+    const target = new EventTarget();
+    const seen: string[] = [];
+    subscribeUiMode((m) => seen.push(m), target);
+    otherTabWritesMode('pro');
+    target.dispatchEvent(storageEvent('spec-studio.project.v1'));
+    expect(seen).toEqual([]);
+  });
+
+  it('clear(key null) 후 저장값 없음/깨진 값 → 현재 모드 유지(콜백 없음)', () => {
+    const target = new EventTarget();
+    const seen: string[] = [];
+    subscribeUiMode((m) => seen.push(m), target);
+    store.clear();
+    target.dispatchEvent(storageEvent(null));
+    store.setItem(SETTINGS_KEY, '{broken');
+    target.dispatchEvent(storageEvent(SETTINGS_KEY));
+    expect(seen).toEqual([]);
+  });
+
+  it('포커스 복귀 시 재판정(storage 미전달 환경 대비)', () => {
+    saveUiMode('easy');
+    const target = new EventTarget();
+    const seen: string[] = [];
+    subscribeUiMode((m) => seen.push(m), target);
+    otherTabWritesMode('pro');
+    target.dispatchEvent(new Event('focus'));
+    expect(seen).toEqual(['pro']);
+  });
+
+  it('구독 해제 후에는 반응하지 않는다', () => {
+    const target = new EventTarget();
+    const seen: string[] = [];
+    const unsubscribe = subscribeUiMode((m) => seen.push(m), target);
+    unsubscribe();
+    otherTabWritesMode('pro');
+    target.dispatchEvent(storageEvent(SETTINGS_KEY));
+    target.dispatchEvent(new Event('focus'));
+    expect(seen).toEqual([]);
   });
 });

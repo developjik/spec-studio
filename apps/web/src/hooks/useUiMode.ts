@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { bootUiMode, saveUiMode, type UiMode } from '../model/settings';
+import { useEffect, useState } from 'react';
+import { bootUiMode, saveUiMode, subscribeUiMode, type UiMode } from '../model/settings';
 
 /**
  * 모드 영역 (E4 F1): the easy/pro preference, persisted as a local setting —
@@ -8,6 +8,9 @@ import { bootUiMode, saveUiMode, type UiMode } from '../model/settings';
  */
 export function useUiMode() {
   const [mode, setMode] = useState<UiMode>(() => bootUiMode());
+
+  // DEV-100: follow mode flips made in other tabs of the same install.
+  useEffect(() => subscribeUiMode(setMode), []);
 
   const switchMode = (next: UiMode) => {
     if (next === mode) return;
