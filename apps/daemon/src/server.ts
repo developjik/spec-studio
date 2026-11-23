@@ -786,7 +786,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       const closing = new Promise<void>((resolve) => server.close(() => resolve()));
       // DEV-101: an open tab holds its op stream — an active request that
       // server.close() would wait on past any SIGTERM grace. End the streams;
-      // the client's EventSource sees the daemon leave and reconnects later.
+      // the client's reader sees end-of-stream, as on any daemon exit.
       for (const stream of streams) stream.end();
       server.closeIdleConnections();
       await closing;
