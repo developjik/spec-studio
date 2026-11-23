@@ -42,6 +42,8 @@ export const EventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('evidence.updated'), evidence: EvidenceSchema }),
   z.object({ type: z.literal('evidence.dismissed'), evidence: EvidenceSchema }),
 
+  z.object({ type: z.literal('project.renamed'), projectId: z.string().min(1), name: z.string().min(1) }),
+
   z.object({ type: z.literal('doc.attached'), doc: DocSchema }),
   z.object({ type: z.literal('doc.created'), doc: DocSchema }),
   z.object({ type: z.literal('doc.renamed'), docId: DocIdSchema, title: z.string().min(1) }),

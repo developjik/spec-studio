@@ -131,6 +131,28 @@ describe('round trip through real SQLite', () => {
     expect(project?.pins[2]?.title).toBe('재고 없음 안내');
   });
 
+  it('keeps a renamed project name in the project row across a reopen', async () => {
+    const first = open();
+    const projectId = await seed(first);
+    const outcome = await first.execute(projectId, { type: 'project.rename', name: '  결제 화면  ' });
+    expect(outcome.events).toEqual([{ type: 'project.renamed', projectId, name: '결제 화면' }]);
+    await expect(first.execute(projectId, { type: 'project.rename', name: ' ' })).rejects.toMatchObject({
+      code: 'invalid_input',
+    });
+    const op = first.database
+      .prepare("SELECT target, before, after FROM op_log WHERE kind = 'project.rename'")
+      .all() as Array<{ target: string; before: string; after: string }>;
+    expect(op).toHaveLength(1);
+    expect(op[0]).toMatchObject({ target: projectId });
+    expect(JSON.parse(op[0]!.before)).toEqual({ name: '주문 상세 기획' });
+    expect(JSON.parse(op[0]!.after)).toEqual({ name: '결제 화면' });
+    await first.close();
+    stores.length = 0;
+
+    const second = open();
+    expect((await second.readProject(projectId))?.name).toBe('결제 화면');
+  });
+
   it('lists the projects the file holds', async () => {
     const store = open();
     expect(await store.listProjectIds()).toEqual([]);

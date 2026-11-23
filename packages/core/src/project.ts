@@ -961,6 +961,16 @@ export function execute(
       };
     }
 
+    // ── project ────────────────────────────────────────────────────────
+    case 'project.rename': {
+      const name = command.name.trim();
+      if (name === '') throw new DomainError('invalid_input', '프로젝트에는 이름이 필요합니다');
+      return {
+        project: { ...project, name, updatedAt: ctx.at },
+        events: [{ type: 'project.renamed', projectId: project.id, name }],
+      };
+    }
+
     // ── handoff package (F4) ───────────────────────────────────────────
     case 'project.package.export':
       // Writing files changes no project state; the event is the record.

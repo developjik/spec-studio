@@ -696,3 +696,29 @@ describe('daemon session token (desktop shell)', () => {
     expect(preflight.headers.get('access-control-allow-headers')).toContain('x-daemon-token');
   });
 });
+
+describe('project.rename (#5)', () => {
+  it('renames through the command path, survives a restart and refuses a blank name', async () => {
+    const created = await api<Envelope>(daemon, '/api/projects', { body: { name: '새 화면' } });
+    const projectId = created.body.project?.id as string;
+
+    const renamed = await api<Envelope & { events?: Array<{ type: string }> }>(
+      daemon,
+      `/api/projects/${projectId}/commands`,
+      { body: { command: { type: 'project.rename', name: '  주문 상세 기획  ' } } },
+    );
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.events?.map((event) => event.type)).toEqual(['project.renamed']);
+
+    const blank = await api<Envelope>(daemon, `/api/projects/${projectId}/commands`, {
+      body: { command: { type: 'project.rename', name: '   ' } },
+    });
+    expect(blank.status).toBe(400);
+    expect(blank.body.error?.code).toBe('invalid_input');
+
+    await daemon.close();
+    const reopened = await boot();
+    const read = await api<{ project?: { name: string } }>(reopened, `/api/projects/${projectId}`);
+    expect(read.body.project?.name).toBe('주문 상세 기획');
+  });
+});

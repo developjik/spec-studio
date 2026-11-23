@@ -348,6 +348,17 @@ export default function App() {
     }
   };
 
+  /** Same `applyCommand` path in both modes; core trims and rejects an empty name. */
+  const renameProject = async () => {
+    if (project === null) return;
+    const name = window.prompt('프로젝트 이름', project.name);
+    if (name === null || name.trim() === project.name) return;
+    const result = await applyCommand({ type: 'project.rename', name });
+    if (result !== null) {
+      setNotice({ tone: 'info', text: `프로젝트 이름을 '${result.project.name}'(으)로 바꿨습니다.` });
+    }
+  };
+
   const attachScreen = async (screen: Screen) => {
     const at = nowIso();
     if (project === null) {
@@ -1174,6 +1185,8 @@ export default function App() {
         onImport={() => importInput.current?.click()}
         onBackup={() => void backupProject()}
         onReset={() => void reset()}
+        projectName={project?.name ?? null}
+        onRenameProject={() => void renameProject()}
         onOpenOutputs={() => setOutputOpen(true)}
         onOpenPublish={() => setPublishOpen(true)}
         onOpenAi={openAiPanel}

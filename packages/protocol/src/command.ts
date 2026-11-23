@@ -235,6 +235,13 @@ export const CommandSchema = z.discriminatedUnion('type', [
     proposalId: z.string().min(1),
   }),
 
+  // ── project ──────────────────────────────────────────────────────────
+  /** Trim and emptiness are core's call, so both modes answer `invalid_input`. */
+  z.object({
+    type: z.literal('project.rename'),
+    name: z.string().max(120),
+  }),
+
   // ── handoff package (F4) ─────────────────────────────────────────────
   z.object({
     type: z.literal('project.package.export'),
@@ -249,6 +256,7 @@ export type PinUpdateCommand = Extract<Command, { type: 'pin.update' }>;
 export type PinDeleteCommand = Extract<Command, { type: 'pin.delete' }>;
 export type ScreenAttachCommand = Extract<Command, { type: 'screen.attach' }>;
 export type ScreenUpdateCommand = Extract<Command, { type: 'screen.update' }>;
+export type ProjectRenameCommand = Extract<Command, { type: 'project.rename' }>;
 export type DocCreateCommand = Extract<Command, { type: 'doc.create' }>;
 export type DocUpdateCommand = Extract<Command, { type: 'doc.update' }>;
 export type DocDeleteCommand = Extract<Command, { type: 'doc.delete' }>;
