@@ -17,7 +17,6 @@ import type {
   BlockType,
   Command,
   DomainEvent,
-  Doc,
   DocKind,
   Idea,
   Pin,
@@ -61,6 +60,7 @@ import {
   saveProject,
 } from './model/storage';
 import { imageFromFile } from './model/image';
+import { activeDocOf, bootProjectOf } from './model/boot';
 import {
   DaemonClient,
   DaemonError,
@@ -112,19 +112,6 @@ const EMPTY_MATURITY: Maturity = {
 /** What a command application returns; `opSeq` is the store's undo handle. */
 type ApplyResult = ExecutionResult & { opSeq?: number };
 
-/**
- * Which registry doc the panel shows: the URL's pick when it still exists,
- * else the first spec, else whatever exists. The URL is the 정본 of the choice,
- * so a dangling id simply falls through to the same rule a boot follows.
- */
-function activeDocOf(docs: readonly Doc[], wanted: string | null): Doc | null {
-  if (wanted !== null) {
-    const named = docs.find((doc) => doc.id === wanted);
-    if (named !== undefined) return named;
-  }
-  return docs.find((doc) => doc.kind === 'spec') ?? docs[0] ?? null;
-}
-
 export default function App() {
   const client = useRef(new DaemonClient()).current;
   const [project, setProject] = useState<Project | null>(() => loadProject());
@@ -144,6 +131,10 @@ export default function App() {
   const [activeDocId, setActiveDocId] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get('doc'),
   );
+  /** The doc the URL named at load — the boot reopens the project that owns it. */
+  const bootDocId = useRef(activeDocId);
+  /** Whether the boot has decided which project the screen holds. */
+  const [bootSettled, setBootSettled] = useState(false);
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [revertable, setRevertable] = useState<RevertableView | null>(null);
   const [aiCardSource, setAiCardSource] = useState<{
@@ -194,6 +185,7 @@ export default function App() {
     let alive = true;
     if (!daemonProbeAllowed()) {
       setDaemonStatus('offline');
+      setBootSettled(true);
       return () => {
         alive = false;
       };
@@ -203,14 +195,15 @@ export default function App() {
       if (!alive) return;
       if (!ok) {
         setDaemonStatus('offline');
+        setBootSettled(true);
         return;
       }
       setDaemonStatus('connected');
       try {
         const projects = await client.listProjects();
         if (!alive) return;
-        // The most recently touched project is the one to reopen.
-        const first = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+        // The URL's doc picks its owning project; else the most recently touched.
+        const first = bootProjectOf(projects, bootDocId.current);
         if (first === undefined) {
           setDaemonProjectId(null);
           setProject(null);
@@ -238,6 +231,8 @@ export default function App() {
               ? error.message
               : '데몬에서 프로젝트를 읽지 못해 브라우저 모드로 전환했습니다.',
         });
+      } finally {
+        if (alive) setBootSettled(true);
       }
     })();
     return () => {
@@ -670,6 +665,9 @@ export default function App() {
 
   /** The URL names the doc on screen, so a reload — or a shared link — reopens it. */
   useEffect(() => {
+    // Until the boot settles, the screen is not yet the project the URL points
+    // into; rewriting now would erase the deep link (and its history entry).
+    if (!bootSettled) return;
     const url = new URL(window.location.href);
     if (doc === null) {
       if (!url.searchParams.has('doc')) return;
@@ -679,7 +677,7 @@ export default function App() {
       url.searchParams.set('doc', doc.id);
     }
     window.history.replaceState(null, '', url);
-  }, [doc]);
+  }, [doc, bootSettled]);
 
   const createDoc = (title: string, kind: DocKind) => {
     void runDoc({ type: 'doc.create', title, kind }, (result) => {
