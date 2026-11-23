@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react';
 import type { Screen } from '@spec-studio/protocol';
 import type { Maturity } from '@spec-studio/core';
-import type { DaemonStatus } from '../model/daemon';
+import type { DaemonProjectSummary, DaemonStatus } from '../model/daemon';
+import { switcherLabel } from '../model/projects';
+
+export type SwitcherProject = Pick<DaemonProjectSummary, 'id' | 'name' | 'screenTitle'>;
 
 export type StudioView = 'studio' | 'graph';
 
 interface TopBarProps {
   screen: Screen | null;
   daemonStatus: DaemonStatus;
+  /** Daemon mode only; browser mode passes none and the switcher stays hidden. */
+  projects: SwitcherProject[];
+  currentProjectId: string | null;
+  projectSwitchDisabled: boolean;
+  onSwitchProject: (projectId: string) => void;
+  onRefreshProjects: () => void;
   view: StudioView;
   maturity: Maturity;
   onView: (view: StudioView) => void;
@@ -62,6 +71,51 @@ function DaemonBadge({ status }: { status: DaemonStatus }) {
       <span className="daemon-dot" aria-hidden="true" />
       {DAEMON_LABEL[status]}
     </span>
+  );
+}
+
+/** One DB, many projects: the daemon's list, opened in place. */
+function ProjectSwitcher({
+  projects,
+  currentProjectId,
+  disabled,
+  onSwitch,
+  onRefresh,
+}: {
+  projects: SwitcherProject[];
+  currentProjectId: string | null;
+  disabled: boolean;
+  onSwitch: (projectId: string) => void;
+  onRefresh: () => void;
+}) {
+  const current = projects.find((project) => project.id === currentProjectId);
+  return (
+    <label className="project-switch" title="같은 SQLite DB의 다른 프로젝트를 엽니다">
+      <span className="project-switch-label">프로젝트</span>
+      <select
+        className="project-switch-select"
+        value={current?.id ?? ''}
+        disabled={disabled}
+        onFocus={onRefresh}
+        onChange={(event) => {
+          if (event.target.value !== '') onSwitch(event.target.value);
+        }}
+        aria-label="프로젝트 전환"
+        data-testid="project-switcher"
+        data-project-id={current?.id ?? ''}
+      >
+        {current === undefined && (
+          <option value="" disabled>
+            프로젝트 선택…
+          </option>
+        )}
+        {projects.map((project) => (
+          <option key={project.id} value={project.id} data-testid={`project-option-${project.id}`}>
+            {switcherLabel(project)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -144,6 +198,11 @@ function MaturityBadge({ maturity }: { maturity: Maturity }) {
 export function TopBar({
   screen,
   daemonStatus,
+  projects,
+  currentProjectId,
+  projectSwitchDisabled,
+  onSwitchProject,
+  onRefreshProjects,
   view,
   maturity,
   onView,
@@ -165,6 +224,16 @@ export function TopBar({
       </div>
 
       <DaemonBadge status={daemonStatus} />
+
+      {daemonStatus === 'connected' && projects.length > 0 && (
+        <ProjectSwitcher
+          projects={projects}
+          currentProjectId={currentProjectId}
+          disabled={projectSwitchDisabled}
+          onSwitch={onSwitchProject}
+          onRefresh={onRefreshProjects}
+        />
+      )}
 
       {screen !== null && (
         <>

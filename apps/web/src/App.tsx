@@ -57,11 +57,13 @@ import {
   saveProject,
 } from './model/storage';
 import { imageFromFile } from './model/image';
+import { projectsByRecent, windowTitle } from './model/projects';
 import {
   DaemonClient,
   DaemonError,
   daemonProbeAllowed,
   type AiStatusView,
+  type DaemonProjectSummary,
   type DaemonStatus,
   type PublishRecordView,
   type RevertableView,
@@ -126,6 +128,8 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(() => loadProject());
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus>('checking');
   const [daemonProjectId, setDaemonProjectId] = useState<string | null>(null);
+  /** Every project in the daemon DB — the switcher's rows. Daemon mode only. */
+  const [daemonProjects, setDaemonProjects] = useState<DaemonProjectSummary[]>([]);
   const [publishes, setPublishes] = useState<PublishRecordView[]>([]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [filter, setFilter] = useState<PinFilter>('all');
@@ -193,8 +197,9 @@ export default function App() {
       try {
         const projects = await client.listProjects();
         if (!alive) return;
+        setDaemonProjects(projects);
         // The most recently touched project is the one to reopen.
-        const first = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+        const first = projectsByRecent(projects)[0];
         if (first === undefined) {
           setDaemonProjectId(null);
           setProject(null);
@@ -252,10 +257,23 @@ export default function App() {
   }, [notice]);
 
   useEffect(() => {
-    document.title = project?.screen
-      ? `${project.screen.title} · spec-studio`
-      : 'spec-studio — 화면 한 장으로 시작하는 기획';
+    document.title = windowTitle(project);
   }, [project]);
+
+  /** A new current project (create · import · switch) can be a new switcher row. */
+  useEffect(() => {
+    if (daemonStatus !== 'connected' || daemonProjectId === null) return;
+    let alive = true;
+    client
+      .listProjects()
+      .then((projects) => {
+        if (alive) setDaemonProjects(projects);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [client, daemonStatus, daemonProjectId]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -783,6 +801,51 @@ export default function App() {
     }
   };
 
+  const refreshDaemonProjects = () => {
+    if (daemonStatus !== 'connected') return;
+    void client
+      .listProjects()
+      .then((projects) => setDaemonProjects(projects))
+      .catch(() => undefined);
+  };
+
+  /**
+   * Opens another project of the same DB exactly as the connect-time boot
+   * does, and drops every selection that belonged to the one on screen.
+   */
+  const switchProject = async (projectId: string) => {
+    if (daemonStatus !== 'connected' || projectId === daemonProjectId) return;
+    setBusy(true);
+    try {
+      const detail = await client.readProject(projectId);
+      setDaemonProjectId(detail.project.id);
+      setProject(normalizeProject(detail.project));
+      setPublishes(detail.records);
+      setRevertable(detail.revert);
+      setSelectedPinId(null);
+      setDraftAnchor(null);
+      setFilter('all');
+      setGateError(null);
+      setOutputOpen(false);
+      setPublishOpen(false);
+      setDocMode('direct');
+      setActiveDocId(null);
+      setFocusBlockId(null);
+      setSelectedGraphId(null);
+      setAiCardSource(null);
+      setAiResult(null);
+      setAiSource(null);
+      setNotice({ tone: 'info', text: `프로젝트 "${detail.project.name}"을(를) 열었습니다.` });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof DaemonError ? error.message : '프로젝트를 열지 못했습니다.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reload = async () => {
     if (daemonProjectId === null) return;
     try {
@@ -1160,6 +1223,29 @@ export default function App() {
             title: node.title,
             ungrounded: ungroundedIds.has(node.id),
           }));
+  /** The switcher's rows; the open project's row reads from live state, not the last list. */
+  const switcherProjects =
+    daemonStatus !== 'connected'
+      ? []
+      : projectsByRecent(
+          project !== null &&
+            daemonProjectId !== null &&
+            !daemonProjects.some((summary) => summary.id === daemonProjectId)
+            ? [
+                ...daemonProjects,
+                {
+                  id: daemonProjectId,
+                  name: project.name,
+                  updatedAt: project.updatedAt,
+                  screenTitle: project.screen?.title ?? null,
+                },
+              ]
+            : daemonProjects,
+        ).map((summary) =>
+          summary.id === daemonProjectId && project !== null
+            ? { id: summary.id, name: project.name, screenTitle: project.screen?.title ?? null }
+            : { id: summary.id, name: summary.name, screenTitle: summary.screenTitle },
+        );
 
 
   return (
@@ -1167,6 +1253,11 @@ export default function App() {
       <TopBar
         screen={screen}
         daemonStatus={daemonStatus}
+        projects={switcherProjects}
+        currentProjectId={daemonProjectId}
+        projectSwitchDisabled={busy}
+        onSwitchProject={(projectId) => void switchProject(projectId)}
+        onRefreshProjects={refreshDaemonProjects}
         view={view}
         maturity={maturity}
         onView={setView}
