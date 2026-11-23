@@ -256,6 +256,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     mkdirSync(dirname(options.dbPath), { recursive: true });
   }
   const store = options.store ?? openSqliteStore({ file: options.dbPath, actor: 'person:owner' });
+  /** Open SSE responses — close() ends them, or server.close() waits on them forever. */
+  const streams = new Set<ServerResponse>();
   const env = options.env ?? process.env;
   const keychain = options.keychain === undefined ? createIpcKeychainPort() : options.keychain;
   // E3 F1 (AC-2): a daemon that comes back marks every run that was live
@@ -514,6 +516,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       res.setHeader('cache-control', 'no-cache');
       res.setHeader('connection', 'keep-alive');
       res.flushHeaders();
+      streams.add(res);
       const emit = (name: string, data: unknown) => {
         if (!res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
       };
@@ -527,6 +530,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }, 15_000);
       heartbeat.unref?.();
       res.on('close', () => {
+        streams.delete(res);
         unsubscribe();
         clearInterval(heartbeat);
       });
@@ -565,6 +569,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       res.setHeader('cache-control', 'no-cache');
       res.setHeader('connection', 'keep-alive');
       res.flushHeaders();
+      streams.add(res);
       const emit = (name: string, data: unknown) => {
         if (!res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
       };
@@ -603,6 +608,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }, 15_000);
       heartbeat.unref?.();
       res.on('close', () => {
+        streams.delete(res);
         unsubscribe();
         clearInterval(heartbeat);
       });
@@ -777,7 +783,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     async close() {
       if (closedOnce) return;
       closedOnce = true;
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      const closing = new Promise<void>((resolve) => server.close(() => resolve()));
+      // DEV-101: an open tab holds its op stream — an active request that
+      // server.close() would wait on past any SIGTERM grace. End the streams;
+      // the client's reader sees end-of-stream, as on any daemon exit.
+      for (const stream of streams) stream.end();
+      server.closeIdleConnections();
+      await closing;
       // Major-1 (검증 W3): drain the agent's in-flight loops before the
       // store closes under them — a loop that outlives the grace is
       // harmless, never an unhandled rejection at shutdown.

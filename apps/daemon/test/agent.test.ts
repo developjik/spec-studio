@@ -925,6 +925,35 @@ describe('daemon shutdown under a live loop (Major-1)', () => {
     expect(rejections).toHaveLength(0);
   });
 
+  it('DEV-101: close() ends open op and run streams instead of waiting on them', async () => {
+    const model = unwakingModel();
+    const daemon = await bootShutdown(model, 40);
+    const { projectId, runId } = await startARun(daemon);
+    await waitRun(daemon, projectId, runId, (run) => run.state === 'running');
+
+    // An open tab: its project op stream and a live run's progress stream.
+    const headers = { origin: 'http://localhost:5173' };
+    const opStream = await fetch(`${daemon.url}/api/projects/${projectId}/events`, { headers });
+    const runStream = await fetch(`${daemon.url}/api/projects/${projectId}/runs/${runId}/events`, {
+      headers,
+    });
+    expect(opStream.status).toBe(200);
+    expect(runStream.status).toBe(200);
+
+    const closed = await Promise.race([
+      daemon.close().then(() => 'closed' as const),
+      new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), 3000)),
+    ]);
+    model.wake();
+    if (closed === 'stuck') {
+      await opStream.body?.cancel();
+      await runStream.body?.cancel();
+    }
+    expect(closed).toBe('closed');
+    await expect(opStream.text()).resolves.toBeTypeOf('string');
+    await expect(runStream.text()).resolves.toContain('event: snapshot');
+  });
+
   it('a run aborted at close is left for the boot marking and still resumes', async () => {
     const daemonA = await bootShutdown(abortableModel, 2000);
     const { projectId, runId } = await startARun(daemonA);
