@@ -945,6 +945,10 @@ describe('daemon shutdown under a live loop (Major-1)', () => {
       new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), 3000)),
     ]);
     model.wake();
+    if (closed === 'stuck') {
+      await opStream.body?.cancel();
+      await runStream.body?.cancel();
+    }
     expect(closed).toBe('closed');
     await expect(opStream.text()).resolves.toBeTypeOf('string');
     await expect(runStream.text()).resolves.toContain('event: snapshot');
