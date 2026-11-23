@@ -153,6 +153,7 @@ const OP_KIND: Readonly<Record<string, string>> = {
   'graph.proposal.create': 'graph.proposal.create',
   'graph.proposal.adopt': 'graph.proposal.adopt',
   'graph.proposal.reject': 'graph.proposal.reject',
+  'project.rename': 'project.rename',
   'project.package.export': 'package.export',
 };
 
@@ -1161,6 +1162,18 @@ export class SqliteStore implements StorePort {
         before: nodeId === null ? null : { node: before.graph.nodes.find((node) => node.id === nodeId) ?? null },
         after: nodeId === null ? null : { node: after.graph.nodes.find((node) => node.id === nodeId) ?? null },
         payload: { events: events.map((event) => event.type), projectId: before.id },
+      });
+    }
+
+    if (command.type === 'project.rename') {
+      return this.#insertLog({
+        at,
+        actor,
+        kind,
+        target: before.id,
+        before: { name: before.name },
+        after: { name: after.name },
+        payload: { events: events.map((event) => event.type) },
       });
     }
 

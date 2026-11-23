@@ -15,6 +15,9 @@ interface TopBarProps {
   onImport: () => void;
   onBackup: () => void;
   onReset: () => void;
+  /** The project's own name, which no screen title overrides once renamed. */
+  projectName: string | null;
+  onRenameProject: () => void;
   onOpenOutputs: () => void;
   onOpenPublish: () => void;
   onOpenAi: () => void;
@@ -151,6 +154,8 @@ export function TopBar({
   onImport,
   onBackup,
   onReset,
+  projectName,
+  onRenameProject,
   onOpenOutputs,
   onOpenPublish,
   onOpenAi,
@@ -265,6 +270,15 @@ export function TopBar({
               </>
             ) : null}
             <span className="topbar-divider" aria-hidden="true" />
+            <button
+              type="button"
+              className="btn"
+              onClick={onRenameProject}
+              title={projectName === null ? '프로젝트 이름 변경' : `프로젝트: ${projectName}`}
+              data-testid="rename-project"
+            >
+              이름 변경
+            </button>
             <button type="button" className="btn" onClick={onExport} data-testid="export-project">
               JSON 내보내기
             </button>
