@@ -164,7 +164,9 @@ def main() -> int:
             daemon.terminate()
             daemon.wait(timeout=15)
             daemon = start_daemon()
-            page.reload(wait_until="networkidle")
+            # networkidle never settles beside the project op SSE stream (DEV-101)
+            # — w_e4 pattern: domcontentloaded, then wait for the daemon badge.
+            page.reload(wait_until="domcontentloaded")
             page.wait_for_selector('[data-testid=daemon-status][data-status=connected]', timeout=20000)
             page.wait_for_selector("[data-testid=pin-3]", timeout=10000)
             restored = page.locator("[data-testid=figma-link]").inner_text()
@@ -254,7 +256,7 @@ def main() -> int:
             )
             check("스펙 탭으로 전환", page.locator("[data-testid=doc-block-1]").count() == 0)
 
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
             page.wait_for_selector("[data-testid=daemon-status][data-status=connected]", timeout=20000)
             page.wait_for_selector(
                 "[data-testid=doc-tab][data-kind=spec][aria-selected=true]", timeout=8000
