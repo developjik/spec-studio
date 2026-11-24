@@ -127,7 +127,7 @@ export function CanvasStage({
             <div className="placeholder-card">
               <span className="placeholder-eyebrow">Figma frame</span>
               <span className="placeholder-title">{screen.title}</span>
-              <span className="placeholder-url">{screen.ref.value}</span>
+              <span className="placeholder-url">{screen.figmaUrl ?? screen.ref.value}</span>
               <p className="placeholder-note">
                 임베드는 아직 불러오지 않습니다. 이 영역을 클릭해 핀을 찍으세요.
               </p>
