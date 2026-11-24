@@ -118,7 +118,7 @@ interface Envelope {
   bundle?: {
     format: string;
     version: number;
-    project: { id: string; graph: { nodes: Array<{ id: string }> } };
+    project: { id: string; screen: {id:string}|null; graph: { nodes: Array<{ id: string }> } };
   };
   backup?: { path: string; bytes: number; at: string; projectId: string };
   opSeq?: number;
@@ -732,6 +732,8 @@ describe('multi-screen publish isolation',()=>{
     const command=async(command:unknown)=>api<Envelope>(daemon,`/api/projects/${id}/commands`,{body:{command}});
     const second={...SCREEN,id:`S_${'e'.repeat(12)}`,code:'SCR-111',title:'다른 화면'};
     await command({type:'screen.add',screen:SCREEN});
+    const single=await api<Envelope>(daemon,`/api/projects/${id}/export`);
+    expect(single.body.bundle?.version).toBe(1);expect(single.body.bundle?.project.screen?.id).toBe(SCREEN.id);
     await command({type:'pin.create',screenId:SCREEN.id,pinType:'function',title:'첫 화면 전용',body:'',anchor:{x:.1,y:.2}});
     await command({type:'screen.add',screen:second});
     const exported=await api<Envelope>(daemon,`/api/projects/${id}/export`);
