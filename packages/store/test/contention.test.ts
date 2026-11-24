@@ -1,3 +1,4 @@
+import { proposalQueue, proposalConflicts } from '@spec-studio/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,7 +160,7 @@ describe('proposals across docs (MJ-1)', () => {
     expect(rejectedA.project.proposals.find((p) => p.docId === a)?.state).toBe('rejected');
   });
 
-  it('retires a doc’s open card when a newer one lands, and reload shows only the latest', async () => {
+  it('queues both open cards when a newer one lands and keeps both after reload', async () => {
     const store = open();
     const { projectId, a, blockA } = await contended(store);
 
@@ -178,7 +179,7 @@ describe('proposals across docs (MJ-1)', () => {
     const forA = second.project.proposals.filter((p) => p.docId === a);
     expect(forA).toHaveLength(2);
     expect(forA.at(-1)?.state).toBe('open');
-    expect(forA[0]?.state).toBe('rejected');
+    expect(forA[0]?.state).toBe('open');
 
     // the retirement is an event, like any refusal
     const events = store.database
@@ -186,7 +187,6 @@ describe('proposals across docs (MJ-1)', () => {
       .all() as Array<{ type: string }>;
     expect(events.map((event) => event.type)).toEqual([
       'proposal.created',
-      'proposal.rejected',
       'proposal.created',
     ]);
 
@@ -194,12 +194,53 @@ describe('proposals across docs (MJ-1)', () => {
     const row = store.database
       .prepare('SELECT state, decided_at FROM proposal WHERE id = ?')
       .get(firstCard?.id as string) as { state: string; decided_at: string };
-    expect(row.state).toBe('rejected');
-    expect(row.decided_at).not.toBeNull();
+    expect(row.state).toBe('open');
+    expect(row.decided_at).toBeNull();
 
     const reloaded = (await store.readProject(projectId)) as Project;
-    expect(reloaded.proposals).toHaveLength(1);
-    expect(reloaded.proposals[0]?.id).toBe(forA.at(-1)?.id);
+    expect(reloaded.proposals).toHaveLength(2);
+    expect(reloaded.proposals.map(p => p.id)).toEqual(forA.map(p => p.id));
+  });
+
+  it('keeps three independent cards, persists defer order, and attributes revert with siblings open', async () => {
+    const store = open();
+    const { projectId, a, blockA } = await contended(store);
+    const cards: string[] = [];
+    for (const text of ['첫째 큐', '둘째 큐', '셋째 큐']) {
+      const result = await store.execute(projectId, { type: 'proposal.create', docId: a, draft: draftFor(blockA, text), source: 'llm' });
+      cards.push(result.project.proposals.at(-1)!.id);
+    }
+    let project = (await store.readProject(projectId))!;
+    expect(proposalQueue(project.proposals, a).map(p => p.id)).toEqual(cards);
+    expect(proposalConflicts(project.proposals[0]!, project.proposals)).toEqual(cards.slice(1));
+    await store.execute(projectId, { type: 'proposal.defer', docId: a, proposalId: cards[0]! });
+    project = (await store.readProject(projectId))!;
+    expect(proposalQueue(project.proposals, a).map(p => p.id)).toEqual([cards[1], cards[2], cards[0]]);
+    expect(project.proposals[0]?.source).toBe('llm');
+    await store.execute(projectId, { type: 'proposal.reject', docId: a, proposalId: cards[1]! });
+    const adopted = await store.execute(projectId, { type: 'proposal.adopt', docId: a, proposalId: cards[2]! });
+    expect(store.lastRevertable(projectId)?.proposalId).toBe(cards[2]);
+    await expect(store.execute(projectId, { type: 'proposal.adopt', docId: a, proposalId: cards[0]! })).rejects.toThrow(/변경/);
+    expect((await store.readProject(projectId))!.docs.find(d => d.id === a)!.blocks.find(b => b.id === blockA)!.text).toBe('셋째 큐');
+    const reverted = await store.revert(projectId, adopted.opSeq);
+    expect(reverted.project.proposals.find(p => p.id === cards[0])?.state).toBe('open');
+    expect(reverted.project.proposals.find(p => p.id === cards[2])?.state).toBe('rejected');
+    const row = store.database.prepare("SELECT payload FROM op_log WHERE kind = 'proposal.revert' ORDER BY seq DESC LIMIT 1").get() as {payload: string};
+    expect(JSON.parse(row.payload).proposalId).toBe(cards[2]);
+    // A second connection reads durable source/order, not the command's in-memory result.
+    const other = open();
+    expect(proposalQueue((await other.readProject(projectId))!.proposals, a).map(p => p.id)).toEqual([cards[0]]);
+  });
+
+  it('refuses cross-document reject and defer without changing either queue', async () => {
+    const store = open();
+    const { projectId, a, b, blockA } = await contended(store);
+    const result = await store.execute(projectId, { type: 'proposal.create', docId: a, draft: draftFor(blockA, '보존') });
+    const proposalId = result.project.proposals.at(-1)!.id;
+    for (const type of ['proposal.reject', 'proposal.defer'] as const) {
+      await expect(store.execute(projectId, { type, docId: b, proposalId })).rejects.toThrow(/다른 문서/);
+    }
+    expect((await store.readProject(projectId))!.proposals.at(-1)?.state).toBe('open');
   });
 
   it('reverts the card the op_log names, not the doc’s older adopted one', async () => {
