@@ -46,7 +46,13 @@ def run_harness(name):
             print(log_file.read_text(), end='', flush=True)
 
 
+def interrupt(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
 def main():
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGINT, interrupt)
     for name in HARNESSES:
         code = run_harness(name)
         if code:
