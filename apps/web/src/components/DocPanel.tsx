@@ -397,12 +397,12 @@ export function DocPanel(props: DocPanelProps) {
         {queue.length > 0 && <h3 className="proposal-queue-title">결정 대기 {queue.length}건</h3>}
         {queue.map((card) => {
           const conflicts = proposalConflicts(card, queue);
-          const stale = proposalIsStale(doc, card);
+          const stale = proposalIsStale(doc, card, pins);
           const cardSource = card.source ?? (props.sourceHint?.proposalId === card.id ? props.sourceHint.source : card.origin === 'doc-chat' ? 'llm' : 'rule');
           return (
           <section key={card.id} className="proposal-card" data-proposal-id={card.id} data-testid="proposal-card">
             <p className="proposal-eyebrow">
-              {card.patches.length}개 블록 · {card.origin} · {card.id}
+              {card.patches.length}개 블록 · {{ pin: '핀 변경', screen: '화면', 'doc-chat': '문서 대화' }[card.origin]} · {card.id}
               <span
                 className={`decision-source decision-source--${cardSource}`}
                 data-testid="proposal-source"
@@ -434,7 +434,7 @@ export function DocPanel(props: DocPanelProps) {
               ))}
             </ul>
             {conflicts.length > 0 && <p role="status" data-testid="proposal-conflict">충돌: 다른 제안 {conflicts.length}건이 같은 블록을 변경합니다. 채택하면 다른 제안은 다시 확인해야 합니다.</p>}
-            {stale && <p role="alert" data-testid="proposal-stale">제안 이후 문단이 변경됐습니다. 덮어쓰지 않도록 채택을 막았습니다. 새 제안을 만들어 비교하세요.</p>}
+            {stale && <p role="alert" data-testid="proposal-stale">제안 이후 문단이나 참조 핀이 변경됐습니다. 덮어쓰지 않도록 채택을 막았습니다. 새 제안을 만들어 비교하세요.</p>}
             <div className="proposal-actions">
               <button
                 type="button"
@@ -459,7 +459,7 @@ export function DocPanel(props: DocPanelProps) {
           </section>
         ); })}
 
-        {revertable !== null && revertable.op === 'proposal.adopt' && (
+        {revertable !== null && revertable.op === 'proposal.adopt' && (props.proposals ?? (ours === null ? [] : [ours])).some(p => p.id === revertable.proposalId && p.docId === doc.id && p.state === 'adopted') && (
           <div className="adopted-bar" data-testid="adopted-bar">
             <span className="adopted-text">
               채택됨 · {revertable.proposalId} · {truncate(revertable.summary, 48)}
