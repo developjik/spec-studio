@@ -191,28 +191,28 @@ export function TopBar({
       {screen !== null && (
         <>
           {uiMode === 'pro' && (
-            <div className="view-tabs" role="tablist" aria-label="표면">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === 'studio'}
-                className={`view-tab${view === 'studio' ? ' is-active' : ''}`}
-                onClick={() => onView('studio')}
-                data-testid="view-studio"
-              >
-                작업실
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === 'graph'}
-                className={`view-tab${view === 'graph' ? ' is-active' : ''}`}
-                onClick={() => onView('graph')}
-                data-testid="view-graph"
-              >
-                그래프 · RTM
-              </button>
-            </div>
+          <div className="view-tabs" role="tablist" aria-label="표면">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'studio'}
+              className={`view-tab${view === 'studio' ? ' is-active' : ''}`}
+              onClick={() => onView('studio')}
+              data-testid="view-studio"
+            >
+              작업실
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'graph'}
+              className={`view-tab${view === 'graph' ? ' is-active' : ''}`}
+              onClick={() => onView('graph')}
+              data-testid="view-graph"
+            >
+              그래프 · RTM
+            </button>
+          </div>
           )}
 
           <div className="screen-id">
