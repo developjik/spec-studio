@@ -117,7 +117,7 @@ function renderTable(table: SpecTable): string {
  * pins it stands on are named the way the screen numbers them. A block whose
  * pin facts moved is marked, so a reader knows the sentence needs a look.
  */
-function renderDocSection(doc: Doc, pins: readonly Pin[], screen: Screen): string {
+function renderDocSection(doc: Doc, pins: readonly Pin[], screen: Screen, overlay?: PublishAttachmentInfo): string {
   if (doc.blocks.length === 0) return '';
   const badges = staleBadges(doc, pins);
   const byId = new Map(pins.map((pin) => [pin.id, pin] as const));
@@ -132,7 +132,9 @@ function renderDocSection(doc: Doc, pins: readonly Pin[], screen: Screen): strin
         .join(' · ');
       const meta = refs === '' ? '' : `<br /><small>${escapeXml(refs)}</small>`;
       const mark = stale ? ' <strong>(핀 변경 · 확인 필요)</strong>' : '';
-      return `${renderRichBlock(block,screen)}${mark}${meta}`;
+      const figure=block.type==='figure'?block.data?.figure:undefined;
+      const body=figure ? (overlay&&figure.screenId===screen.id ? `<p><ac:image ac:alt="${escapeXml(figure.alt)}"><ri:attachment ri:filename="${escapeXml(overlay.fileName)}" /></ac:image></p><p>${escapeXml(figure.alt)}${figure.pinId?' · '+escapeXml(figure.pinId):''}</p>` : '<p>연결된 화면 캡처 첨부를 사용할 수 없습니다.</p>') : renderRichBlock(block,screen);
+      return `${body}${mark}${meta}`;
     })
     .join('\n');
   return `<h2>${escapeXml(doc.title)}</h2>\n${blocks}`;
@@ -204,7 +206,7 @@ export function renderPublishBody(input: PublishBodyInput): string {
     renderTable(overview.tables[0] as SpecTable),
     renderTable(overview.tables[1] as SpecTable),
     renderTable(overview.tables[2] as SpecTable),
-    input.doc === undefined || input.doc === null ? '' : renderDocSection(input.doc, input.pins, input.screen),
+    input.doc === undefined || input.doc === null ? '' : renderDocSection(input.doc, input.pins, input.screen, overlay),
     '<h2>결번</h2>',
     `<p>${escapeXml(gapText)}</p>`,
     '<h2>첨부 파일</h2>',
