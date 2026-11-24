@@ -1,0 +1,4 @@
+/* The badge already says the daemon is being checked; hide the completion-only note during that probe. */
+.daemon-badge[data-status='checking'] ~ .topbar-actions .topbar-note {
+  display: none;
+}

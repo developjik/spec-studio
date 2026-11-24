@@ -4,6 +4,7 @@ import App from './App';
 import { SubscriptionNotice } from './subscription-notice';
 import './styles.css';
 import './run-panel.css';
+import './daemon-check-status.css';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('root element is missing');
