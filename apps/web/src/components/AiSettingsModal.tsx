@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   AI_PRESETS,
   AI_PROVIDER_LABEL,
@@ -64,6 +65,14 @@ interface AiSettingsModalProps {
   onClose: () => void;
 }
 
+export function subscribeToEscapeKey(target: EventTarget, onClose: () => void) {
+  const handleKeyDown = (event: Event) => {
+    if ((event as KeyboardEvent).key === 'Escape') onClose();
+  };
+  target.addEventListener('keydown', handleKeyDown);
+  return () => target.removeEventListener('keydown', handleKeyDown);
+}
+
 export function AiSettingsModal(props: AiSettingsModalProps) {
   const { value, status, busy, result } = props;
   const local = value.presetId === 'local';
@@ -78,6 +87,8 @@ export function AiSettingsModal(props: AiSettingsModalProps) {
   // E4 F3-②: local servers the daemon's live probe could actually reach.
   const detectedServers = status?.localServers?.filter((entry) => entry.reachable) ?? [];
   const pricingUrl = preset !== undefined ? PRESET_PRICING_URL[preset.id] : undefined;
+
+  useEffect(() => subscribeToEscapeKey(window, props.onClose), [props.onClose]);
 
   const changePreset = (presetId: string) => {
     if (presetId === 'local') {
