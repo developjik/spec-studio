@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { FIGMA_URL_FORMAT_ERROR, figmaUrlInputError } from '../model/figmaUrl';
 
 interface EntryGateProps {
   error: string | null;
@@ -9,11 +10,27 @@ interface EntryGateProps {
 
 export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) {
   const [figmaUrl, setFigmaUrl] = useState('');
+  const [figmaError, setFigmaError] = useState<string | null>(null);
 
   const submitFigma = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (figmaUrl.trim() === '') return;
-    onFigma(figmaUrl.trim());
+    const submittedUrl = figmaUrl.trim();
+    if (submittedUrl === '') return;
+    setFigmaUrl('');
+    const validationError = figmaUrlInputError(submittedUrl);
+    if (validationError !== null) {
+      setFigmaError(validationError);
+      return;
+    }
+    setFigmaError(null);
+    onFigma(submittedUrl);
+  };
+
+  const handleInvalidFigma = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submittedUrl = figmaUrl.trim();
+    setFigmaUrl('');
+    setFigmaError(figmaUrlInputError(submittedUrl) ?? FIGMA_URL_FORMAT_ERROR);
   };
 
   return (
@@ -72,7 +89,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
             </label>
           </div>
 
-          <form className="entry" onSubmit={submitFigma}>
+          <form className="entry" onSubmit={submitFigma} onInvalid={handleInvalidFigma}>
             <span className="entry-index">03</span>
             <span className="entry-body">
               <span className="entry-title">Figma URL</span>
@@ -86,7 +103,10 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
                 placeholder="https://www.figma.com/file/…"
                 aria-label="Figma 프레임 URL"
                 value={figmaUrl}
-                onChange={(event) => setFigmaUrl(event.target.value)}
+                onChange={(event) => {
+                  setFigmaUrl(event.target.value);
+                  setFigmaError(null);
+                }}
                 data-testid="figma-url"
               />
               <button type="submit" className="btn btn--sm">
@@ -96,9 +116,9 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
           </form>
         </div>
 
-        {error !== null && (
+        {(figmaError ?? error) !== null && (
           <p className="gate-error" role="alert">
-            {error}
+            {figmaError ?? error}
           </p>
         )}
         <p className="gate-foot">
