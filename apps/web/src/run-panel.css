@@ -1,0 +1,4 @@
+/* DEV-105: allow the capped run panel to scroll through its contents. */
+.run-panel {
+  overflow-y: auto;
+}
