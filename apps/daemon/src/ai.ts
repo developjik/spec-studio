@@ -92,7 +92,8 @@ export async function aiStatus(
   return {
     providers: AI_PROVIDERS.map((provider) => ({
       provider,
-      hasEnvKey: provider !== 'local' && (env[AI_ENV_KEYS[provider]] ?? '').trim() !== '',
+      hasEnvKey:
+        provider !== 'local' && (env[AI_ENV_KEYS[provider]] ?? '').trim() !== '',
       defaultModel: AI_DEFAULT_MODELS[provider],
       defaultEndpoint: provider === 'local' ? null : AI_DEFAULT_ENDPOINTS[provider],
     })),
@@ -109,14 +110,7 @@ async function requireApiKey(
   runtime: AiRuntime,
   endpoint: string | null,
 ): Promise<{ key: string | null; source: CredentialSource | null }> {
-  return resolveApiKey(
-    provider,
-    presetId,
-    requestKey,
-    runtime.env,
-    runtime.keychain ?? null,
-    endpoint,
-  );
+  return resolveApiKey(provider, presetId, requestKey, runtime.env, runtime.keychain ?? null, endpoint);
 }
 
 /**
@@ -186,7 +180,7 @@ const ENDPOINT_KEY_REQUIRED_MESSAGE =
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
     return {
-      command: { type: 'graph.proposal.create', ...(project.screen?{screenId:project.screen.id}:{}) },
+      command: { type: 'graph.proposal.create', ...(project.screen ? { screenId: project.screen.id } : {}) },
       source: 'rule',
       provider: 'local',
       model: '',
@@ -203,12 +197,7 @@ function localPlan(project: Project, request: AiProposalRequest, why: string): A
       evidenceIds: request.evidenceIds ?? null,
     });
     return {
-      command: {
-        type: 'proposal.create',
-        docId: doc.id,
-        draft,
-        source: 'rule',
-      },
+      command: { type: 'proposal.create', docId: doc.id, draft, source: 'rule' },
       source: 'rule',
       provider: 'local',
       model: '',
@@ -258,13 +247,7 @@ export async function planAiProposal(
     // A local model server asks for no key; callModel just sends an empty Bearer.
     apiKey = '';
   } else {
-    const resolved = await requireApiKey(
-      request.provider,
-      request.presetId,
-      request.apiKey,
-      runtime,
-      endpoint,
-    );
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime, endpoint);
     if (resolved.key === null) {
       if (
         await daemonKeyBlockedByEndpoint(
@@ -302,7 +285,7 @@ export async function planAiProposal(
       return {
         command: {
           type: 'graph.proposal.create',
-          ...(project.screen?{screenId:project.screen.id}:{}),
+          ...(project.screen ? { screenId: project.screen.id } : {}),
           draft,
           source: 'llm',
           provider: request.provider,
@@ -390,7 +373,10 @@ export async function planAiProposal(
   }
 }
 
-export async function testAiConnection(raw: unknown, runtime: AiRuntime): Promise<AiTestResult> {
+export async function testAiConnection(
+  raw: unknown,
+  runtime: AiRuntime,
+): Promise<AiTestResult> {
   const request = AiProposalRequestSchema.pick({
     provider: true,
     model: true,
@@ -421,26 +407,22 @@ export async function testAiConnection(raw: unknown, runtime: AiRuntime): Promis
     apiKey = '';
     source = null;
   } else {
-    const resolved = await requireApiKey(
-      request.provider,
-      request.presetId,
-      request.apiKey,
-      runtime,
-      endpoint,
-    );
+    const resolved = await requireApiKey(request.provider, request.presetId, request.apiKey, runtime, endpoint);
     if (resolved.key === null) {
       return {
         ok: false,
         provider: request.provider,
         model,
         latencyMs: 0,
-        message: (await daemonKeyBlockedByEndpoint(
-          request.provider,
-          request.presetId,
-          request.apiKey,
-          runtime,
-          endpoint,
-        ))
+        message: (
+          await daemonKeyBlockedByEndpoint(
+            request.provider,
+            request.presetId,
+            request.apiKey,
+            runtime,
+            endpoint,
+          )
+        )
           ? ENDPOINT_KEY_REQUIRED_MESSAGE
           : 'API 키가 없습니다. 키를 입력하거나 데몬 환경변수를 설정해 주세요.',
         source: null,
