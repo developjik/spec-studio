@@ -1,3 +1,4 @@
+import { renderRichBlock, RICH_BLOCK_CSS } from './rich-block';
 import type { Doc, Pin, Screen } from '@spec-studio/protocol';
 import { staleBadges } from '../doc';
 import { inlineImage, slug } from './base64';
@@ -81,7 +82,7 @@ ${rows}
  * stands on. A block whose pin facts moved is marked here too, so a printed
  * copy does not quietly carry a sentence the screen no longer supports.
  */
-function renderDoc(input: { doc: Doc; pins: readonly Pin[] }): string {
+function renderDoc(input: { doc: Doc; pins: readonly Pin[]; screen: Screen }): string {
   const badges = staleBadges(input.doc, input.pins);
   const byId = new Map(input.pins.map((pin) => [pin.id, pin] as const));
   const blocks = input.doc.blocks
@@ -92,12 +93,7 @@ function renderDoc(input: { doc: Doc; pins: readonly Pin[] }): string {
         const label = pin === undefined ? '#? 삭제된 핀' : `#${pin.number} ${pin.title}`;
         return `<span class="doc-ref">${escapeHtml(label)}</span>`;
       });
-      const body =
-        block.type === 'heading'
-          ? `<h3>${escapeHtml(block.text)}</h3>`
-          : block.type === 'list'
-            ? `<p class="doc-list">${escapeHtml(block.text).replace(/\r?\n/g, '<br>')}</p>`
-            : `<p>${escapeHtml(block.text).replace(/\r?\n/g, '<br>')}</p>`;
+      const body = renderRichBlock(block,input.screen);
       return `<li class="doc-block${stale ? ' is-stale' : ''}">${body}${
         pins.length === 0 ? '' : `<p class="doc-pins">${pins.join('')}</p>`
       }${stale ? '<p class="doc-stale">핀이 바뀜 · 확인 필요</p>' : ''}</li>`;
@@ -207,7 +203,8 @@ export function renderStaticHtml(input: StaticHtmlInput): string {
 <meta name="generator" content="spec-studio · static handoff">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<style>${STYLE}</style>
+<style>
+${RICH_BLOCK_CSS}${STYLE}</style>
 </head>
 <body>
 <main class="sheet">
@@ -239,7 +236,7 @@ export function renderStaticHtml(input: StaticHtmlInput): string {
 ${overview.tables.map(renderTable).join('\n')}
   </div>
 
-  ${input.doc === undefined || input.doc === null ? '' : renderDoc({ doc: input.doc, pins: input.pins })}
+  ${input.doc === undefined || input.doc === null ? '' : renderDoc({ doc: input.doc, pins: input.pins, screen: input.screen })}
 
   <section class="gaps">
     <h2>번호 규칙</h2>
