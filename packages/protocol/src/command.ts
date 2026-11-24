@@ -248,6 +248,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
   /** Reads the screen's pins and drafts policy / req / qa nodes plus their links. */
   z.object({
     type: z.literal('graph.proposal.create'),
+    screenId: ScreenIdSchema.optional(),
     /** A model-built draft; absent means the rule extractor builds the card. */
     draft: AiGraphDraftSchema.optional(),
     source: AiProposalSourceSchema.optional(),
