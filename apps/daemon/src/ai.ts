@@ -186,7 +186,7 @@ const ENDPOINT_KEY_REQUIRED_MESSAGE =
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
     return {
-      command: { type: 'graph.proposal.create' },
+      command: { type: 'graph.proposal.create', ...(project.screen?{screenId:project.screen.id}:{}) },
       source: 'rule',
       provider: 'local',
       model: '',
@@ -302,6 +302,7 @@ export async function planAiProposal(
       return {
         command: {
           type: 'graph.proposal.create',
+          ...(project.screen?{screenId:project.screen.id}:{}),
           draft,
           source: 'llm',
           provider: request.provider,
