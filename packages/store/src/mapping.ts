@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   NODE_TYPE_KIND,
+  isKnownBlockType,
   type RichBlockData,
   type Block,
   type BlockPinRef,
@@ -500,13 +501,13 @@ interface BlockAttrs {
 }
 
 export function blockToRow(block: Block, docId: string, index: number): BlockRow {
-  const attrs: BlockAttrs = { pinRefs: block.pinRefs, data: block.data, preserved: block };
+  const attrs: BlockAttrs = { ...(!isKnownBlockType(block.type) && typeof block.legacyAttrs==='object' && block.legacyAttrs!==null ? block.legacyAttrs : {}), pinRefs: block.pinRefs, data: block.data, preserved: block };
   return {
     id: block.id,
     doc_id: docId,
-    parent_id: null,
+    parent_id: !isKnownBlockType(block.type) && typeof block.parentBlockId==='string' ? block.parentBlockId : null,
     idx: blockIdx(index),
-    type: ['paragraph','heading','list','caption','table','code','figure','criteria'].includes(block.type) ? block.type : 'criteria',
+    type: ['paragraph','heading','list','caption','table','code','figure','criteria','table_row','table_cell'].includes(block.type) ? block.type : 'criteria',
     text: block.text,
     attrs: JSON.stringify(attrs),
     hash: blockHash(block),
@@ -520,8 +521,11 @@ export function blockToRow(block: Block, docId: string, index: number): BlockRow
 export function blockFromRow(row: BlockRow): Block {
   const attrs = parseJson<BlockAttrs>(row.attrs || '{}');
   const at = row.created_at ?? row.updated_at ?? '';
+  const originalType=attrs.preserved?.type??row.type;
+  const {preserved,...legacyAttrs}=attrs;
   return {
     ...attrs.preserved,
+    ...(!isKnownBlockType(originalType) && !attrs.preserved ? {legacyAttrs,parentBlockId:row.parent_id}:{}),
     id: row.id,
     type: attrs.preserved?.type ?? row.type,
     data: attrs.data,
