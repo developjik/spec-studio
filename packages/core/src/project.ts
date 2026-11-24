@@ -563,7 +563,7 @@ function executeActive(
       if (!isKnownBlockType(current.type)) throw new DomainError('invalid_input', '알 수 없는 블록은 읽기 전용입니다');
       const block = BlockSchema.parse({
         ...current,
-        data: command.data ?? current.data ?? (command.blockType==='table'?{table:{rows:[['',''],['','']],header:true}}:command.blockType==='code'?{code:{language:'text',lineNumbers:false}}:undefined),
+        data: command.data ? {...current.data,...command.data} : current.data ?? (command.blockType==='table'?{table:{rows:[['',''],['','']],header:true}}:command.blockType==='code'?{code:{language:'text',lineNumbers:false}}:undefined),
         type: command.blockType ?? current.type,
         text: command.text ?? current.text,
         updatedAt: ctx.at,
