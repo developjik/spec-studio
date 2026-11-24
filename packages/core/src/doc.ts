@@ -541,13 +541,24 @@ export function proposalConflicts(proposal: Proposal, queue: readonly Proposal[]
 }
 
 /** Compare the semantic base, independent of object property insertion order. */
-export function proposalIsStale(doc: Doc, proposal: Proposal): boolean {
+export function proposalIsStale(doc: Doc, proposal: Proposal, pins?: readonly Pin[]): boolean {
   const sameRefs = (a: readonly BlockPinRef[], b: readonly BlockPinRef[]) =>
     a.length === b.length && a.every((ref, i) => {
       const other = b[i];
       return other !== undefined && ref.pinId === other.pinId && ref.fingerprint === other.fingerprint && ref.linkedAt === other.linkedAt;
     });
+  const available = new Set(doc.blocks.map(block => block.id));
+  const activePins = pins === undefined ? null : new Map(pins.map(pin => [pin.id, pin]));
   return proposal.patches.some(patch => {
+    if (activePins !== null && patch.after.pinRefs.some(ref => {
+      const pin = activePins.get(ref.pinId);
+      return pin === undefined || pinFingerprint(pin) !== ref.fingerprint;
+    })) return true;
+    if (patch.before === null) {
+      if (available.has(patch.blockId) || (patch.afterBlockId !== null && !available.has(patch.afterBlockId))) return true;
+      available.add(patch.blockId);
+      return false;
+    }
     const current = findBlock(doc, patch.blockId);
     if (patch.before === null) return current !== undefined;
     return current === undefined || current.type !== patch.before.type || current.text !== patch.before.text || !sameRefs(current.pinRefs, patch.before.pinRefs);
