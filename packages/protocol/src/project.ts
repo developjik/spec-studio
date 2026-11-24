@@ -71,3 +71,8 @@ export function normalizeLegacyProject(raw: unknown): unknown {
   if ('docs' in value || !('doc' in value)) return raw;
   return { ...value, docs: value.doc === null ? [] : [value.doc] };
 }
+
+/** Readers predating rich blocks must reject rather than silently strip their data. */
+export function bundleVersion(project: Project):1|2 {
+ return (project.screens?.length??0)>1 || project.docs.some(doc=>doc.blocks.some(block=>!['paragraph','heading','list','caption'].includes(block.type)||block.data!==undefined)) ? 2 : 1;
+}
