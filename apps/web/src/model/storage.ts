@@ -97,4 +97,4 @@ export function projectForStorage(project:Project):Project{
 }
 export function serializeProject(project:Project):string{
   return JSON.stringify(projectForStorage(project));
-                                   }
+}
