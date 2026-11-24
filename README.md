@@ -327,7 +327,7 @@ apps/web → HTTP → apps/daemon → packages/{store → core → protocol}
 | --- | --- | --- |
 | `GET` | `/api/health` | liveness, schema version, project count |
 | `GET` · `POST` | `/api/projects` | list summaries · create |
-| `GET` | `/api/projects/:id` | project (screen, pins, `doc`, `proposal`, `graph`, `graphProposal`) + publish records + what a revert would undo |
+| `GET` | `/api/projects/:id` | project (`screens`, `activeScreenId`, `screen`, `pins`, `docs`, `proposals`, `graph`, `graphProposal`) + publish records + what a revert would undo |
 | `GET` | `/api/projects/:id/export` | the whole project as a `spec-studio.bundle` |
 | `POST` | `/api/projects/import` | a bundle → a new project with every id remapped |
 | `POST` | `/api/projects/:id/backup` | one consistent copy of the SQLite file (`VACUUM INTO`) |
@@ -506,3 +506,45 @@ pnpm test:contract
 The core is **Apache-2.0** — the full text lives in the [LICENSE](LICENSE) file. 관리형 서비스(게이트웨이 · 클라우드 · 팀 기능)는 별도 서비스로 제공될 예정입니다. **BYOK(bring-your-own-key)는 항상 무료이며 기능 잠금이 없다** — 자신의 API 키를 그대로 가져오는 한, 어떤 기능도 요금제 뒤에 잠겨 있지 않습니다.
 
 Copyright 2026 developjik. 루트와 워크스페이스 하위 패키지(`apps/*`, `packages/*`) 모두 [Apache License 2.0](LICENSE)을 따릅니다.
+
+
+### Multi-screen projects (DEV49)
+
+`GET /api/projects/:id` returns ordered `screens[]`, `activeScreenId`, all project
+`pins[]` (join on `screenId`), and `screenPinSeq` high-water marks keyed by screen id.
+`screen` remains an alias for the active screen and `pinSeq` is its derived counter.
+Empty projects return `screens: []`, `activeScreenId: null`, `screen: null`.
+Document `screenId` records ownership; changing screens never moves a document.
+Graph/IA shows the whole project; the canvas, document tabs and RTM pin list use the
+selected screen. Screen rail badges show pin counts and stale document references.
+
+Commands use the existing `/commands` endpoint:
+
+- `screen.add`: `{ screen: Screen, order?: number }`, zero-based insertion index.
+  The full screen supplies title, unique code, image/ref and id. UI creates a blank
+  image screen or adds an uploaded image. New screens become active.
+- `screen.select`: `{ screenId }`, preserves all pins, documents and counters.
+- `screen.reorder`: `{ screenIds: string[] }`, every live screen exactly once.
+- `screen.delete`: `{ screenId }`, tombstones only that screen, its pins and docs;
+  other counters keep their gaps. The next first screen becomes active if needed.
+- Legacy `screen.attach` is an additive upsert/select alias, no longer a destructive
+  screen replacement. Reattaching an existing screen preserves its counter.
+
+DB schema is 17, because DEV120 already uses 16. Migration is additive:
+15→16→17 preserves proposal history, existing screen props/counters and doc links.
+Only active-screen id and order are added to the project row; screens, pins and
+screen doc links retain their existing tables. Exports/imports remap every screen,
+its pins, documents, graph references and counter keys.
+
+Publish preview/run accept optional `screenId` (default: active screen). Both pin
+and document payloads and successful page lookups are scoped to that screen.
+The modal offers one screen or all, and all-screen publishing calls the existing
+endpoint sequentially, rendering an overlay per screen. Pages and idempotency are
+separate per screen. Partial success stays in history; a later failure does not
+roll back pages already published. Automatic retry is safe for unchanged successful
+screens. The all-screen preview explicitly shows only the first screen.
+
+`test/e2e/run_screens.sh` exercises three UI-created screens, independent pin
+numbers, switch/reload persistence and one all-screen action against a local mock
+Confluence. It creates three distinct pages, not three updates of the same page.
+No real Confluence account or external model is used by this test.
