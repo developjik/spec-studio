@@ -108,7 +108,10 @@ describe('the document in SQLite', () => {
     const second = await store.execute(projectId, { type: 'proposal.create', docId });
     const secondId = second.project.proposals.at(-1)!.id;
     await store.revert(projectId, adopted.opSeq);
-    await expect(store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: secondId })).rejects.toThrow(/변경/);
+    await expect(store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: secondId })).rejects.toMatchObject({code: 'block_not_found'});
+    const fresh = await store.execute(projectId, { type: 'proposal.create', docId });
+    const restored = await store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: fresh.project.proposals.at(-1)!.id });
+    expect(restored.project.docs[0]!.blocks).toHaveLength(2);
   });
 
   it('creates the document with the screen and stores blocks under it', async () => {
