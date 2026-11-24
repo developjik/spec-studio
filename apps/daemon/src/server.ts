@@ -258,7 +258,11 @@ function decodeOverlay(value: unknown): Uint8Array {
   }
   const raw = value.replace(/^data:image\/png;base64,/, '');
   const buffer = Buffer.from(raw, 'base64');
-  if (buffer.length < 8 || buffer[0] !== 0x89 || buffer.subarray(1, 4).toString('ascii') !== 'PNG') {
+  if (
+    buffer.length < 8 ||
+    buffer[0] !== 0x89 ||
+    buffer.subarray(1, 4).toString('ascii') !== 'PNG'
+  ) {
     throw new HttpError(400, 'overlay_invalid', '오버레이 PNG 데이터를 읽지 못했습니다.');
   }
   return new Uint8Array(buffer);
@@ -281,17 +285,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const keychain = options.keychain === undefined ? createIpcKeychainPort() : options.keychain;
   const backupDir =
     options.backupDir ??
-    (options.dbPath === ':memory:' ? `${process.cwd()}/backups` : `${dirname(options.dbPath)}/backups`);
+    (options.dbPath === ':memory:'
+      ? `${process.cwd()}/backups`
+      : `${dirname(options.dbPath)}/backups`);
 
-  const handle = async (
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> => {
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     // A request addressed to a name this daemon does not answer to is not from
     // the app. Checked first, before anything reads the store.
     const hostname = hostnameOf(req.headers.host);
     if (hostname === null || !isLoopbackHostname(hostname)) {
-      throw new HttpError(403, 'host_not_allowed', '이 데몬이 응답하지 않는 주소로 요청이 왔습니다.');
+      throw new HttpError(
+        403,
+        'host_not_allowed',
+        '이 데몬이 응답하지 않는 주소로 요청이 왔습니다.',
+      );
     }
 
     const origin = req.headers.origin;
@@ -315,7 +322,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (options.authToken !== undefined) {
       const presented = req.headers['x-daemon-token'];
       if (presented !== options.authToken) {
-        throw new HttpError(401, 'daemon_unauthorized', '데몬 세션 토큰이 없거나 일치하지 않습니다.');
+        throw new HttpError(
+          401,
+          'daemon_unauthorized',
+          '데몬 세션 토큰이 없거나 일치하지 않습니다.',
+        );
       }
     }
 
@@ -328,7 +339,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/ai/test — one small call, for the settings panel's badge.
     if (segments[1] === 'ai' && segments[2] === 'test' && segments.length === 3) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
       const result = await testAiConnection(body, {
         env,
@@ -342,7 +354,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // IPC. A stored key is write-only: these routes take it in or drop it, and
     // never hand it back.
     if (segments[1] === 'ai' && segments[2] === 'keychain' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
       if (keychain === null) {
         throw new HttpError(
@@ -421,7 +434,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/import — a bundle becomes a new project with new ids.
     if (segments[2] === 'import' && segments.length === 3) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
       const parsed = ProjectBundleSchema.safeParse(body.bundle);
       if (!parsed.success) {
@@ -436,12 +450,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         store.nextId(kind, nodeType),
       );
       const project = await store.importProject(imported);
-      return send(res, 201, { project, sourceProjectId: parsed.data.project.id });
+      return send(res, 201, {
+        project,
+        sourceProjectId: parsed.data.project.id,
+      });
     }
 
     const projectId = segments[2] ?? '';
     const project = await store.readProject(projectId);
-    if (project === null) throw new HttpError(404, 'project_not_found', '프로젝트를 찾지 못했습니다.');
+    if (project === null)
+      throw new HttpError(404, 'project_not_found', '프로젝트를 찾지 못했습니다.');
 
     // GET /api/projects/:id
     if (segments.length === 3) {
@@ -457,7 +475,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/ai/proposal — the model drafts, the store decides.
     if (action === 'ai' && segments[4] === 'proposal' && segments.length === 5) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = await readBody(req);
       const plan = await planAiProposal(project, body, {
         env,
@@ -479,7 +498,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/commands
     if (action === 'commands' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
       const parsed = CommandSchema.safeParse(body.command);
       if (!parsed.success) {
@@ -501,10 +521,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/revert — restores op_log.before of an adoption.
     if (action === 'revert' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
       const rawSeq = body.seq;
-      if (rawSeq !== undefined && (typeof rawSeq !== 'number' || !Number.isInteger(rawSeq) || rawSeq < 1)) {
+      if (
+        rawSeq !== undefined &&
+        (typeof rawSeq !== 'number' || !Number.isInteger(rawSeq) || rawSeq < 1)
+      ) {
         throw new HttpError(400, 'invalid_seq', '되돌릴 기록 번호를 확인해 주세요.');
       }
       const outcome = await store.revert(projectId, rawSeq as number | undefined);
@@ -531,7 +555,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/backup — a consistent copy of the SQLite file.
     if (action === 'backup' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const backup = store.backupTo(backupDir);
       return send(res, 200, { backup: { ...backup, projectId } });
     }
@@ -541,15 +566,21 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
       const limit = Number(url.searchParams.get('limit') ?? '20');
       return send(res, 200, {
-        records: store.listPublishes(projectId, Number.isFinite(limit) ? limit : 20).map(recordJson),
+        records: store
+          .listPublishes(projectId, Number.isFinite(limit) ? limit : 20)
+          .map(recordJson),
       });
     }
 
     // POST /api/projects/:id/publish/preview
     if (action === 'publish' && segments[4] === 'preview' && segments.length === 5) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
-      const screen = project.screen;
+      const screen =
+        typeof body.screenId === 'string'
+          ? ((project.screens ?? []).find((s) => s.id === body.screenId) ?? null)
+          : project.screen;
       if (screen === null) throw new HttpError(400, 'no_screen', '화면을 먼저 등록해 주세요.');
       const space = requireString(body, 'space', 'Space ID 또는 Key');
       const preview = await previewPublish(
@@ -557,11 +588,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           projectId,
           projectName: project.name,
           screen,
-          pins: project.pins,
-          pinSeq: project.pinSeq,
-          figmaUrl: figmaUrlOf(project),
+          pins: project.pins.filter((p) => p.screenId === screen.id),
+          pinSeq: project.screenPinSeq?.[screen.id] ?? project.pinSeq,
+          figmaUrl: figmaUrlOf({ ...project, screen }),
           // Publishing prints the spec; research notes stay in the project.
-          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
+          doc:
+            project.docs.find((doc) => doc.screenId === screen.id && doc.kind === 'spec') ??
+            project.docs.find((doc) => doc.screenId === screen.id) ??
+            null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           target: { space },
@@ -573,9 +607,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/publish
     if (action === 'publish' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
-      const screen = project.screen;
+      const screen =
+        typeof body.screenId === 'string'
+          ? ((project.screens ?? []).find((s) => s.id === body.screenId) ?? null)
+          : project.screen;
       if (screen === null) throw new HttpError(400, 'no_screen', '화면을 먼저 등록해 주세요.');
       const target = asObject(body.target);
       const outcome = await publishSpec(
@@ -583,10 +621,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           projectId,
           projectName: project.name,
           screen,
-          pins: project.pins,
-          pinSeq: project.pinSeq,
-          figmaUrl: figmaUrlOf(project),
-          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
+          pins: project.pins.filter((p) => p.screenId === screen.id),
+          pinSeq: project.screenPinSeq?.[screen.id] ?? project.pinSeq,
+          figmaUrl: figmaUrlOf({ ...project, screen }),
+          doc:
+            project.docs.find((doc) => doc.screenId === screen.id && doc.kind === 'spec') ??
+            project.docs.find((doc) => doc.screenId === screen.id) ??
+            null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           overlayPng: decodeOverlay(body.overlayPng),
@@ -620,7 +661,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     if (typeof origin === 'string' && !allowed.has(origin)) {
       send(res, 403, {
-        error: { code: 'origin_not_allowed', message: '허용되지 않은 출처입니다.' },
+        error: {
+          code: 'origin_not_allowed',
+          message: '허용되지 않은 출처입니다.',
+        },
       });
       return;
     }
@@ -646,7 +690,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   });
 
   const address = server.address();
-  const port = typeof address === 'object' && address !== null ? address.port : (options.port ?? DEFAULT_PORT);
+  const port =
+    typeof address === 'object' && address !== null ? address.port : (options.port ?? DEFAULT_PORT);
 
   return {
     server,
@@ -662,7 +707,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
 function toHttpError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
-  if (error instanceof AiRequestError) return new HttpError(error.status, error.code, error.message);
+  if (error instanceof AiRequestError)
+    return new HttpError(error.status, error.code, error.message);
   if (error instanceof DomainError) return new HttpError(400, error.code, error.message);
   if (error instanceof PublishError) return new HttpError(400, error.code, error.message);
   if (error instanceof ConfluenceError) {
