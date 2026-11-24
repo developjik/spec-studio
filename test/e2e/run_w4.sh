@@ -12,11 +12,13 @@ export DAEMON_LOG="$WORK/daemon.log"
 export OUT_DIR="${OUT_DIR:-$PWD/../../downloads}"
 
 # The daemon bundle carries the schema beside it; build both before driving.
-pnpm daemon:build > "$WORK/build.log" 2>&1
+if [[ "${E2E_DAEMON_BUILT:-0}" != 1 ]]; then
+  pnpm daemon:build > "$WORK/build.log" 2>&1
+fi
 
 # Serve the built app, not the dev transform: the check should exercise the
 # bundle that ships, and the preview server is the same Vite.
-VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm build > "$WORK/webbuild.log" 2>&1
+VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm --filter @spec-studio/web build > "$WORK/webbuild.log" 2>&1
 VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm --filter @spec-studio/web preview --port 5173 > "$WORK/vite.log" 2>&1 &
 VITE_PID=$!
 

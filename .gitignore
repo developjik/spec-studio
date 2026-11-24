@@ -36,3 +36,6 @@ spec-studio-*.json
 # End-to-end scratch
 .e2e/
 .e2e*/
+
+# Python harness bytecode
+__pycache__/

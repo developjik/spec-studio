@@ -24,7 +24,8 @@
     "eval": "node eval/build.mjs && node eval/dist/eval.mjs",
     "eval:live": "node eval/build.mjs && node eval/dist/eval.mjs --live",
     "typecheck:eval": "tsc --noEmit -p eval/tsconfig.json",
-    "test:unit": "pnpm -r --if-present test"
+    "test:unit": "pnpm -r --if-present test",
+    "e2e": "bash test/e2e/run_all.sh"
   },
   "devDependencies": {
     "@spec-studio/ai": "workspace:*",
