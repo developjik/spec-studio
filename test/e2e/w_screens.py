@@ -101,7 +101,7 @@ def main():
 
             # Deleting an active screen clears its in-progress pin draft.
             box=page.locator('[data-testid=stage]').bounding_box()
-            page.mouse.click(box['x']+box['width']*.7,box['y']+box['height']*.4)
+            page.locator('[data-testid=stage]').click(position={'x':box['width']*.7,'y':box['height']*.4})
             page.locator('[data-testid=pin-title]').fill('삭제 화면의 미저장 핀')
             page.once('dialog',lambda d:d.accept())
             page.get_by_role('button',name='결제 내역 삭제',exact=True).click()
