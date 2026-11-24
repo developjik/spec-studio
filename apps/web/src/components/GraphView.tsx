@@ -134,10 +134,10 @@ export function GraphView(props: GraphViewProps) {
               링크 {project.graph.links.length}
             </span>
             <span
-              className={`count-chip${report.orphanPins.length > 0 ? ' count-chip--warn' : ''}`}
+              className={`count-chip${(props.screenReport??report).orphanPins.length > 0 ? ' count-chip--warn' : ''}`}
               data-testid="graph-orphan-pins"
             >
-              고아 핀 {report.orphanPins.length}
+              고아 핀 {(props.screenReport??report).orphanPins.length}
             </span>
             <span
               className={`count-chip${report.suspectLinks.length > 0 ? ' count-chip--warn' : ''}`}
@@ -203,7 +203,7 @@ export function GraphView(props: GraphViewProps) {
             {nodes.map((node) => {
               const at = positions.get(node.id);
               if (at === undefined) return null;
-              const orphan = report.orphanPins.includes(node.id) || report.orphanNodes.includes(node.id);
+              const orphan = (props.screenReport??report).orphanPins.includes(node.id) || report.orphanNodes.includes(node.id);
               return (
                 <g
                   key={node.id}
@@ -400,10 +400,10 @@ export function GraphView(props: GraphViewProps) {
             )}
           </p>
           <p className="trace-line" data-testid="trace-orphan-pins">
-            연결 없는 핀 <strong>{report.orphanPins.length}</strong>개
-            {report.orphanPins.length > 0 && (
+            연결 없는 핀 <strong>{(props.screenReport??report).orphanPins.length}</strong>개
+            {(props.screenReport??report).orphanPins.length > 0 && (
               <span className="trace-list">
-                {report.orphanPins.slice(0, 4).map((id) => {
+                {(props.screenReport??report).orphanPins.slice(0, 4).map((id) => {
                   const pin = nodes.find((node) => node.id === id);
                   return (
                     <button key={id} type="button" className="trace-jump" onClick={() => props.onSelect(id)}>
