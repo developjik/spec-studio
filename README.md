@@ -555,5 +555,7 @@ request-time screenId is supplied to the graph.proposal.create command. The
 separate screenId parameter. This prevents duplicate per-screen pin numbers
 from crossing screens. Adoption rejects deleted link endpoints atomically.
 Browser storage stores the active screenshot once and reconstructs the legacy
-screen alias on load. Version 1 downloaded bundles keep the screen alias for older
-readers, accepting image duplication for backward compatibility.
+screen alias on load. Single-screen downloads keep bundle version 1 and the screen alias. Multi-screen
+downloads use bundle version 2 so older single-screen readers reject them instead
+of silently collapsing ownership. New readers accept both versions. Images may
+appear twice in downloaded bundles; only browser storage compacts the alias.
