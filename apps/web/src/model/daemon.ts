@@ -39,7 +39,8 @@ const desktop = window.specstudio?.getDaemonInfo();
 
 export const DAEMON_URL: string =
   desktop?.daemonUrl ??
-  ((import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ?? 'http://127.0.0.1:8787');
+  (import.meta.env.VITE_SPEC_STUDIO_DAEMON as string | undefined) ??
+  'http://127.0.0.1:8787';
 
 /** The desktop shell's one-shot session token; null in every browser context. */
 const DAEMON_TOKEN: string | null = desktop?.daemonToken ?? null;
@@ -242,9 +243,11 @@ export class DaemonClient {
     return body.project;
   }
 
-  async readProject(
-    projectId: string,
-  ): Promise<{ project: Project; records: PublishRecordView[]; revert: RevertableView | null }> {
+  async readProject(projectId: string): Promise<{
+    project: Project;
+    records: PublishRecordView[];
+    revert: RevertableView | null;
+  }> {
     return this.#request(`/api/projects/${encodeURIComponent(projectId)}`);
   }
 
@@ -294,10 +297,12 @@ export class DaemonClient {
 
   /** A consistent copy of the SQLite file, written beside it. */
   async backup(projectId: string): Promise<{ path: string; bytes: number; at: string }> {
-    const body = await this.#request<{ backup: { path: string; bytes: number; at: string } }>(
-      `/api/projects/${encodeURIComponent(projectId)}/backup`,
-      { method: 'POST', body: {} },
-    );
+    const body = await this.#request<{
+      backup: { path: string; bytes: number; at: string };
+    }>(`/api/projects/${encodeURIComponent(projectId)}/backup`, {
+      method: 'POST',
+      body: {},
+    });
     return body.backup;
   }
 
@@ -384,7 +389,7 @@ export class DaemonClient {
 
   async preview(
     projectId: string,
-    input: { space: string; mode: PublishModeView },
+    input: { space: string; mode: PublishModeView; screenId?: string },
   ): Promise<PublishPreviewView> {
     const body = await this.#request<{ preview: PublishPreviewView }>(
       `/api/projects/${encodeURIComponent(projectId)}/publish/preview`,
@@ -399,6 +404,7 @@ export class DaemonClient {
       target: ConfluenceTargetView;
       mode: PublishModeView;
       overlayPng: string;
+      screenId?: string;
     },
   ): Promise<PublishOutcomeView> {
     const body = await this.#request<{ outcome: PublishOutcomeView }>(
@@ -408,10 +414,7 @@ export class DaemonClient {
     return body.outcome;
   }
 
-  async #request<T>(
-    path: string,
-    init: { method?: string; body?: unknown } = {},
-  ): Promise<T> {
+  async #request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
