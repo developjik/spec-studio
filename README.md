@@ -550,7 +550,10 @@ Confluence. It creates three distinct pages, not three updates of the same page.
 No real Confluence account or external model is used by this test.
 
 Graph proposals, including local rules, use the selected screen unless an explicit
-request-time screenId is supplied. This prevents duplicate per-screen pin numbers
+request-time screenId is supplied to the graph.proposal.create command. The
+/ai/proposal endpoint uses the active screen (or requested document owner), not a
+separate screenId parameter. This prevents duplicate per-screen pin numbers
 from crossing screens. Adoption rejects deleted link endpoints atomically.
-Browser storage and downloaded bundles store the active screenshot once and
-reconstruct the legacy screen alias on load.
+Browser storage stores the active screenshot once and reconstructs the legacy
+screen alias on load. Version 1 downloaded bundles keep the screen alias for older
+readers, accepting image duplication for backward compatibility.
