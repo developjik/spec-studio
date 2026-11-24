@@ -13,8 +13,10 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
 
   const submitFigma = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (figmaUrl.trim() === '') return;
-    onFigma(figmaUrl.trim());
+    const submittedUrl = figmaUrl.trim();
+    setFigmaUrl('');
+    if (submittedUrl === '') return;
+    onFigma(submittedUrl);
   };
 
   return (
@@ -73,7 +75,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
             </label>
           </div>
 
-          <form className="entry" onSubmit={submitFigma}>
+          <form className="entry" onSubmit={submitFigma} noValidate>
             <span className="entry-index">03</span>
             <span className="entry-body">
               <span className="entry-title">Figma URL</span>

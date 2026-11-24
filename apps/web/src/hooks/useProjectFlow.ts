@@ -23,6 +23,7 @@ import {
   SAMPLE_TITLE,
   SAMPLE_WIDTH,
 } from '../model/sample';
+import { parseFigmaUrl } from '../model/figmaUrl';
 import { nextId, nowIso, type ApplyResult, type Notice } from '../model/appUtils';
 
 /**
@@ -149,15 +150,9 @@ export function useProjectFlow({
   };
 
   const openFigma = (raw: string) => {
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      setGateError('주소 형식을 확인해 주세요. https://www.figma.com/… 처럼 입력합니다.');
-      return;
-    }
-    if (!/(^|\.)figma\.com$/.test(url.hostname)) {
-      setGateError('Figma 주소(figma.com)만 등록할 수 있습니다.');
+    const url = parseFigmaUrl(raw);
+    if (url === null) {
+      setGateError('Figma 주소는 HTTPS를 사용하고 figma.com 도메인이어야 합니다.');
       return;
     }
     const at = nowIso();
