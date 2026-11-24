@@ -46,6 +46,9 @@ export const ProposalSchema = z.object({
   baseRev: z.number().int().min(0),
   state: ProposalStateSchema,
   patches: z.array(ProposalPatchSchema).min(1).max(50),
+  queuedAt: z.string().min(1).optional(),
+  queueOrder: z.number().int().nonnegative().optional(),
+  source: z.enum(['llm', 'rule']).optional(),
   createdAt: z.string().min(1),
   decidedAt: z.string().min(1).nullable(),
 });
