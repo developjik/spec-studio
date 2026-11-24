@@ -328,12 +328,14 @@ describe('the document in SQLite', () => {
       ALTER TABLE event DROP COLUMN device_id;
       ALTER TABLE event DROP COLUMN uuid;
       ALTER TABLE op_log DROP COLUMN device_id;
+      ALTER TABLE project DROP COLUMN active_screen_id;
+      ALTER TABLE project DROP COLUMN screen_order;
       PRAGMA user_version = 12;
     `);
     raw.close();
 
     const upgraded = open();
-    expect(upgraded.schema.actual).toBe(16);
+    expect(upgraded.schema.actual).toBe(17);
     const columns = upgraded.database
       .prepare('PRAGMA table_info(doc)')
       .all() as Array<{ name: string }>;
