@@ -522,7 +522,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
       const bundle: ProjectBundle = {
         format: 'spec-studio.bundle',
-        version: 1,
+        version: (project.screens?.length ?? 0) > 1 ? 2 : 1,
         exportedAt: now(),
         project,
       };
