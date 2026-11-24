@@ -112,7 +112,7 @@ export function PinPanel({
         </div>
       )}
 
-      <div className="filters" role="group" aria-label="핀 타입 필터">
+      <div className="filters" role="group" aria-label="핀 타입 필터" aria-describedby="pin-filter-scope">
         <button
           type="button"
           className={`filter${filter === 'all' ? ' is-active' : ''}`}
@@ -135,6 +135,9 @@ export function PinPanel({
             <span className="n">{counts[type]}</span>
           </button>
         ))}
+        <p id="pin-filter-scope" className="panel-rule" style={{ flexBasis: '100%' }}>
+          핀 타입 필터는 핀 목록에만 적용됩니다. 캔버스의 핀 표시는 바뀌지 않습니다.
+        </p>
       </div>
 
       {allCount === 0 ? (
