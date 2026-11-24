@@ -65,7 +65,7 @@ export function remapProject(project: Project, nextId: RemapId): Project {
     id: evidenceIds.get(row.id)!,
   }));
   const docs = project.docs.map((doc) => ({
-    ...remapDoc(doc, nextId, pinIds),
+    ...remapDoc(doc, nextId, pinIds, screenIds),
     screenId: doc.screenId ? (screenIds.get(doc.screenId) ?? null) : null,
   }));
 
@@ -99,12 +99,13 @@ export function remapProject(project: Project, nextId: RemapId): Project {
   };
 }
 
-function remapDoc(doc: Doc, nextId: RemapId, pinIds: ReadonlyMap<string, string>): Doc {
+function remapDoc(doc: Doc, nextId: RemapId, pinIds: ReadonlyMap<string, string>, screenIds: ReadonlyMap<string,string>): Doc {
   const blockIds = new Map<string, string>();
   for (const block of doc.blocks) blockIds.set(block.id, nextId('block'));
   const blocks: Block[] = doc.blocks.map((block) => ({
     ...block,
     id: blockIds.get(block.id)!,
+    ...(block.data?.figure?{data:{...block.data,figure:{...block.data.figure,screenId:screenIds.get(block.data.figure.screenId)??block.data.figure.screenId,...(block.data.figure.pinId?{pinId:pinIds.get(block.data.figure.pinId)??block.data.figure.pinId}:{})}}}:{}),
     pinRefs: block.pinRefs
       .map((ref) => {
         const pinId = pinIds.get(ref.pinId);
