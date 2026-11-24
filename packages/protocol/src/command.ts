@@ -8,6 +8,7 @@ import {
 import {
   BlockIdSchema,
   BlockTypeSchema,
+  RichBlockDataSchema,
   DocIdSchema,
   DocKindSchema,
   ProposalIdSchema,
@@ -131,6 +132,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
     type: z.literal('doc.block.create'),
     docId: DocIdSchema,
     blockType: BlockTypeSchema,
+    data: RichBlockDataSchema.optional(),
     text: z.string().max(8000),
     /** Omitted appends at the end; `null` puts it at the top of the document. */
     afterBlockId: BlockIdSchema.nullable().optional(),
@@ -141,6 +143,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
     blockId: BlockIdSchema,
     text: z.string().max(8000).optional(),
     blockType: BlockTypeSchema.optional(),
+    data: RichBlockDataSchema.optional(),
   }),
   z.object({
     type: z.literal('doc.block.delete'),
