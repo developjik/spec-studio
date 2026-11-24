@@ -31,7 +31,9 @@ export SPEC_STUDIO_ORIGINS="$WEB_URL"
 python3 test/e2e/mock_llm.py "$MOCK_PORT" > "$WORK/mock-llm.log" 2>&1 &
 MOCK_PID=$!
 
-pnpm daemon:build > "$WORK/build.log" 2>&1
+if [[ "${E2E_DAEMON_BUILT:-0}" != 1 ]]; then
+  pnpm daemon:build > "$WORK/build.log" 2>&1
+fi
 
 VITE_SPEC_STUDIO_DAEMON="http://127.0.0.1:${DAEMON_PORT}" pnpm build > "$WORK/webbuild.log" 2>&1
 VITE_SPEC_STUDIO_DAEMON="http://127.0.0.1:${DAEMON_PORT}" \
