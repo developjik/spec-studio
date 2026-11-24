@@ -11,6 +11,15 @@ import { ScreenSchema } from './screen';
 /** What a command did. Applied events get a global monotonic `seq`. */
 export const EventSchema = z.discriminatedUnion('type', [
   z.object({
+    type: z.literal('screen.selected'),
+    screenId: ScreenIdSchema.nullable(),
+  }),
+  z.object({
+    type: z.literal('screen.reordered'),
+    screenIds: z.array(ScreenIdSchema),
+  }),
+  z.object({ type: z.literal('screen.deleted'), screenId: ScreenIdSchema }),
+  z.object({
     type: z.literal('screen.attached'),
     screen: ScreenSchema,
   }),
@@ -42,15 +51,27 @@ export const EventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('evidence.updated'), evidence: EvidenceSchema }),
   z.object({ type: z.literal('evidence.dismissed'), evidence: EvidenceSchema }),
 
-  z.object({ type: z.literal('project.renamed'), projectId: z.string().min(1), name: z.string().min(1) }),
+  z.object({
+    type: z.literal('project.renamed'),
+    projectId: z.string().min(1),
+    name: z.string().min(1),
+  }),
 
   z.object({ type: z.literal('doc.attached'), doc: DocSchema }),
   z.object({ type: z.literal('doc.created'), doc: DocSchema }),
-  z.object({ type: z.literal('doc.renamed'), docId: DocIdSchema, title: z.string().min(1) }),
+  z.object({
+    type: z.literal('doc.renamed'),
+    docId: DocIdSchema,
+    title: z.string().min(1),
+  }),
   z.object({ type: z.literal('doc.deleted'), docId: DocIdSchema }),
   z.object({ type: z.literal('block.created'), block: BlockSchema }),
   z.object({ type: z.literal('block.updated'), block: BlockSchema }),
-  z.object({ type: z.literal('block.deleted'), docId: DocIdSchema, blockId: BlockIdSchema }),
+  z.object({
+    type: z.literal('block.deleted'),
+    docId: DocIdSchema,
+    blockId: BlockIdSchema,
+  }),
   z.object({
     type: z.literal('block.moved'),
     docId: DocIdSchema,
@@ -76,7 +97,11 @@ export const EventSchema = z.discriminatedUnion('type', [
     pinId: PinIdSchema,
   }),
   z.object({ type: z.literal('proposal.created'), proposal: ProposalSchema }),
-  z.object({ type: z.literal('proposal.deferred'), docId: DocIdSchema, proposalId: ProposalIdSchema }),
+  z.object({
+    type: z.literal('proposal.deferred'),
+    docId: DocIdSchema,
+    proposalId: ProposalIdSchema,
+  }),
   z.object({
     type: z.literal('proposal.adopted'),
     docId: DocIdSchema,
@@ -111,7 +136,10 @@ export const EventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('link.created'), link: GraphLinkSchema }),
   z.object({ type: z.literal('link.deleted'), linkId: z.string().min(1) }),
   z.object({ type: z.literal('link.acked'), linkId: z.string().min(1) }),
-  z.object({ type: z.literal('graph.proposal.created'), proposal: GraphProposalSchema }),
+  z.object({
+    type: z.literal('graph.proposal.created'),
+    proposal: GraphProposalSchema,
+  }),
   z.object({
     type: z.literal('graph.proposal.adopted'),
     proposalId: z.string().min(1),

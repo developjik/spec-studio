@@ -522,7 +522,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
       const bundle: ProjectBundle = {
         format: 'spec-studio.bundle',
-        version: 1,
+        version: (project.screens?.length ?? 0) > 1 ? 2 : 1,
         exportedAt: now(),
         project,
       };
@@ -547,9 +547,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/publish/preview
     if (action === 'publish' && segments[4] === 'preview' && segments.length === 5) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
-      const screen = project.screen;
+      const screen =
+        typeof body.screenId === 'string'
+          ? ((project.screens ?? []).find((s) => s.id === body.screenId) ?? null)
+          : project.screen;
       if (screen === null) throw new HttpError(400, 'no_screen', '화면을 먼저 등록해 주세요.');
       const space = requireString(body, 'space', 'Space ID 또는 Key');
       const preview = await previewPublish(
@@ -557,11 +561,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           projectId,
           projectName: project.name,
           screen,
-          pins: project.pins,
-          pinSeq: project.pinSeq,
-          figmaUrl: figmaUrlOf(project),
+          pins: project.pins.filter((p) => p.screenId === screen.id),
+          pinSeq: project.screenPinSeq?.[screen.id] ?? project.pinSeq,
+          figmaUrl: figmaUrlOf({ ...project, screen }),
           // Publishing prints the spec; research notes stay in the project.
-          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
+          doc:
+            project.docs.find((doc) => doc.screenId === screen.id && doc.kind === 'spec') ??
+            project.docs.find((doc) => doc.screenId === screen.id) ??
+            null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           target: { space },
@@ -573,9 +580,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     // POST /api/projects/:id/publish
     if (action === 'publish' && segments.length === 4) {
-      if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
+      if (req.method !== 'POST')
+        throw new HttpError(405, 'method_not_allowed', 'POST만 허용됩니다.');
       const body = asObject(await readBody(req));
-      const screen = project.screen;
+      const screen =
+        typeof body.screenId === 'string'
+          ? ((project.screens ?? []).find((s) => s.id === body.screenId) ?? null)
+          : project.screen;
       if (screen === null) throw new HttpError(400, 'no_screen', '화면을 먼저 등록해 주세요.');
       const target = asObject(body.target);
       const outcome = await publishSpec(
@@ -583,10 +594,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           projectId,
           projectName: project.name,
           screen,
-          pins: project.pins,
-          pinSeq: project.pinSeq,
-          figmaUrl: figmaUrlOf(project),
-          doc: project.docs.find((doc) => doc.kind === 'spec') ?? project.docs[0] ?? null,
+          pins: project.pins.filter((p) => p.screenId === screen.id),
+          pinSeq: project.screenPinSeq?.[screen.id] ?? project.pinSeq,
+          figmaUrl: figmaUrlOf({ ...project, screen }),
+          doc:
+            project.docs.find((doc) => doc.screenId === screen.id && doc.kind === 'spec') ??
+            project.docs.find((doc) => doc.screenId === screen.id) ??
+            null,
           generatedAt: now(),
           mode: parseMode(body.mode),
           overlayPng: decodeOverlay(body.overlayPng),

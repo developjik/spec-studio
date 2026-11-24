@@ -72,7 +72,7 @@ describe('the schema', () => {
   it('creates itself on an empty file and reports the promised version', () => {
     const store = open();
     expect(store.schema.created).toBe(true);
-    expect(store.schema.actual).toBe(16);
+    expect(store.schema.actual).toBe(17);
   });
 
   it('does not re-create tables when the file already carries them', async () => {
@@ -270,7 +270,7 @@ describe('numbers stay put', () => {
       type: 'screen.attach',
       screen: { ...SCREEN, id: `S_${'d'.repeat(12)}`, title: '주문 목록', code: 'SCR-111' },
     });
-    expect(replacement.project.pins).toEqual([]);
+    expect(replacement.project.pins).toHaveLength(3);
     expect(replacement.project.pinSeq).toBe(0);
 
     const created = await store.execute(projectId, {
@@ -286,7 +286,7 @@ describe('numbers stay put', () => {
     const old = store.database
       .prepare("SELECT count(*) AS n FROM obj WHERE kind = 'screen' AND deleted_at IS NOT NULL")
       .get() as { n: number };
-    expect(old.n).toBe(1);
+    expect(old.n).toBe(0);
   });
 });
 

@@ -17,7 +17,7 @@ import {
 import { useState } from 'react';
 
 /**
- * The graph surface: one screen, its pins, and what a spec owes them. The three
+ * The graph surface: the project screens, their pins, and what a spec owes them. The three
  * columns answer three questions in order — what exists, how it is joined, and
  * what is still unowned. Nothing here edits pins; a pin is born in the studio
  * and arrives here as a node, which is what keeps one writer per object.
@@ -27,6 +27,7 @@ interface GraphViewProps {
   project: Project;
   nodes: GraphViewNode[];
   report: TraceabilityReport;
+  screenReport?: TraceabilityReport;
   maturity: Maturity;
   busy: boolean;
   selectedId: string | null;
@@ -133,10 +134,10 @@ export function GraphView(props: GraphViewProps) {
               링크 {project.graph.links.length}
             </span>
             <span
-              className={`count-chip${report.orphanPins.length > 0 ? ' count-chip--warn' : ''}`}
+              className={`count-chip${(props.screenReport??report).orphanPins.length > 0 ? ' count-chip--warn' : ''}`}
               data-testid="graph-orphan-pins"
             >
-              고아 핀 {report.orphanPins.length}
+              고아 핀 {(props.screenReport??report).orphanPins.length}
             </span>
             <span
               className={`count-chip${report.suspectLinks.length > 0 ? ' count-chip--warn' : ''}`}
@@ -202,7 +203,7 @@ export function GraphView(props: GraphViewProps) {
             {nodes.map((node) => {
               const at = positions.get(node.id);
               if (at === undefined) return null;
-              const orphan = report.orphanPins.includes(node.id) || report.orphanNodes.includes(node.id);
+              const orphan = (props.screenReport??report).orphanPins.includes(node.id) || report.orphanNodes.includes(node.id);
               return (
                 <g
                   key={node.id}
@@ -318,7 +319,7 @@ export function GraphView(props: GraphViewProps) {
                 <button
                   type="button"
                   className="btn btn--sm"
-                  disabled={busy}
+                  disabled={busy || !project.pins.some(p=>p.screenId===project.screen?.id)}
                   onClick={props.onProposal}
                   data-testid="graph-proposal-again"
                 >
@@ -333,7 +334,7 @@ export function GraphView(props: GraphViewProps) {
           type="button"
           className="btn btn--primary graph-suggest"
           onClick={props.onProposal}
-          disabled={busy || project.pins.length === 0}
+          disabled={busy || !project.pins.some(p=>p.screenId===project.screen?.id)}
           data-testid="graph-suggest"
           title="화면의 핀에서 정책·요구사항·QA 초안과 링크를 읽습니다"
         >
@@ -399,10 +400,10 @@ export function GraphView(props: GraphViewProps) {
             )}
           </p>
           <p className="trace-line" data-testid="trace-orphan-pins">
-            연결 없는 핀 <strong>{report.orphanPins.length}</strong>개
-            {report.orphanPins.length > 0 && (
+            연결 없는 핀 <strong>{(props.screenReport??report).orphanPins.length}</strong>개
+            {(props.screenReport??report).orphanPins.length > 0 && (
               <span className="trace-list">
-                {report.orphanPins.slice(0, 4).map((id) => {
+                {(props.screenReport??report).orphanPins.slice(0, 4).map((id) => {
                   const pin = nodes.find((node) => node.id === id);
                   return (
                     <button key={id} type="button" className="trace-jump" onClick={() => props.onSelect(id)}>
@@ -571,7 +572,7 @@ export function GraphView(props: GraphViewProps) {
         )}
 
         <section className="graph-panel graph-matrix" data-testid="rtm-matrix">
-          <h3 className="graph-panel-title">RTM 요약</h3>
+          <h3 className="graph-panel-title">RTM 요약 · 선택 화면</h3>
           <table>
             <thead>
               <tr>
@@ -583,7 +584,7 @@ export function GraphView(props: GraphViewProps) {
               {GRAPH_LINK_TYPES.map((type) => (
                 <tr key={type}>
                   <td>{GRAPH_LINK_LABEL[type]}</td>
-                  <td className="mono">{report.byType[type]}</td>
+                  <td className="mono">{(props.screenReport??report).byType[type]}</td>
                 </tr>
               ))}
             </tbody>

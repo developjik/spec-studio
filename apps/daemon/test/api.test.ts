@@ -96,7 +96,8 @@ function rawRequest(
 interface Envelope {
   project?: {
     id: string;
-    pins: Array<{ id: string; number: number; title: string }>;
+    pins: Array<{ id: string; number: number; title: string; screenId: string }>;
+    screens?: Array<{id:string}>;
     screen: { id: string; figmaUrl?: string | null } | null;
     docs: Array<{
       id: string;
@@ -117,7 +118,7 @@ interface Envelope {
   bundle?: {
     format: string;
     version: number;
-    project: { id: string; graph: { nodes: Array<{ id: string }> } };
+    project: { id: string; screen: {id:string}|null; graph: { nodes: Array<{ id: string }> } };
   };
   backup?: { path: string; bytes: number; at: string; projectId: string };
   opSeq?: number;
@@ -166,7 +167,7 @@ describe('the daemon API', () => {
   it('reports health and names SQLite as the canonical store', async () => {
     const health = await api<{ ok: boolean; schemaVersion: number; mode: string }>(daemon, '/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ ok: true, schemaVersion: 16, mode: 'sqlite' });
+    expect(health.body).toMatchObject({ ok: true, schemaVersion: 17, mode: 'sqlite' });
   });
 
   it('serves only the app origins', async () => {
@@ -720,5 +721,44 @@ describe('project.rename (#5)', () => {
     const reopened = await boot();
     const read = await api<{ project?: { name: string } }>(reopened, `/api/projects/${projectId}`);
     expect(read.body.project?.name).toBe('주문 상세 기획');
+  });
+});
+
+
+describe('multi-screen publish isolation',()=>{
+  it('creates a page per screen, previews the explicit screen and never updates its neighbor',async()=>{
+    const created=await api<Envelope>(daemon,'/api/projects',{body:{name:'화면별 발행'}});
+    const id=created.body.project!.id;
+    const command=async(command:unknown)=>api<Envelope>(daemon,`/api/projects/${id}/commands`,{body:{command}});
+    const second={...SCREEN,id:`S_${'e'.repeat(12)}`,code:'SCR-111',title:'다른 화면'};
+    await command({type:'screen.add',screen:SCREEN});
+    const single=await api<Envelope>(daemon,`/api/projects/${id}/export`);
+    expect(single.body.bundle?.version).toBe(1);expect(single.body.bundle?.project.screen?.id).toBe(SCREEN.id);
+    await command({type:'pin.create',screenId:SCREEN.id,pinType:'function',title:'첫 화면 전용',body:'',anchor:{x:.1,y:.2}});
+    await command({type:'screen.add',screen:second});
+    const exported=await api<Envelope>(daemon,`/api/projects/${id}/export`);
+    expect(exported.body.bundle?.version).toBe(2);
+    const imported=await api<Envelope>(daemon,'/api/projects/import',{body:{bundle:exported.body.bundle}});
+    expect(imported.status).toBe(201);expect(imported.body.project?.screens).toHaveLength(2);
+    expect(imported.body.project?.pins[0]?.screenId).toBe(imported.body.project?.screens?.[0]?.id);
+    const preview=await api<Envelope>(daemon,`/api/projects/${id}/publish/preview`,{body:{space:'SPEC',mode:'auto',screenId:SCREEN.id}});
+    expect(preview.body.preview?.body).toContain('첫 화면 전용');
+    const send=async(screenId:string)=>api<Envelope>(daemon,`/api/projects/${id}/publish`,{body:{target:target(),mode:'auto',screenId,overlayPng:PNG_BASE64}});
+    const first=await send(SCREEN.id); const other=await send(second.id);
+    expect(first.body.outcome?.status).toBe('created');
+    expect(other.body.outcome?.status).toBe('created');
+    expect(first.body.outcome?.page?.id).not.toBe(other.body.outcome?.page?.id);
+    expect((await send(SCREEN.id)).body.outcome?.status).toBe('skipped');
+    const detail=await api<Envelope>(daemon,`/api/projects/${id}`);
+    const pinId=detail.body.project!.pins[0]!.id;
+    await command({type:'screen.select',screenId:SCREEN.id});
+    await command({type:'pin.update',screenId:SCREEN.id,pinId,title:'첫 화면 수정'});
+    const updated=await send(SCREEN.id);
+    expect(updated.body.outcome?.status).toBe('updated');
+    expect(updated.body.outcome?.page?.id).toBe(first.body.outcome?.page?.id);
+    expect((await send(second.id)).body.outcome?.status).toBe('skipped');
+    expect(mock.pageCreates).toBe(2); expect(mock.pageUpdates).toBe(1);
+    const unknown=await send(`S_${'z'.repeat(12)}`);
+    expect(unknown.status).toBe(400);expect(mock.pageCreates).toBe(2);
   });
 });

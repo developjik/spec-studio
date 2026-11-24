@@ -237,12 +237,12 @@ describe('commands and events', () => {
     project = add(project, 'one');
     project = add(project, 'two', 'policy');
 
-    const nextScreen: Screen = { ...screen, id: `S_${'b'.repeat(12)}`, title: '주문 목록' };
+    const nextScreen: Screen = { ...screen, id: `S_${'b'.repeat(12)}`, code:'SCR-111', title: '주문 목록' };
     project = execute(project, { type: 'screen.attach', screen: nextScreen }, context()).project;
 
-    expect(project.pins).toHaveLength(0);
+    expect(project.pins).toHaveLength(2);
     expect(project.pinSeq).toBe(0);
-    expect(add(project, 'first on the next screen').pins[0]?.number).toBe(1);
+    expect(execute(project,{type:'pin.create',screenId:nextScreen.id,pinType:'function',title:'first',body:'',anchor:{x:.1,y:.1}},context()).project.pins.filter(p=>p.screenId===nextScreen.id)[0]?.number).toBe(1);
   });
 
   it('refuses to pin without a screen', () => {

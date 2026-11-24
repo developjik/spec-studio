@@ -142,7 +142,9 @@ export function listPublishRecords(
 ): PublishRecord[] {
   const rows = db
     .prepare(
-      'SELECT ' + COLUMNS + ' FROM publish_record WHERE project_id = ? ORDER BY at DESC, rowid DESC LIMIT ?',
+      'SELECT ' +
+        COLUMNS +
+        ' FROM publish_record WHERE project_id = ? ORDER BY at DESC, rowid DESC LIMIT ?',
     )
     .all(projectId, limit) as unknown as PublishRow[];
   return rows.map(publishFromRow);
@@ -150,30 +152,56 @@ export function listPublishRecords(
 
 export function findPublishBySpec(
   db: DatabaseSync,
-  input: { projectId: string; target: PublishTarget; spaceKey: string; specHash: string },
+  input: {
+    projectId: string;
+    screenId?: string;
+    target: PublishTarget;
+    spaceKey: string;
+    specHash: string;
+  },
 ): PublishRecord | null {
   const row = db
     .prepare(
-      'SELECT ' + COLUMNS + ' FROM publish_record ' +
-        "WHERE project_id = ? AND target = ? AND space_key = ? AND spec_hash = ? AND status = 'ok' " +
+      'SELECT ' +
+        COLUMNS +
+        ' FROM publish_record ' +
+        "WHERE project_id = ? AND target = ? AND space_key = ? AND spec_hash = ? AND (? IS NULL OR screen_id = ?) AND status = 'ok' " +
         'ORDER BY at DESC, rowid DESC LIMIT 1',
     )
-    .get(input.projectId, input.target, input.spaceKey, input.specHash) as unknown as
-    | PublishRow
-    | undefined;
+    .get(
+      input.projectId,
+      input.target,
+      input.spaceKey,
+      input.specHash,
+      input.screenId ?? null,
+      input.screenId ?? null,
+    ) as unknown as PublishRow | undefined;
   return row === undefined ? null : publishFromRow(row);
 }
 
 export function findLatestPublish(
   db: DatabaseSync,
-  input: { projectId: string; target: PublishTarget; spaceKey: string },
+  input: {
+    projectId: string;
+    screenId?: string;
+    target: PublishTarget;
+    spaceKey: string;
+  },
 ): PublishRecord | null {
   const row = db
     .prepare(
-      'SELECT ' + COLUMNS + ' FROM publish_record ' +
-        "WHERE project_id = ? AND target = ? AND space_key = ? AND status = 'ok' AND page_id IS NOT NULL " +
+      'SELECT ' +
+        COLUMNS +
+        ' FROM publish_record ' +
+        "WHERE project_id = ? AND target = ? AND space_key = ? AND (? IS NULL OR screen_id = ?) AND status = 'ok' AND page_id IS NOT NULL " +
         'ORDER BY at DESC, rowid DESC LIMIT 1',
     )
-    .get(input.projectId, input.target, input.spaceKey) as unknown as PublishRow | undefined;
+    .get(
+      input.projectId,
+      input.target,
+      input.spaceKey,
+      input.screenId ?? null,
+      input.screenId ?? null,
+    ) as unknown as PublishRow | undefined;
   return row === undefined ? null : publishFromRow(row);
 }

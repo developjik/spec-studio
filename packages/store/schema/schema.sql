@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -16,6 +16,8 @@ PRAGMA user_version = 16;
 -- store could read screens and pins but never know whose they were.
 CREATE TABLE project (
   id         TEXT PRIMARY KEY,                 -- PRJ_ + nanoid(12)
+  active_screen_id TEXT,
+  screen_order TEXT NOT NULL DEFAULT '[]',
   name       TEXT NOT NULL CHECK (length(trim(name)) > 0),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

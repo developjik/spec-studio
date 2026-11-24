@@ -1,5 +1,13 @@
-import type { Block, Doc, EditableNodeType, GraphLink, GraphNode, Pin, Project } from '@spec-studio/protocol';
-import type { IdKind } from './project';
+import type {
+  Block,
+  Doc,
+  EditableNodeType,
+  GraphLink,
+  GraphNode,
+  Pin,
+  Project,
+} from '@spec-studio/protocol';
+import { normalizeProject, type IdKind } from './project';
 
 /**
  * Import is a copy, not a link. Every id in the bundle is replaced so the new
@@ -11,7 +19,9 @@ import type { IdKind } from './project';
 export type RemapId = (kind: IdKind, nodeType?: EditableNodeType) => string;
 
 export function remapProject(project: Project, nextId: RemapId): Project {
-  const screenId = project.screen === null ? null : nextId('screen');
+  project = normalizeProject(project);
+  const screens = project.screens ?? (project.screen ? [project.screen] : []);
+  const screenIds = new Map(screens.map((s) => [s.id, nextId('screen')]));
   const pinIds = new Map<string, string>();
   for (const pin of project.pins) pinIds.set(pin.id, nextId('pin'));
   const nodeIds = new Map<string, string>();
@@ -22,14 +32,14 @@ export function remapProject(project: Project, nextId: RemapId): Project {
   for (const evidence of project.evidence) evidenceIds.set(evidence.id, nextId('evidence'));
 
   const mapRef = (id: string): string | null => {
-    if (screenId !== null && project.screen?.id === id) return screenId;
+    if (screenIds.has(id)) return screenIds.get(id)!;
     return pinIds.get(id) ?? nodeIds.get(id) ?? ideaIds.get(id) ?? evidenceIds.get(id) ?? null;
   };
 
   const pins: Pin[] = project.pins.map((pin) => ({
     ...pin,
     id: pinIds.get(pin.id)!,
-    screenId: screenId!,
+    screenId: screenIds.get(pin.screenId)!,
   }));
 
   const nodes: GraphNode[] = project.graph.nodes.map((node) => ({
@@ -46,17 +56,38 @@ export function remapProject(project: Project, nextId: RemapId): Project {
     links.push({ ...link, id: nextId('link'), src, dst });
   }
 
-  const ideas = project.ideas.map((idea) => ({ ...idea, id: ideaIds.get(idea.id)! }));
-  const evidence = project.evidence.map((row) => ({ ...row, id: evidenceIds.get(row.id)! }));
-  const docs = project.docs.map((doc) => remapDoc(doc, nextId, pinIds));
+  const ideas = project.ideas.map((idea) => ({
+    ...idea,
+    id: ideaIds.get(idea.id)!,
+  }));
+  const evidence = project.evidence.map((row) => ({
+    ...row,
+    id: evidenceIds.get(row.id)!,
+  }));
+  const docs = project.docs.map((doc) => ({
+    ...remapDoc(doc, nextId, pinIds),
+    screenId: doc.screenId ? (screenIds.get(doc.screenId) ?? null) : null,
+  }));
 
   return {
     ...project,
     id: nextId('project'),
+    screens: screens.map((s) => ({ ...s, id: screenIds.get(s.id)! })),
+    activeScreenId: project.screen ? screenIds.get(project.screen.id)! : null,
+    screenPinSeq: Object.fromEntries(
+      screens.map((s) => [
+        screenIds.get(s.id)!,
+        project.screenPinSeq?.[s.id] ?? (project.screen?.id === s.id ? project.pinSeq : 0),
+      ]),
+    ),
     screen:
       project.screen === null
         ? null
-        : { ...project.screen, id: screenId!, createdAt: project.screen.createdAt },
+        : {
+            ...project.screen,
+            id: screenIds.get(project.screen.id)!,
+            createdAt: project.screen.createdAt,
+          },
     pins,
     docs,
     proposals: [],

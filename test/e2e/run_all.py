@@ -7,7 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = Path(os.environ['E2E_ARTIFACTS'])
-HARNESSES = ('v1', 'w3', 'w4', 'p2', 'e1', 'f2f3', 'queue')
+HARNESSES = ('v1', 'w3', 'w4', 'p2', 'e1', 'f2f3', 'queue', 'screens')
 
 
 def run_harness(name):

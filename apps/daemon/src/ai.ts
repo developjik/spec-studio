@@ -180,7 +180,7 @@ const ENDPOINT_KEY_REQUIRED_MESSAGE =
 function localPlan(project: Project, request: AiProposalRequest, why: string): AiCommandPlan {
   if (request.mode === 'graph') {
     return {
-      command: { type: 'graph.proposal.create' },
+      command: { type: 'graph.proposal.create', ...(project.screen ? { screenId: project.screen.id } : {}) },
       source: 'rule',
       provider: 'local',
       model: '',
@@ -221,6 +221,18 @@ export async function planAiProposal(
   runtime: AiRuntime,
 ): Promise<AiCommandPlan> {
   const request = AiProposalRequestSchema.parse(raw);
+  // A document request uses its owning screen, even if another screen is open.
+  const doc = request.docId ? project.docs.find((d) => d.id === request.docId) : undefined;
+  const screenId = doc?.screenId ?? project.activeScreenId ?? project.screen?.id;
+  const screen =
+    (project.screens ?? (project.screen ? [project.screen] : [])).find((s) => s.id === screenId) ??
+    project.screen;
+  project = {
+    ...project,
+    screen,
+    pins: project.pins.filter((p) => p.screenId === screenId),
+    docs: project.docs.filter((d) => d.screenId == null || d.screenId === screenId),
+  };
   const preset = findPreset(request.presetId ?? '');
   const model =
     request.model.trim() === '' ? defaultModelFor(request.provider, preset) : request.model.trim();
@@ -273,6 +285,7 @@ export async function planAiProposal(
       return {
         command: {
           type: 'graph.proposal.create',
+          ...(project.screen ? { screenId: project.screen.id } : {}),
           draft,
           source: 'llm',
           provider: request.provider,

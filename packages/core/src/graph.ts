@@ -108,30 +108,38 @@ export function screenViewOf(screen: Screen): GraphViewNode {
 /** The six types in one list, screens first, then their pins. */
 export function graphViewNodes(project: Project): GraphViewNode[] {
   const nodes: GraphViewNode[] = [];
-  if (project.screen !== null) nodes.push(screenViewOf(project.screen));
-  for (const pin of project.pins) nodes.push(pinViewOf(pin, project.screen));
+  const screens = project.screens ?? (project.screen ? [project.screen] : []);
+  for (const screen of screens) nodes.push(screenViewOf(screen));
+  for (const pin of project.pins)
+    nodes.push(pinViewOf(pin, screens.find((s) => s.id === pin.screenId) ?? null));
   for (const node of project.graph.nodes) nodes.push(nodeViewOf(node));
   return nodes;
 }
 
 export function graphTypeOfId(project: Project, id: string): GraphNodeType | null {
-  if (project.screen !== null && project.screen.id === id) return 'screen';
+  if ((project.screens ?? (project.screen ? [project.screen] : [])).some((s) => s.id === id))
+    return 'screen';
   if (project.pins.some((pin) => pin.id === id)) return 'pin';
   const node = project.graph.nodes.find((candidate) => candidate.id === id);
   return node === undefined ? null : node.type;
 }
 
 export function graphTitleOfId(project: Project, id: string): string {
-  if (project.screen !== null && project.screen.id === id) return project.screen.title;
+  const screen = (project.screens ?? (project.screen ? [project.screen] : [])).find(
+    (s) => s.id === id,
+  );
+  if (screen) return screen.title;
   const pin = project.pins.find((candidate) => candidate.id === id);
-  if (pin !== undefined) return `${project.screen?.code ?? 'SCR'}-${pin.number} ${pin.title}`;
+  if (pin !== undefined)
+    return `${(project.screens ?? (project.screen ? [project.screen] : [])).find((s) => s.id === pin.screenId)?.code ?? 'SCR'}-${pin.number} ${pin.title}`;
   return project.graph.nodes.find((candidate) => candidate.id === id)?.title ?? id;
 }
 
 /** Drops links whose ends no longer exist, so a reload never draws a ghost edge. */
 export function normalizeGraph(project: Project): Graph {
   const known = new Set<string>();
-  if (project.screen !== null) known.add(project.screen.id);
+  for (const screen of project.screens ?? (project.screen ? [project.screen] : []))
+    known.add(screen.id);
   for (const pin of project.pins) known.add(pin.id);
   for (const node of project.graph.nodes) known.add(node.id);
   // Ideas and evidence are link ends too (A1) — a references link naming an
@@ -148,9 +156,10 @@ export function normalizeGraph(project: Project): Graph {
 export function traceability(project: Project): TraceabilityReport {
   const links = project.graph.links;
   const touched = new Set<string>();
-  const byType = Object.fromEntries(
-    Object.keys(GRAPH_LINK_LABEL).map((key) => [key, 0]),
-  ) as Record<GraphLinkType, number>;
+  const byType = Object.fromEntries(Object.keys(GRAPH_LINK_LABEL).map((key) => [key, 0])) as Record<
+    GraphLinkType,
+    number
+  >;
   for (const link of links) {
     touched.add(link.src);
     touched.add(link.dst);
@@ -230,7 +239,9 @@ export function evaluateMaturityLevel(
   );
 
   const report = traceability(project);
-  const structural = project.graph.nodes.filter((node) => node.type === 'req' || node.type === 'policy');
+  const structural = project.graph.nodes.filter(
+    (node) => node.type === 'req' || node.type === 'policy',
+  );
   const structuralLinked = structural.filter((node) => !report.orphanNodes.includes(node.id));
   const qaLinked = project.graph.nodes
     .filter((node) => node.type === 'qa')
@@ -265,7 +276,10 @@ export function evaluateMaturityLevel(
       id: 'no-stale',
       label: 'stale 인용이 0건이다',
       done: stale === 0 && project.pins.length > 0,
-      hint: stale === 0 ? '핀을 고치면 문단의 확인 배지를 먼저 해제합니다.' : `확인할 인용 ${stale}건이 남았습니다.`,
+      hint:
+        stale === 0
+          ? '핀을 고치면 문단의 확인 배지를 먼저 해제합니다.'
+          : `확인할 인용 ${stale}건이 남았습니다.`,
     },
     {
       id: 'structured-node',
@@ -335,7 +349,10 @@ interface DraftNode {
  * would prove it. Only what is missing is proposed — running it twice in a row
  * produces nothing the second time instead of duplicates.
  */
-export function extractGraphProposal(project: Project, options: ProposalDraftOptions): GraphProposal {
+export function extractGraphProposal(
+  project: Project,
+  options: ProposalDraftOptions,
+): GraphProposal {
   if (project.screen === null) {
     return emptyProposal(options, '화면이 없어 핀에서 초안을 읽을 수 없습니다.');
   }
@@ -391,7 +408,12 @@ export function extractGraphProposal(project: Project, options: ProposalDraftOpt
       case 'exception': {
         const req = addNode('req', `예외: ${pin.title}`, exceptionSentence(pin), pin.id);
         if (req !== null) addLink('handles_edge', pinRef, req);
-        const qa = addNode('qa', `${label} 예외 확인`, qaSentence(pin, '예외 상황에서 안내와 복구 경로가 보인다'), pin.id);
+        const qa = addNode(
+          'qa',
+          `${label} 예외 확인`,
+          qaSentence(pin, '예외 상황에서 안내와 복구 경로가 보인다'),
+          pin.id,
+        );
         if (qa !== null) {
           addLink('verifies', qa, pinRef);
           if (req !== null) addLink('verifies', qa, req);
@@ -399,17 +421,32 @@ export function extractGraphProposal(project: Project, options: ProposalDraftOpt
         break;
       }
       case 'state': {
-        const qa = addNode('qa', `${label} 상태 확인`, qaSentence(pin, `${pin.title} 상태에서 화면이 깨지지 않는다`), pin.id);
+        const qa = addNode(
+          'qa',
+          `${label} 상태 확인`,
+          qaSentence(pin, `${pin.title} 상태에서 화면이 깨지지 않는다`),
+          pin.id,
+        );
         if (qa !== null) addLink('verifies', qa, pinRef);
         break;
       }
       case 'data': {
-        const contract = addNode('contract', pin.title, pin.body || `${pin.title} 데이터의 모양과 출처를 정의한다.`, pin.id);
+        const contract = addNode(
+          'contract',
+          pin.title,
+          pin.body || `${pin.title} 데이터의 모양과 출처를 정의한다.`,
+          pin.id,
+        );
         if (contract !== null) addLink('derived_from', contract, pinRef);
         break;
       }
       case 'permission': {
-        const policy = addNode('policy', pin.title, pin.body || `${pin.title} 권한이 없는 사용자는 이 동작을 볼 수 없다.`, pin.id);
+        const policy = addNode(
+          'policy',
+          pin.title,
+          pin.body || `${pin.title} 권한이 없는 사용자는 이 동작을 볼 수 없다.`,
+          pin.id,
+        );
         if (policy !== null) addLink('governs', policy, pinRef);
         break;
       }
@@ -417,7 +454,12 @@ export function extractGraphProposal(project: Project, options: ProposalDraftOpt
       default: {
         const req = addNode('req', pin.title, pin.body || `${pin.title} 동작이 제공된다.`, pin.id);
         if (req !== null) addLink('implements', pinRef, req);
-        const qa = addNode('qa', `${label} 동작 확인`, qaSentence(pin, `${pin.title} 동작이 정상 흐름에서 동작한다`), pin.id);
+        const qa = addNode(
+          'qa',
+          `${label} 동작 확인`,
+          qaSentence(pin, `${pin.title} 동작이 정상 흐름에서 동작한다`),
+          pin.id,
+        );
         if (qa !== null) {
           addLink('verifies', qa, pinRef);
           if (req !== null) addLink('verifies', qa, req);
@@ -430,14 +472,25 @@ export function extractGraphProposal(project: Project, options: ProposalDraftOpt
   // A pin with no link yet is worth a reference even when nothing else can be
   // inferred: it keeps the pin out of the orphan list without inventing meaning.
   for (const pin of project.pins) {
-    if (!touched.has(pin.id) && !links.some((link) => link.src === `pin:${pin.id}` || link.dst === `pin:${pin.id}`)) {
-      const req = addNode('req', pin.title, pin.body || `${pin.title} 요구사항을 정리한다.`, pin.id);
+    if (
+      !touched.has(pin.id) &&
+      !links.some((link) => link.src === `pin:${pin.id}` || link.dst === `pin:${pin.id}`)
+    ) {
+      const req = addNode(
+        'req',
+        pin.title,
+        pin.body || `${pin.title} 요구사항을 정리한다.`,
+        pin.id,
+      );
       if (req !== null) addLink('references', `pin:${pin.id}`, req);
     }
   }
 
   if (nodes.length === 0) {
-    return emptyProposal(options, '핀에서 새로 추출할 초안이 없습니다. 이미 그래프에 반영되어 있습니다.');
+    return emptyProposal(
+      options,
+      '핀에서 새로 추출할 초안이 없습니다. 이미 그래프에 반영되어 있습니다.',
+    );
   }
 
   const counts = countByType(nodes);
@@ -522,7 +575,9 @@ export function buildGraphProposalFromDraft(
     existingTitles.add(signature);
     keyTypes.set(draftNode.key, draftNode.type);
     // A citation the screen cannot produce is dropped, not invented.
-    const cited = draftNode.pins.map((number) => pinsByNumber.get(number)).find((pin) => pin !== undefined);
+    const cited = draftNode.pins
+      .map((number) => pinsByNumber.get(number))
+      .find((pin) => pin !== undefined);
     nodes.push({
       key: draftNode.key,
       type: draftNode.type,
@@ -539,7 +594,8 @@ export function buildGraphProposalFromDraft(
     );
   }
 
-  type DraftEnd = { ref: string; kind: 'canvas'; type: GraphNodeType } | { ref: string; kind: 'idea' };
+  type DraftEnd =
+    { ref: string; kind: 'canvas'; type: GraphNodeType } | { ref: string; kind: 'idea' };
   const resolveEnd = (ref: string): DraftEnd | null => {
     const at = ref.indexOf(':');
     const scheme = ref.slice(0, at);
@@ -586,7 +642,13 @@ export function buildGraphProposalFromDraft(
   }
 
   const counts = countByType(
-    nodes.map((node) => ({ key: node.key, type: node.type, title: node.title, body: node.body, pinId: node.pinId })),
+    nodes.map((node) => ({
+      key: node.key,
+      type: node.type,
+      title: node.title,
+      body: node.body,
+      pinId: node.pinId,
+    })),
   );
   const summary =
     draft.summary.trim() === ''
@@ -614,16 +676,27 @@ function policySentence(pin: Pin): string {
 
 function exceptionSentence(pin: Pin): string {
   const body = pin.body.trim();
-  return body === '' ? `${pin.title} 상황에서 사용자는 이유와 다음 행동을 볼 수 있어야 한다.` : body;
+  return body === ''
+    ? `${pin.title} 상황에서 사용자는 이유와 다음 행동을 볼 수 있어야 한다.`
+    : body;
 }
 
 export function qaSentence(pin: Pin, expectation: string): string {
   const precondition = pin.body.trim() === '' ? pin.title : pin.body.trim();
-  return [`사전조건: ${precondition}`, `기대 결과: ${expectation}.`, '판정: 통과 / 실패 / 차단'].join('\n');
+  return [
+    `사전조건: ${precondition}`,
+    `기대 결과: ${expectation}.`,
+    '판정: 통과 / 실패 / 차단',
+  ].join('\n');
 }
 
 function countByType(nodes: readonly DraftNode[]): Record<EditableNodeType, number> {
-  const counts: Record<EditableNodeType, number> = { req: 0, policy: 0, contract: 0, qa: 0 };
+  const counts: Record<EditableNodeType, number> = {
+    req: 0,
+    policy: 0,
+    contract: 0,
+    qa: 0,
+  };
   for (const node of nodes) counts[node.type] += 1;
   return counts;
 }

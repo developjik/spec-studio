@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   createProject,
+  pinFingerprint,
   evaluateMaturityLevel,
   execute,
   graphViewNodes,
@@ -134,6 +135,8 @@ export default function App() {
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [filter, setFilter] = useState<PinFilter>('all');
   const [draftAnchor, setDraftAnchor] = useState<Anchor | null>(null);
+  const previousScreen=useRef<string|null>(null);
+  useEffect(()=>{const id=project?.screen?.id??null;if(previousScreen.current!==null&&previousScreen.current!==id){setDraftAnchor(null);setSelectedPinId(null);setActiveDocId(current=>project?.docs.some(d=>d.id===current&&(d.screenId==null||d.screenId===id))?current:null);setFocusBlockId(null);setFilter('all');}previousScreen.current=id;},[project?.screen?.id]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -216,7 +219,10 @@ export default function App() {
         setProject(normalizeProject(detail.project));
         setPublishes(detail.records);
         setRevertable(detail.revert);
-        setNotice({ tone: 'info', text: 'SQLite 데몬에 연결되어 로컬 DB를 정본으로 사용합니다.' });
+        setNotice({
+          tone: 'info',
+          text: 'SQLite 데몬에 연결되어 로컬 DB를 정본으로 사용합니다.',
+        });
       } catch (error) {
         if (!alive) return;
         setDaemonStatus('offline');
@@ -373,7 +379,10 @@ export default function App() {
     if (name === null || name.trim() === project.name) return;
     const result = await applyCommand({ type: 'project.rename', name });
     if (result !== null) {
-      setNotice({ tone: 'info', text: `프로젝트 이름을 '${result.project.name}'(으)로 바꿨습니다.` });
+      setNotice({
+        tone: 'info',
+        text: `프로젝트 이름을 '${result.project.name}'(으)로 바꿨습니다.`,
+      });
     }
   };
 
@@ -383,7 +392,10 @@ export default function App() {
       if (daemonStatus === 'connected') {
         try {
           const created = await client.createProject(screen.title);
-          const result = await client.execute(created.id, { type: 'screen.attach', screen });
+          const result = await client.execute(created.id, {
+            type: 'screen.attach',
+            screen,
+          });
           setDaemonProjectId(created.id);
           setProject(normalizeProject(result.project));
           setPublishes([]);
@@ -397,22 +409,18 @@ export default function App() {
         }
         return;
       }
-      const created = createProject({ id: newProjectId(), name: screen.title, at });
+      const created = createProject({
+        id: newProjectId(),
+        name: screen.title,
+        at,
+      });
       const result = execute(created, { type: 'screen.attach', screen }, { at, nextId });
       setProject(result.project);
       setDraftAnchor(null);
       setSelectedPinId(null);
       return;
     }
-    if (
-      project.screen !== null &&
-      project.screen.id !== screen.id &&
-      project.pins.length > 0 &&
-      !window.confirm('새 화면을 열면 지금 화면의 핀 목록이 비워집니다. 계속할까요?')
-    ) {
-      return;
-    }
-    const result = await applyCommand({ type: 'screen.attach', screen });
+    const result = await applyCommand({ type: 'screen.add', screen });
     if (result !== null) {
       setSelectedPinId(null);
       setDraftAnchor(null);
@@ -422,15 +430,29 @@ export default function App() {
     }
   };
 
+  const selectScreen = async (screenId: string) => {
+    const result = await applyCommand({ type: 'screen.select', screenId });
+    if (result) {
+      setSelectedPinId(null);
+      setDraftAnchor(null);
+      setActiveDocId(null);
+      setFocusBlockId(null);
+      setFilter('all');
+    }
+  };
+
   const attachFromFile = async (file: File) => {
     try {
       const image = await imageFromFile(file);
       const at = nowIso();
-      const title = image.name.replace(/\.[^./\\]+$/, '').trim().slice(0, 40);
+      const title = image.name
+        .replace(/\.[^./\\]+$/, '')
+        .trim()
+        .slice(0, 40);
       await attachScreen({
         id: newScreenId(),
         title: title === '' ? '업로드한 화면' : title,
-        code: 'SCR-101',
+        code: `SCR-${Math.max(100, ...(project?.screens ?? []).map((s) => Number(s.code.slice(4)))) + 1}`,
         ref: { kind: 'image', value: image.dataUrl, label: image.name },
         viewport: { width: image.width, height: image.height },
         createdAt: at,
@@ -510,7 +532,11 @@ export default function App() {
   const deletePin = async (pin: Pin) => {
     const screen = project?.screen ?? null;
     if (screen === null) return;
-    const result = await applyCommand({ type: 'pin.delete', screenId: screen.id, pinId: pin.id });
+    const result = await applyCommand({
+      type: 'pin.delete',
+      screenId: screen.id,
+      pinId: pin.id,
+    });
     if (result !== null && selectedPinId === pin.id) setSelectedPinId(null);
   };
 
@@ -532,13 +558,22 @@ export default function App() {
   const movePin = (pinId: string, anchor: Anchor) => {
     const screen = project?.screen ?? null;
     if (screen === null) return;
-    void applyCommand({ type: 'pin.update', screenId: screen.id, pinId, anchor });
+    void applyCommand({
+      type: 'pin.update',
+      screenId: screen.id,
+      pinId,
+      anchor,
+    });
   };
 
   const saveFigmaUrl = (url: string | null) => {
     const screen = project?.screen ?? null;
     if (screen === null) return;
-    void applyCommand({ type: 'screen.update', screenId: screen.id, figmaUrl: url });
+    void applyCommand({
+      type: 'screen.update',
+      screenId: screen.id,
+      figmaUrl: url,
+    });
   };
 
   /**
@@ -556,16 +591,16 @@ export default function App() {
     }
   };
 
-  const docs = project?.docs ?? [];
+  const docs = (project?.docs ?? []).filter(
+    (d) => d.screenId == null || d.screenId === project?.screen?.id,
+  );
   const doc = activeDocOf(docs, activeDocId);
   /** Handoff sheets print the spec, the same doc the daemon publishes. */
   const specDoc = activeDocOf(docs, null);
   // A doc's card is its *latest* proposal row — a fresh create appends behind
   // the decided one it retired, so the first match can be yesterday's card.
   const proposal =
-    doc !== null
-      ? (project?.proposals.filter((p) => p.docId === doc.id).at(-1) ?? null)
-      : null;
+    doc !== null ? (project?.proposals.filter((p) => p.docId === doc.id).at(-1) ?? null) : null;
 
   /** The URL names the doc on screen, so a reload — or a shared link — reopens it. */
   useEffect(() => {
@@ -614,7 +649,12 @@ export default function App() {
 
   const changeBlockType = (blockId: string, blockType: BlockType) => {
     if (doc === null) return;
-    void runDoc({ type: 'doc.block.update', docId: doc.id, blockId, blockType });
+    void runDoc({
+      type: 'doc.block.update',
+      docId: doc.id,
+      blockId,
+      blockType,
+    });
   };
 
   const deleteBlock = (blockId: string) => {
@@ -624,7 +664,12 @@ export default function App() {
 
   const moveBlock = (blockId: string, afterBlockId: string | null) => {
     if (doc === null) return;
-    void runDoc({ type: 'doc.block.move', docId: doc.id, blockId, afterBlockId });
+    void runDoc({
+      type: 'doc.block.move',
+      docId: doc.id,
+      blockId,
+      afterBlockId,
+    });
   };
 
   const linkBlockPin = (blockId: string, pinId: string) => {
@@ -643,7 +688,12 @@ export default function App() {
     setBusy(true);
     try {
       for (const pinId of pinIds) {
-        await applyCommand({ type: 'doc.stale.clear', docId: doc.id, blockId, pinId });
+        await applyCommand({
+          type: 'doc.stale.clear',
+          docId: doc.id,
+          blockId,
+          pinId,
+        });
       }
     } finally {
       setBusy(false);
@@ -657,7 +707,7 @@ export default function App() {
 
   const decideProposal = (decision: 'adopt' | 'reject', proposalId: string) => {
     if (doc === null) return;
-    const selected = project?.proposals.find(p => p.id === proposalId && p.docId === doc.id);
+    const selected = project?.proposals.find((p) => p.id === proposalId && p.docId === doc.id);
     if (selected === undefined) return;
     const summary = selected.summary;
     const patches = selected.patches.length;
@@ -665,23 +715,23 @@ export default function App() {
       void runDoc({ type: 'proposal.reject', docId: doc.id, proposalId });
       return;
     }
-    void runDoc(
-      { type: 'proposal.adopt', docId: doc.id, proposalId },
-      (result) => {
-        if (result.opSeq === undefined) return;
-        setRevertable({
-          seq: result.opSeq,
-          at: nowIso(),
-          summary,
-          blocks: patches,
-          kind: 'doc',
-          op: 'proposal.adopt',
-          nodes: 0,
-          proposalId: proposalId,
-        });
-        setNotice({ tone: 'info', text: '제안을 채택했습니다. 문단이 갱신되었습니다.' });
-      },
-    );
+    void runDoc({ type: 'proposal.adopt', docId: doc.id, proposalId }, (result) => {
+      if (result.opSeq === undefined) return;
+      setRevertable({
+        seq: result.opSeq,
+        at: nowIso(),
+        summary,
+        blocks: patches,
+        kind: 'doc',
+        op: 'proposal.adopt',
+        nodes: 0,
+        proposalId: proposalId,
+      });
+      setNotice({
+        tone: 'info',
+        text: '제안을 채택했습니다. 문단이 갱신되었습니다.',
+      });
+    });
   };
 
   /** Restores `op_log.before` — the exact block state before the adoption. */
@@ -730,7 +780,10 @@ export default function App() {
       } catch (error) {
         setNotice({
           tone: 'error',
-          text: error instanceof DaemonError ? error.message : '데몬에 새 프로젝트를 만들지 못했습니다.',
+          text:
+            error instanceof DaemonError
+              ? error.message
+              : '데몬에 새 프로젝트를 만들지 못했습니다.',
         });
       }
       return;
@@ -748,7 +801,10 @@ export default function App() {
     if (sqliteMode && daemonProjectId !== null) {
       try {
         downloadBundle(await client.exportProject(daemonProjectId));
-        setNotice({ tone: 'info', text: 'SQLite 프로젝트를 번들 JSON으로 내보냈습니다.' });
+        setNotice({
+          tone: 'info',
+          text: 'SQLite 프로젝트를 번들 JSON으로 내보냈습니다.',
+        });
       } catch (error) {
         setNotice({
           tone: 'error',
@@ -847,7 +903,10 @@ export default function App() {
       setAiCardSource(null);
       setAiResult(null);
       setAiSource(null);
-      setNotice({ tone: 'info', text: `프로젝트 "${detail.project.name}"을(를) 열었습니다.` });
+      setNotice({
+        tone: 'info',
+        text: `프로젝트 "${detail.project.name}"을(를) 열었습니다.`,
+      });
     } catch (error) {
       setNotice({
         tone: 'error',
@@ -945,7 +1004,11 @@ export default function App() {
             presetId: aiSettings.presetId,
             apiKey: aiSettings.apiKey.trim(),
           });
-          setAiSettings((current) => ({ ...current, apiKey: '', saveToKeychain: false }));
+          setAiSettings((current) => ({
+            ...current,
+            apiKey: '',
+            saveToKeychain: false,
+          }));
           refreshAiStatus();
           setAiResult({
             tone: 'info',
@@ -1001,7 +1064,10 @@ export default function App() {
    */
   const runAiProposal = async (mode: AiProposalMode) => {
     if (!sqliteMode || daemonProjectId === null) {
-      setAiResult({ tone: 'error', text: 'SQLite 데몬 모드에서만 제안을 추출할 수 있습니다.' });
+      setAiResult({
+        tone: 'error',
+        text: 'SQLite 데몬 모드에서만 제안을 추출할 수 있습니다.',
+      });
       return;
     }
     setAiBusy(true);
@@ -1041,7 +1107,10 @@ export default function App() {
 
   const captureIdea = (input: InboxCaptureInput) => {
     if (project === null) {
-      setNotice({ tone: 'error', text: '프로젝트를 먼저 열어야 인박스에 저장할 수 있습니다.' });
+      setNotice({
+        tone: 'error',
+        text: '프로젝트를 먼저 열어야 인박스에 저장할 수 있습니다.',
+      });
       return;
     }
     // Image paste stays a screen-only thing: a data URL cannot ride the
@@ -1072,7 +1141,11 @@ export default function App() {
       });
       if (created === null) return;
       const docCreated = created.events.find((event) => event.type === 'doc.created');
-      await applyCommand({ type: 'idea.update', ideaId: idea.id, state: 'promoted' });
+      await applyCommand({
+        type: 'idea.update',
+        ideaId: idea.id,
+        state: 'promoted',
+      });
       if (docCreated !== undefined && docCreated.type === 'doc.created') {
         // MN-2: a promoted spec never opens empty — the brief summary when
         // this session ran one for the idea, else the idea's own text.
@@ -1085,7 +1158,10 @@ export default function App() {
         });
         setActiveDocId(docCreated.doc.id);
       }
-      setNotice({ tone: 'info', text: `아이디어를 스펙 문서로 승격했습니다: ${idea.title}` });
+      setNotice({
+        tone: 'info',
+        text: `아이디어를 스펙 문서로 승격했습니다: ${idea.title}`,
+      });
     } finally {
       setBusy(false);
     }
@@ -1098,7 +1174,10 @@ export default function App() {
    */
   const runBrief = async (ideaId: string, evidenceIds: string[]) => {
     if (!sqliteMode || daemonProjectId === null) {
-      setNotice({ tone: 'error', text: 'SQLite 데몬 모드에서만 브리프를 만들 수 있습니다.' });
+      setNotice({
+        tone: 'error',
+        text: 'SQLite 데몬 모드에서만 브리프를 만들 수 있습니다.',
+      });
       return;
     }
     setAiBusy(true);
@@ -1167,7 +1246,12 @@ export default function App() {
   /** F3-3: the same `link.create` the graph speaks — references → evidence. */
   const linkEvidence = (srcNodeId: string, evidenceId: string) => {
     void runDoc(
-      { type: 'link.create', linkType: 'references', src: srcNodeId, dst: evidenceId },
+      {
+        type: 'link.create',
+        linkType: 'references',
+        src: srcNodeId,
+        dst: evidenceId,
+      },
       () => void reload(),
     );
   };
@@ -1208,13 +1292,25 @@ export default function App() {
   };
 
   const screen = project?.screen ?? null;
-  const pins = project?.pins ?? [];
+  const pins = (project?.pins ?? []).filter((p) => p.screenId === screen?.id);
+  const selectedProject = project
+    ? { ...project, pins, screens: screen ? [screen] : [], docs }
+    : null;
   const maturity =
     project === null
       ? EMPTY_MATURITY
       : evaluateMaturityLevel(project, {
           published: publishes.some((record) => record.status === 'ok'),
         });
+  if(selectedProject){
+    const ids=new Set([...(screen?[screen.id]:[]),...pins.map(p=>p.id)]);
+    let changed=true;
+    while(changed){changed=false;for(const link of selectedProject.graph.links){
+      if(ids.has(link.src)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.dst)&&!ids.has(link.dst)){ids.add(link.dst);changed=true;}
+      if(ids.has(link.dst)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.src)&&!ids.has(link.src)){ids.add(link.src);changed=true;}
+    }}
+    selectedProject.graph={nodes:selectedProject.graph.nodes.filter(n=>ids.has(n.id)),links:selectedProject.graph.links.filter(l=>(ids.has(l.src)&&ids.has(l.dst))||pins.some(p=>p.id===l.src||p.id===l.dst))};
+  }
   const report = project === null ? null : traceability(project);
   const graphNodes = project === null ? [] : graphViewNodes(project);
   const nextNumber = (project?.pinSeq ?? 0) + 1;
@@ -1222,7 +1318,10 @@ export default function App() {
   const ungroundedReqs =
     project === null
       ? []
-      : ungroundedRequirements(project).map((node) => ({ id: node.id, title: node.title }));
+      : ungroundedRequirements(project).map((node) => ({
+          id: node.id,
+          title: node.title,
+        }));
   const ungroundedIds = new Set(ungroundedReqs.map((req) => req.id));
   /** The evidence panel's 연결 targets: every requirement, 미근거 first. */
   const reqOptions: EvidenceReqOption[] =
@@ -1255,14 +1354,23 @@ export default function App() {
             : daemonProjects,
         ).map((summary) =>
           summary.id === daemonProjectId && project !== null
-            ? { id: summary.id, name: project.name, screenTitle: project.screen?.title ?? null }
-            : { id: summary.id, name: summary.name, screenTitle: summary.screenTitle },
+            ? {
+                id: summary.id,
+                name: project.name,
+                screenTitle: project.screen?.title ?? null,
+              }
+            : {
+                id: summary.id,
+                name: summary.name,
+                screenTitle: summary.screenTitle,
+              },
         );
-
 
   return (
     <div className="app">
       <TopBar
+        screens={project?.screens ?? []}
+        onSelectScreen={(id) => void selectScreen(id)}
         screen={screen}
         daemonStatus={daemonStatus}
         projects={switcherProjects}
@@ -1285,6 +1393,105 @@ export default function App() {
         aiSource={aiSource}
       />
 
+      {project !== null && (
+        <nav className="screen-rail" aria-label="화면 목록">
+          <label>
+            화면{' '}
+            <select
+              aria-label="현재 화면"
+              value={screen?.id ?? ''}
+              onChange={(e) => void selectScreen(e.target.value)}
+            >
+              {(project.screens ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} · {s.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="screen-cards">
+            {(project.screens ?? []).map((s, index) => (
+              <div className={`screen-card${s.id === screen?.id ? ' is-active' : ''}`} key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => void selectScreen(s.id)}
+                  aria-current={s.id === screen?.id ? 'page' : undefined}
+                >
+                  <strong>{s.title}</strong>
+                  <span>
+                    {s.code} · 핀 {project.pins.filter((p) => p.screenId === s.id).length}개
+                    {project.docs.some(
+                      (d) =>
+                        d.screenId === s.id &&
+                        d.blocks.some((b) =>
+                          b.pinRefs.some((r) => {
+                            const pin = project.pins.find((p) => p.id === r.pinId);
+                            return !pin || pinFingerprint(pin) !== r.fingerprint;
+                          }),
+                        ),
+                    )
+                      ? ' · stale'
+                      : ''}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${s.title} 위로`}
+                  disabled={index === 0 || busy}
+                  onClick={() => {
+                    const ids = (project.screens ?? []).map((s) => s.id);
+                    [ids[index - 1], ids[index]] = [ids[index]!, ids[index - 1]!];
+                    void applyCommand({
+                      type: 'screen.reorder',
+                      screenIds: ids,
+                    });
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${s.title} 삭제`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (window.confirm(`화면과 연결 핀·문서를 삭제할까요? ${s.title}`))
+                      void applyCommand({
+                        type: 'screen.delete',
+                        screenId: s.id,
+                      });
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => {
+              const title = window.prompt('새 화면 이름');
+              if (!title?.trim()) return;
+              if(title.trim().length>120){setNotice({tone:'error',text:'화면 이름은 120자 이하로 입력해 주세요.'});return;}
+              const at = nowIso();
+              void attachScreen({
+                id: newScreenId(),
+                title: title.trim(),
+                code: `SCR-${Math.max(100, ...(project.screens ?? []).map((s) => Number(s.code.slice(4)))) + 1}`,
+                ref: {
+                  kind: 'image',
+                  value: `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="#f8fafc"/></svg>')}`,
+                },
+                viewport: { width: 1280, height: 800 },
+                createdAt: at,
+                updatedAt: at,
+              });
+            }}
+          >
+            + 화면 추가
+          </button>
+        </nav>
+      )}
       {aiOpen && (
         <AiSettingsModal
           value={aiSettings}
@@ -1323,13 +1530,18 @@ export default function App() {
           project={project}
           nodes={graphNodes}
           report={report}
+          screenReport={selectedProject ? traceability(selectedProject) : report}
           maturity={maturity}
           busy={busy}
           selectedId={selectedGraphId}
           revertable={
             revertable === null
               ? null
-              : { seq: revertable.seq, summary: revertable.summary, nodes: revertable.nodes }
+              : {
+                  seq: revertable.seq,
+                  summary: revertable.summary,
+                  nodes: revertable.nodes,
+                }
           }
           onSelect={setSelectedGraphId}
           onCreateNode={createGraphNode}
@@ -1369,7 +1581,7 @@ export default function App() {
               <span className="tool-hint">이미지 클릭 → 번호 핀</span>
             </div>
 
-            <FigmaBar screen={screen} onSave={saveFigmaUrl} />
+            <FigmaBar key={screen.id} screen={screen} onSave={saveFigmaUrl} />
 
             <CanvasStage
               screen={screen}
@@ -1429,7 +1641,14 @@ export default function App() {
             onCreateProposal={createProposal}
             onAdopt={(id) => decideProposal('adopt', id)}
             onReject={(id) => decideProposal('reject', id)}
-            onDefer={(proposalId) => { if (doc !== null) void runDoc({ type: 'proposal.defer', docId: doc.id, proposalId }); }}
+            onDefer={(proposalId) => {
+              if (doc !== null)
+                void runDoc({
+                  type: 'proposal.defer',
+                  docId: doc.id,
+                  proposalId,
+                });
+            }}
             onRevert={() => void revertAdopted()}
             onFocusHandled={() => setFocusBlockId(null)}
           />
@@ -1511,7 +1730,8 @@ export default function App() {
           <PublishModal
             projectId={daemonProjectId}
             screen={screen}
-            pins={pins}
+            screens={project.screens ?? [screen]}
+            pins={project.pins}
             daemon={client}
             records={publishes}
             onRecords={setPublishes}
@@ -1525,4 +1745,4 @@ export default function App() {
       )}
     </div>
   );
-        }
+}

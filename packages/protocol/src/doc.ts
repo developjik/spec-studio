@@ -14,9 +14,9 @@ export const DocIdSchema = z
 export const BlockIdSchema = z
   .string()
   .regex(/^B_[A-Za-z0-9_-]{8,24}$/, { message: 'block id must start with B_' });
-export const ProposalIdSchema = z
-  .string()
-  .regex(/^PR_[A-Za-z0-9_-]{8,24}$/, { message: 'proposal id must start with PR_' });
+export const ProposalIdSchema = z.string().regex(/^PR_[A-Za-z0-9_-]{8,24}$/, {
+  message: 'proposal id must start with PR_',
+});
 
 export type DocId = z.infer<typeof DocIdSchema>;
 export type BlockId = z.infer<typeof BlockIdSchema>;
@@ -73,6 +73,7 @@ export type Block = z.infer<typeof BlockSchema>;
 
 export const DocSchema = z.object({
   id: DocIdSchema,
+  screenId: z.string().nullable().optional(),
   title: z.string().min(1).max(120),
   /** Commit counter: one increment per adopted command, not per keystroke. */
   rev: z.number().int().min(0),

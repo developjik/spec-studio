@@ -149,7 +149,11 @@ export function screenPinSeq(row: ObjRow): number {
 }
 
 export function pinToRow(pin: Pin, projectId: string): ObjRow {
-  const props: PinProps = { number: pin.number, body: pin.body, anchor: pin.anchor };
+  const props: PinProps = {
+    number: pin.number,
+    body: pin.body,
+    anchor: pin.anchor,
+  };
   return {
     id: pin.id,
     project_id: projectId,
@@ -160,7 +164,12 @@ export function pinToRow(pin: Pin, projectId: string): ObjRow {
     props: JSON.stringify(props),
     state: 'open',
     rev: 1,
-    hash: contentHash({ title: pin.title, type: pin.type, body: pin.body, number: pin.number }),
+    hash: contentHash({
+      title: pin.title,
+      type: pin.type,
+      body: pin.body,
+      number: pin.number,
+    }),
     deleted_at: null,
     created_at: pin.createdAt,
     updated_at: pin.updatedAt,
@@ -303,7 +312,12 @@ export function graphNodeToRow(node: GraphNode, projectId: string): ObjRow {
     props: JSON.stringify({ body: node.body }),
     state: node.state,
     rev: 1,
-    hash: contentHash({ title: node.title, body: node.body, state: node.state, type: node.type }),
+    hash: contentHash({
+      title: node.title,
+      body: node.body,
+      state: node.state,
+      type: node.type,
+    }),
     deleted_at: null,
     created_at: node.createdAt,
     updated_at: node.updatedAt,
@@ -362,6 +376,7 @@ export function projectFromRows(input: {
   createdAt: string;
   updatedAt: string;
   screen: ObjRow | null;
+  screens?: ObjRow[];
   pins: ObjRow[];
   docs?: Doc[];
   proposals?: Proposal[];
@@ -379,6 +394,11 @@ export function projectFromRows(input: {
     id: input.id,
     name: input.name,
     screen,
+    screens: (input.screens ?? (input.screen ? [input.screen] : [])).map(screenFromRow),
+    activeScreenId: screen?.id ?? null,
+    screenPinSeq: Object.fromEntries(
+      (input.screens ?? (input.screen ? [input.screen] : [])).map((s) => [s.id, screenPinSeq(s)]),
+    ),
     pins,
     pinSeq: input.screen === null ? 0 : screenPinSeq(input.screen),
     docs: input.docs ?? [],
@@ -509,6 +529,7 @@ export function blockFromRow(row: BlockRow): Block {
 export function docFromRows(row: DocRow, blocks: BlockRow[]): Doc {
   return {
     id: row.id,
+    screenId: row.screen_id,
     title: row.title,
     rev: Number(row.rev ?? 0),
     blocks: [...blocks]
@@ -588,7 +609,8 @@ export function proposalOpToRow(
     seq,
     kind: patch.before === null ? 'insert' : 'replace',
     view: JSON.stringify(view),
-    state: proposal.state === 'open' ? 'open' : proposal.state === 'rejected' ? 'rejected' : 'adopted',
+    state:
+      proposal.state === 'open' ? 'open' : proposal.state === 'rejected' ? 'rejected' : 'adopted',
   };
 }
 
@@ -612,7 +634,7 @@ export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Propos
     baseRev: Number(row.base_rev ?? 0),
     queueOrder: row.queue_order ?? 0,
     ...(row.queued_at ? { queuedAt: row.queued_at } : {}),
-    ...(row.source === "llm" || row.source === "rule" ? { source: row.source } : {}),
+    ...(row.source === 'llm' || row.source === 'rule' ? { source: row.source } : {}),
     state: row.state as Proposal['state'],
     patches,
     createdAt: row.created_at,
