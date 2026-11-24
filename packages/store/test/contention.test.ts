@@ -232,6 +232,22 @@ describe('proposals across docs (MJ-1)', () => {
     expect(proposalQueue((await other.readProject(projectId))!.proposals, a).map(p => p.id)).toEqual([cards[0]]);
   });
 
+  it('adopts non-overlapping siblings without rejecting a changed document revision', async () => {
+    const store = open();
+    const { projectId, a, blockA } = await contended(store);
+    const added = await store.execute(projectId, { type: 'doc.block.create', docId: a, blockType: 'paragraph', text: '둘째 원문' });
+    const secondBlock = added.project.docs.find(d => d.id === a)!.blocks.at(-1)!.id;
+    const first = await store.execute(projectId, { type: 'proposal.create', docId: a, draft: draftFor(blockA, '첫째 채택') });
+    const firstId = first.project.proposals.at(-1)!.id;
+    const second = await store.execute(projectId, { type: 'proposal.create', docId: a, draft: draftFor(secondBlock, '둘째 채택') });
+    const secondId = second.project.proposals.at(-1)!.id;
+    expect(proposalConflicts(second.project.proposals[0]!, second.project.proposals)).toEqual([]);
+    await store.execute(projectId, { type: 'proposal.adopt', docId: a, proposalId: firstId });
+    const result = await store.execute(projectId, { type: 'proposal.adopt', docId: a, proposalId: secondId });
+    expect(result.project.docs.find(d => d.id === a)!.blocks.map(b => b.text)).toEqual(['첫째 채택', '둘째 채택']);
+    expect(result.project.proposals.map(p => p.state)).toEqual(['adopted', 'adopted']);
+  });
+
   it('refuses cross-document reject and defer without changing either queue', async () => {
     const store = open();
     const { projectId, a, b, blockA } = await contended(store);
