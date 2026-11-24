@@ -30,7 +30,7 @@ export function loadProject(): Project | null {
  */
 export function saveProject(project: Project): SaveOutcome {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+    window.localStorage.setItem(STORAGE_KEY, serializeProject(project));
     return { ok: true };
   } catch {
     return {
@@ -62,7 +62,7 @@ export function bundleOf(project: Project, at = new Date().toISOString()): Proje
 }
 
 export function downloadBundle(bundle: ProjectBundle): void {
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({...bundle,project:projectForStorage(bundle.project)}, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   const code = bundle.project.screen?.code ?? 'project';
@@ -89,4 +89,12 @@ export function parseBundleFile(text: string): ProjectBundle {
     return bundleOf(normalizeProject(asProject.data));
   }
   throw new Error('spec-studio 프로젝트 번들이 아닙니다.');
+}
+
+/** Persist the active image once; normalization reconstructs the screen alias. */
+export function projectForStorage(project:Project):Project{
+  return project.screens===undefined?project:{...project,screen:null};
+}
+export function serializeProject(project:Project):string{
+  return JSON.stringify(projectForStorage(project));
 }
