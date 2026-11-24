@@ -62,7 +62,7 @@ export function bundleOf(project: Project, at = new Date().toISOString()): Proje
 }
 
 export function downloadBundle(bundle: ProjectBundle): void {
-  const blob = new Blob([JSON.stringify({...bundle,project:projectForStorage(bundle.project)}, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   const code = bundle.project.screen?.code ?? 'project';
