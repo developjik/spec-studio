@@ -96,6 +96,9 @@ export function createProject(input: { id: string; name: string; at: string }): 
     id: input.id,
     name,
     screen: null,
+    screens: [],
+    activeScreenId: null,
+    screenPinSeq: {},
     pins: [],
     pinSeq: 0,
     docs: [],
@@ -115,8 +118,37 @@ export function createProject(input: { id: string; name: string; at: string }): 
  * as every number still present.
  */
 export function normalizeProject(project: Project): Project {
+  const screens = project.screens ?? (project.screen ? [project.screen] : []);
+  const activeScreenId =
+    project.activeScreenId === undefined
+      ? (project.screen?.id ?? screens[0]?.id ?? null)
+      : project.activeScreenId;
+  const screen = screens.find((s) => s.id === activeScreenId) ?? screens[0] ?? null;
+  const screenPinSeq: Record<string, number> = {};
+  for (const s of screens)
+    if (project.screenPinSeq?.[s.id] !== undefined)
+      screenPinSeq[s.id] = project.screenPinSeq[s.id]!;
+  for (const s of screens)
+    screenPinSeq[s.id] = resolvePinSeq(
+      screenPinSeq[s.id] ?? (s.id === project.screen?.id ? project.pinSeq : 0),
+      project.pins.filter((p) => p.screenId === s.id),
+    );
+  project = {
+    ...project,
+    docs: project.docs.map((d) =>
+      d.screenId === undefined ? { ...d, screenId: project.screen?.id ?? null } : d,
+    ),
+    screens,
+    screen,
+    activeScreenId: screen?.id ?? null,
+    screenPinSeq,
+    pinSeq: screen ? screenPinSeq[screen.id]! : 0,
+  };
   const pins = sortPinsByNumber(project.pins);
-  const pinSeq = resolvePinSeq(project.pinSeq, project.pins);
+  const pinSeq = resolvePinSeq(
+    project.pinSeq,
+    project.pins.filter((p) => p.screenId === project.screen?.id),
+  );
   const graph = normalizeGraph(project);
   const alreadyOrdered = project.pins.every((pin, index) => pin.id === pins[index]?.id);
   if (alreadyOrdered && pinSeq === project.pinSeq && graph === project.graph) return project;
@@ -130,7 +162,8 @@ export function findGraphNode(project: Project, nodeId: string): GraphNode | und
 
 function requireGraphNode(project: Project, nodeId: string): GraphNode {
   const node = findGraphNode(project, nodeId);
-  if (node === undefined) throw new DomainError('node_not_found', '그래프에서 그 객체를 찾지 못했습니다');
+  if (node === undefined)
+    throw new DomainError('node_not_found', '그래프에서 그 객체를 찾지 못했습니다');
   return node;
 }
 
@@ -176,40 +209,142 @@ function requireOpenProposal(project: Project, proposalId: string): Proposal {
  * Applies one command. Every state change goes through here so the numbering
  * rule has exactly one implementation, and the UI can only inherit it.
  */
-export function execute(
+export function execute(project: Project, command: Command, ctx: ExecuteContext): ExecutionResult {
+  if (command.type === 'project.package.export')
+    return {
+      project,
+      events: [{ type: 'package.exported', files: command.files }],
+    };
+  const current = normalizeProject(project);
+  const screens = current.screens!;
+  if (command.type === 'screen.attach') {
+    if (!screens.some((s) => s.id === command.screen.id))
+      return execute(current, { type: 'screen.add', screen: command.screen }, ctx);
+    if (screens.some((s) => s.id !== command.screen.id && s.code === command.screen.code))
+      throw new DomainError('invalid_input', 'screen code must be unique');
+    return {
+      project: normalizeProject({
+        ...current,
+        screens: screens.map((s) => (s.id === command.screen.id ? command.screen : s)),
+        screen: command.screen,
+        activeScreenId: command.screen.id,
+        pinSeq: current.screenPinSeq?.[command.screen.id] ?? 0,
+        updatedAt: ctx.at,
+      }),
+      events: [{ type: 'screen.attached', screen: command.screen }],
+    };
+  }
+  let result: ExecutionResult;
+  if (command.type === 'screen.add') {
+    if (screens.some((s) => s.id === command.screen.id || s.code === command.screen.code))
+      throw new DomainError('invalid_input', 'screen id and code must be unique');
+    const next = [...screens];
+    next.splice(Math.min(command.order ?? next.length, next.length), 0, command.screen);
+    const doc = {
+      ...createDoc({
+        id: ctx.nextId('doc'),
+        title: `${command.screen.title} 문서`,
+        at: ctx.at,
+      }),
+      screenId: command.screen.id,
+    };
+    result = {
+      project: {
+        ...current,
+        screens: next,
+        screen: command.screen,
+        activeScreenId: command.screen.id,
+        pinSeq: 0,
+        docs: [...current.docs, doc],
+        updatedAt: ctx.at,
+      },
+      events: [
+        { type: 'screen.attached', screen: command.screen },
+        { type: 'doc.attached', doc },
+      ],
+    };
+  } else if (command.type === 'screen.select') {
+    const screen = screens.find((s) => s.id === command.screenId);
+    if (!screen) throw new DomainError('screen_missing', 'screen not found');
+    result = {
+      project: {
+        ...current,
+        screen,
+        activeScreenId: screen.id,
+        pinSeq: current.screenPinSeq?.[screen.id] ?? 0,
+        updatedAt: ctx.at,
+      },
+      events: [{ type: 'screen.selected', screenId: screen.id }],
+    };
+  } else if (command.type === 'screen.reorder') {
+    if (
+      command.screenIds.length !== screens.length ||
+      new Set(command.screenIds).size !== screens.length ||
+      command.screenIds.some((id) => !screens.some((s) => s.id === id))
+    )
+      throw new DomainError('invalid_input', 'reorder must include every screen exactly once');
+    result = {
+      project: {
+        ...current,
+        screens: command.screenIds.map((id) => screens.find((s) => s.id === id)!),
+        updatedAt: ctx.at,
+      },
+      events: [{ type: 'screen.reordered', screenIds: command.screenIds }],
+    };
+  } else if (command.type === 'screen.delete') {
+    if (!screens.some((s) => s.id === command.screenId))
+      throw new DomainError('screen_missing', 'screen not found');
+    const next = screens.filter((s) => s.id !== command.screenId);
+    const screen = current.screen?.id === command.screenId ? (next[0] ?? null) : current.screen;
+    const docIds = new Set(
+      current.docs.filter((d) => d.screenId === command.screenId).map((d) => d.id),
+    );
+    result = {
+      project: {
+        ...current,
+        screens: next,
+        screen,
+        activeScreenId: screen?.id ?? null,
+        pinSeq: screen ? (current.screenPinSeq?.[screen.id] ?? 0) : 0,
+        pins: current.pins.filter((p) => p.screenId !== command.screenId),
+        docs: current.docs.filter((d) => !docIds.has(d.id)),
+        proposals: current.proposals.filter((p) => !docIds.has(p.docId)),
+        updatedAt: ctx.at,
+      },
+      events: [{ type: 'screen.deleted', screenId: command.screenId }],
+    };
+  } else {
+    result = executeActive(current, command, ctx);
+    const screen = result.project.screen;
+    let next = screens;
+    if (screen) next = screens.map((s) => (s.id === screen.id ? screen : s));
+    result.project = {
+      ...result.project,
+      screens: next,
+      activeScreenId: screen?.id ?? null,
+      screenPinSeq: {
+        ...current.screenPinSeq,
+        ...(screen ? { [screen.id]: result.project.pinSeq } : {}),
+      },
+      docs: result.project.docs.map((d) =>
+        d.screenId === undefined ? { ...d, screenId: current.screen?.id ?? screen?.id ?? null } : d,
+      ),
+    };
+  }
+  return { ...result, project: normalizeProject(result.project) };
+}
+
+function executeActive(
   project: Project,
-  command: Command,
+  command: Exclude<
+    Command,
+    {
+      type: 'screen.attach' | 'screen.add' | 'screen.select' | 'screen.reorder' | 'screen.delete';
+    }
+  >,
   ctx: ExecuteContext,
 ): ExecutionResult {
   switch (command.type) {
-    case 'screen.attach': {
-      const screen = command.screen;
-      const differentScreen = project.screen !== null && project.screen.id !== screen.id;
-      const carried = differentScreen
-        ? // A new screen is a new numbering space: the previous pins stay with
-          // the previous screen and are not renumbered into this one, and
-          // proposals built on those pins leave the table. The document
-          // registry survives — its docs never belonged to one screen only.
-          { ...project, screen, pins: [], pinSeq: 0, proposals: [] }
-        : { ...project, screen };
-      // A screen only brings its own auto-doc when the registry is empty; the
-      // v1 flow (attach → a document exists) still holds.
-      if (project.docs.length > 0) {
-        return {
-          project: { ...carried, updatedAt: ctx.at },
-          events: [{ type: 'screen.attached', screen }],
-        };
-      }
-      const doc = createDoc({ id: ctx.nextId('doc'), title: `${screen.title} 문서`, at: ctx.at });
-      return {
-        project: { ...carried, docs: [...project.docs, doc], updatedAt: ctx.at },
-        events: [
-          { type: 'screen.attached', screen },
-          { type: 'doc.attached', doc },
-        ],
-      };
-    }
-
     case 'screen.update': {
       const screen = requireScreen(project, command.screenId);
       const title = command.title === undefined ? screen.title : command.title.trim();
@@ -263,8 +398,7 @@ export function execute(
       }
       const title = command.title === undefined ? current.title : command.title.trim();
       if (title === '') throw new DomainError('invalid_input', 'a pin needs a title');
-      const anchor =
-        command.anchor === undefined ? current.anchor : requireAnchor(command.anchor);
+      const anchor = command.anchor === undefined ? current.anchor : requireAnchor(command.anchor);
       const pin = PinSchema.parse({
         ...current,
         type: command.pinType ?? current.type,
@@ -273,7 +407,8 @@ export function execute(
         anchor,
         updatedAt: ctx.at,
       });
-      const moved = pin.type !== current.type || pin.title !== current.title || pin.body !== current.body;
+      const moved =
+        pin.type !== current.type || pin.title !== current.title || pin.body !== current.body;
       return {
         project: {
           ...project,
@@ -281,7 +416,10 @@ export function execute(
           // A link that still names this pin now names a different sentence;
           // the edge stays and asks for a re-read instead of disappearing.
           graph: moved
-            ? { ...project.graph, links: markLinksSuspect(project.graph.links, pin.id, 'pin-changed', ctx.at) }
+            ? {
+                ...project.graph,
+                links: markLinksSuspect(project.graph.links, pin.id, 'pin-changed', ctx.at),
+              }
             : project.graph,
           updatedAt: ctx.at,
         },
@@ -300,7 +438,12 @@ export function execute(
           updatedAt: ctx.at,
         },
         events: [
-          { type: 'pin.deleted', screenId: screen.id, pinId: current.id, number: current.number },
+          {
+            type: 'pin.deleted',
+            screenId: screen.id,
+            pinId: current.id,
+            number: current.number,
+          },
         ],
       };
     }
@@ -323,7 +466,11 @@ export function execute(
         at: ctx.at,
       });
       return {
-        project: { ...project, docs: [...project.docs, doc], updatedAt: ctx.at },
+        project: {
+          ...project,
+          docs: [...project.docs, doc],
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'doc.created', doc }],
       };
     }
@@ -374,9 +521,7 @@ export function execute(
       });
       // No `afterBlockId` means "at the end", which is what writing does.
       const after =
-        command.afterBlockId === undefined
-          ? (doc.blocks.at(-1)?.id ?? null)
-          : command.afterBlockId;
+        command.afterBlockId === undefined ? (doc.blocks.at(-1)?.id ?? null) : command.afterBlockId;
       const blocks = insertBlock(doc, block, after);
       return {
         project: {
@@ -403,9 +548,7 @@ export function execute(
         text: command.text ?? current.text,
         updatedAt: ctx.at,
       };
-      const blocks = doc.blocks.map((candidate) =>
-        candidate.id === block.id ? block : candidate,
-      );
+      const blocks = doc.blocks.map((candidate) => (candidate.id === block.id ? block : candidate));
       return {
         project: {
           ...project,
@@ -465,8 +608,13 @@ export function execute(
       const pin = findPin(project.pins, command.pinId);
       if (pin === undefined) throw new DomainError('pin_not_found', '핀을 찾지 못했습니다');
       if (block.pinRefs.some((ref) => ref.pinId === pin.id)) {
-        throw new DomainError('invalid_input', `#${pin.number} 핀은 이미 이 문단에 연결되어 있습니다`);
+        throw new DomainError(
+          'invalid_input',
+          `#${pin.number} 핀은 이미 이 문단에 연결되어 있습니다`,
+        );
       }
+      if (doc.screenId != null && doc.screenId !== pin.screenId)
+        throw new DomainError('invalid_input', 'pin belongs to another screen');
       const ref = blockRefFor(pin, ctx.at);
       const updated = {
         ...block,
@@ -543,7 +691,8 @@ export function execute(
       const block = findBlock(doc, command.blockId);
       if (block === undefined) throw new DomainError('block_not_found', '문단을 찾지 못했습니다');
       const ref = block.pinRefs.find((candidate) => candidate.pinId === command.pinId);
-      if (ref === undefined) throw new DomainError('invalid_input', '이 문단에 연결되지 않은 핀입니다');
+      if (ref === undefined)
+        throw new DomainError('invalid_input', '이 문단에 연결되지 않은 핀입니다');
       const pin = findPin(project.pins, command.pinId);
       // A person says the sentence is still right: keep the pin, take its
       // current spec as the baseline. If the pin is gone there is nothing to
@@ -593,7 +742,7 @@ export function execute(
           ? buildProposal({
               id: ctx.nextId('proposal'),
               doc,
-              pins: project.pins,
+              pins: project.pins.filter((p) => doc.screenId == null || p.screenId === doc.screenId),
               at: ctx.at,
             })
           : 'claims' in command.draft
@@ -610,13 +759,24 @@ export function execute(
             : buildProposalFromDraft({
                 id: ctx.nextId('proposal'),
                 doc,
-                pins: project.pins,
+                pins: project.pins.filter(
+                  (p) => doc.screenId == null || p.screenId === doc.screenId,
+                ),
                 draft: command.draft,
                 at: ctx.at,
               });
-      const queued: Proposal = { ...proposal, queuedAt: ctx.at, queueOrder: Math.max(0, ...project.proposals.map(p => p.queueOrder ?? 0)) + 1, source: command.source ?? (command.draft === undefined ? 'rule' : 'llm') };
+      const queued: Proposal = {
+        ...proposal,
+        queuedAt: ctx.at,
+        queueOrder: Math.max(0, ...project.proposals.map((p) => p.queueOrder ?? 0)) + 1,
+        source: command.source ?? (command.draft === undefined ? 'rule' : 'llm'),
+      };
       return {
-        project: { ...project, proposals: [...project.proposals, queued], updatedAt: ctx.at },
+        project: {
+          ...project,
+          proposals: [...project.proposals, queued],
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'proposal.created', proposal: queued }],
       };
     }
@@ -624,10 +784,19 @@ export function execute(
     case 'proposal.defer': {
       const doc = requireDoc(project, command.docId);
       const proposal = requireOpenProposal(project, command.proposalId);
-      if (proposal.docId !== doc.id) throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
-      const next = { ...proposal, queuedAt: ctx.at, queueOrder: Math.max(0, ...project.proposals.map(p => p.queueOrder ?? 0)) + 1 };
+      if (proposal.docId !== doc.id)
+        throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
+      const next = {
+        ...proposal,
+        queuedAt: ctx.at,
+        queueOrder: Math.max(0, ...project.proposals.map((p) => p.queueOrder ?? 0)) + 1,
+      };
       return {
-        project: { ...project, proposals: project.proposals.map(p => p.id === proposal.id ? next : p), updatedAt: ctx.at },
+        project: {
+          ...project,
+          proposals: project.proposals.map((p) => (p.id === proposal.id ? next : p)),
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'proposal.deferred', docId: doc.id, proposalId: proposal.id }],
       };
     }
@@ -641,19 +810,29 @@ export function execute(
         throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       }
       // Preserve the public error code for a missing insert anchor.
-      const available = new Set(doc.blocks.map(block => block.id));
+      const available = new Set(doc.blocks.map((block) => block.id));
       for (const patch of proposal.patches) {
         if (patch.before !== null) continue;
         if (patch.afterBlockId !== null && !available.has(patch.afterBlockId)) {
-          throw new DomainError('block_not_found', '삽입 기준 문단이 변경됐습니다. 새 제안을 만들어 비교하세요');
+          throw new DomainError(
+            'block_not_found',
+            '삽입 기준 문단이 변경됐습니다. 새 제안을 만들어 비교하세요',
+          );
         }
         available.add(patch.blockId);
       }
       if (proposalIsStale(doc, proposal, project.pins)) {
-        throw new DomainError('invalid_input', '제안 이후 문단이나 참조 핀이 변경됐습니다. 새 제안을 만들어 비교하세요');
+        throw new DomainError(
+          'invalid_input',
+          '제안 이후 문단이나 참조 핀이 변경됐습니다. 새 제안을 만들어 비교하세요',
+        );
       }
       const applied = applyPatches(doc, proposal.patches, ctx.at);
-      const decided: Proposal = { ...proposal, state: 'adopted', decidedAt: ctx.at };
+      const decided: Proposal = {
+        ...proposal,
+        state: 'adopted',
+        decidedAt: ctx.at,
+      };
       return {
         project: {
           ...project,
@@ -679,8 +858,13 @@ export function execute(
     case 'proposal.reject': {
       const doc = requireDoc(project, command.docId);
       const proposal = requireOpenProposal(project, command.proposalId);
-      if (proposal.docId !== doc.id) throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
-      const decided: Proposal = { ...proposal, state: 'rejected', decidedAt: ctx.at };
+      if (proposal.docId !== doc.id)
+        throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
+      const decided: Proposal = {
+        ...proposal,
+        state: 'rejected',
+        decidedAt: ctx.at,
+      };
       return {
         project: {
           ...project,
@@ -689,9 +873,7 @@ export function execute(
           ),
           updatedAt: ctx.at,
         },
-        events: [
-          { type: 'proposal.rejected', docId: doc.id, proposalId: proposal.id },
-        ],
+        events: [{ type: 'proposal.rejected', docId: doc.id, proposalId: proposal.id }],
       };
     }
 
@@ -722,7 +904,10 @@ export function execute(
       const state = command.state ?? current.state;
       const states = nodeStateOptions(current.type);
       if (!states.includes(state)) {
-        throw new DomainError('invalid_input', `${current.type} 상태는 ${states.join(' · ')} 중 하나입니다`);
+        throw new DomainError(
+          'invalid_input',
+          `${current.type} 상태는 ${states.join(' · ')} 중 하나입니다`,
+        );
       }
       const node: GraphNode = {
         ...current,
@@ -896,7 +1081,13 @@ export function execute(
         const id = ctx.nextId('node', draft.type);
         created.set(draft.key, id);
         nodes.push(
-          makeGraphNode({ id, type: draft.type, title: draft.title, body: draft.body, at: ctx.at }),
+          makeGraphNode({
+            id,
+            type: draft.type,
+            title: draft.title,
+            body: draft.body,
+            at: ctx.at,
+          }),
         );
       }
       // An idea ref only counts when the inbox still has it; the whole adopt
@@ -929,7 +1120,11 @@ export function execute(
       const citedEvents: DomainEvent[] = cited.evidence
         .filter((row) => row.updatedAt === ctx.at && row.state === 'cited')
         .map((row) => ({ type: 'evidence.updated' as const, evidence: row }));
-      const decided = { ...proposal, state: 'adopted' as const, decidedAt: ctx.at };
+      const decided = {
+        ...proposal,
+        state: 'adopted' as const,
+        decidedAt: ctx.at,
+      };
       return {
         project: {
           ...cited,
@@ -957,7 +1152,11 @@ export function execute(
       if (proposal.state !== 'open') {
         throw new DomainError('proposal_decided', '이미 결정된 제안입니다');
       }
-      const decided = { ...proposal, state: 'rejected' as const, decidedAt: ctx.at };
+      const decided = {
+        ...proposal,
+        state: 'rejected' as const,
+        decidedAt: ctx.at,
+      };
       return {
         project: { ...project, graphProposal: decided, updatedAt: ctx.at },
         events: [{ type: 'graph.proposal.rejected', proposalId: proposal.id }],
@@ -990,7 +1189,10 @@ export function execute(
 }
 
 /** Convenience for list views: pins of the screen, optionally filtered by type. */
-export function visiblePins(project: Project, filter: Parameters<typeof filterPins>[1] = 'all'): Pin[] {
+export function visiblePins(
+  project: Project,
+  filter: Parameters<typeof filterPins>[1] = 'all',
+): Pin[] {
   return filterPins(project.pins, filter);
 }
 
