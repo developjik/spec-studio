@@ -96,7 +96,8 @@ function rawRequest(
 interface Envelope {
   project?: {
     id: string;
-    pins: Array<{ id: string; number: number; title: string }>;
+    pins: Array<{ id: string; number: number; title: string; screenId: string }>;
+    screens?: Array<{id:string}>;
     screen: { id: string; figmaUrl?: string | null } | null;
     docs: Array<{
       id: string;
@@ -733,6 +734,11 @@ describe('multi-screen publish isolation',()=>{
     await command({type:'screen.add',screen:SCREEN});
     await command({type:'pin.create',screenId:SCREEN.id,pinType:'function',title:'첫 화면 전용',body:'',anchor:{x:.1,y:.2}});
     await command({type:'screen.add',screen:second});
+    const exported=await api<Envelope>(daemon,`/api/projects/${id}/export`);
+    expect(exported.body.bundle?.version).toBe(2);
+    const imported=await api<Envelope>(daemon,'/api/projects/import',{body:{bundle:exported.body.bundle}});
+    expect(imported.status).toBe(201);expect(imported.body.project?.screens).toHaveLength(2);
+    expect(imported.body.project?.pins[0]?.screenId).toBe(imported.body.project?.screens?.[0]?.id);
     const preview=await api<Envelope>(daemon,`/api/projects/${id}/publish/preview`,{body:{space:'SPEC',mode:'auto',screenId:SCREEN.id}});
     expect(preview.body.preview?.body).toContain('첫 화면 전용');
     const send=async(screenId:string)=>api<Envelope>(daemon,`/api/projects/${id}/publish`,{body:{target:target(),mode:'auto',screenId,overlayPng:PNG_BASE64}});
