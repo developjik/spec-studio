@@ -17,7 +17,7 @@ fi
 
 # Serve the built app, not the dev transform: the check should exercise the
 # bundle that ships, and the preview server is the same Vite.
-VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm build > "$WORK/webbuild.log" 2>&1
+VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm --filter @spec-studio/web build > "$WORK/webbuild.log" 2>&1
 VITE_SPEC_STUDIO_DAEMON=http://127.0.0.1:8787 pnpm --filter @spec-studio/web preview --port 5173 > "$WORK/vite.log" 2>&1 &
 VITE_PID=$!
 
