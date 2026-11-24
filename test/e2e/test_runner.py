@@ -25,6 +25,23 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(runner.run_harness('probe'), 17)
             self.assertIn('sentinel', (root / 'probe.log').read_text())
 
+    def test_artifact_root_preserves_existing_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'v1').mkdir()
+            sentinel = root / 'v1/keep.txt'
+            sentinel.write_text('keep')
+            shell = Path(__file__).with_name('run_all.sh').read_text()
+            # Exercise the actual root-selection prefix without running browsers.
+            prefix = shell.split('if [[ "${E2E_DAEMON_BUILT:-0}"')[0]
+            result = subprocess.run(['bash', '-c', prefix + '\nprintf "%s" "$E2E_ARTIFACTS"'],
+                                    env={**os.environ, 'E2E_ARTIFACTS': directory},
+                                    capture_output=True, text=True, check=True)
+            selected = Path(result.stdout.splitlines()[-1])
+            self.assertTrue(selected.name.startswith('run-'))
+            self.assertEqual(selected.parent, root)
+            self.assertEqual(sentinel.read_text(), 'keep')
+
     def test_sigterm_cleans_process_group(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
