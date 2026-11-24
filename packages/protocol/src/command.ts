@@ -1,11 +1,19 @@
 import { z } from 'zod';
-import { AiBriefDraftSchema, AiDocDraftSchema, AiGraphDraftSchema, AiProposalSourceSchema } from './ai';
-import { BlockIdSchema, BlockTypeSchema, DocIdSchema, DocKindSchema, ProposalIdSchema } from './doc';
-import { EvidenceIdSchema, EvidenceTypeSchema, EVIDENCE_EXCERPT_MAX } from './evidence';
 import {
-  EditableNodeTypeSchema,
-  GraphLinkTypeSchema,
-} from './graph';
+  AiBriefDraftSchema,
+  AiDocDraftSchema,
+  AiGraphDraftSchema,
+  AiProposalSourceSchema,
+} from './ai';
+import {
+  BlockIdSchema,
+  BlockTypeSchema,
+  DocIdSchema,
+  DocKindSchema,
+  ProposalIdSchema,
+} from './doc';
+import { EvidenceIdSchema, EvidenceTypeSchema, EVIDENCE_EXCERPT_MAX } from './evidence';
+import { EditableNodeTypeSchema, GraphLinkTypeSchema } from './graph';
 import { IdeaIdSchema, IdeaStateSchema } from './idea';
 import { ObjectIdSchema, PinIdSchema, ScreenIdSchema } from './ids';
 import { AnchorSchema, PinTypeSchema, PinTypeSchema as TypeSchema } from './pin';
@@ -17,6 +25,17 @@ import { ScreenSchema } from './screen';
  * No command can set a pin's number — numbers are allocated, never assigned.
  */
 export const CommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('screen.add'),
+    screen: ScreenSchema,
+    order: z.number().int().min(0).optional(),
+  }),
+  z.object({ type: z.literal('screen.select'), screenId: ScreenIdSchema }),
+  z.object({
+    type: z.literal('screen.reorder'),
+    screenIds: z.array(ScreenIdSchema),
+  }),
+  z.object({ type: z.literal('screen.delete'), screenId: ScreenIdSchema }),
   z.object({
     type: z.literal('screen.attach'),
     screen: ScreenSchema,
@@ -89,7 +108,10 @@ export const CommandSchema = z.discriminatedUnion('type', [
     excerpt: z.string().max(EVIDENCE_EXCERPT_MAX).optional(),
     url: z.string().url().max(2048).optional(),
   }),
-  z.object({ type: z.literal('evidence.dismiss'), evidenceId: EvidenceIdSchema }),
+  z.object({
+    type: z.literal('evidence.dismiss'),
+    evidenceId: EvidenceIdSchema,
+  }),
 
   // ── document registry (W3/F5) ─────────────────────────────────────────
   z.object({
@@ -184,7 +206,11 @@ export const CommandSchema = z.discriminatedUnion('type', [
     proposalId: ProposalIdSchema,
   }),
 
-  z.object({ type: z.literal('proposal.defer'), docId: DocIdSchema, proposalId: ProposalIdSchema }),
+  z.object({
+    type: z.literal('proposal.defer'),
+    docId: DocIdSchema,
+    proposalId: ProposalIdSchema,
+  }),
 
   // ── object graph (v1) ─────────────────────────────────────────────────
   z.object({
