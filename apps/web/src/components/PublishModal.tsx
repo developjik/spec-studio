@@ -15,6 +15,7 @@ import {
 interface PublishModalProps {
   projectId: string;
   screen: Screen;
+  screens?: readonly Screen[];
   pins: readonly Pin[];
   daemon: DaemonClient;
   records: readonly PublishRecordView[];
@@ -73,6 +74,7 @@ function stamp(value: string | null): string {
 export function PublishModal({
   projectId,
   screen,
+  screens = [screen],
   pins,
   daemon,
   records,
@@ -84,6 +86,7 @@ export function PublishModal({
   const [space, setSpace] = useState(remembered.space);
   const [email, setEmail] = useState(remembered.email);
   const [apiToken, setApiToken] = useState('');
+  const [scope, setScope] = useState<string>(screen.id);
   const [mode, setMode] = useState<PublishModeView>('auto');
   const [tab, setTab] = useState<'preview' | 'history'>('preview');
   const [preview, setPreview] = useState<PublishPreviewView | null>(null);
@@ -117,7 +120,11 @@ export function PublishModal({
     }
     setPreviewLoading(true);
     try {
-      const next = await daemon.preview(projectId, { space, mode });
+      const next = await daemon.preview(projectId, {
+        space,
+        mode,
+        screenId: scope === 'all' ? (screens[0]?.id ?? screen.id) : scope,
+      });
       if (!alive.current) return;
       setPreview(next);
       setPreviewError(null);
@@ -130,7 +137,7 @@ export function PublishModal({
     } finally {
       if (alive.current) setPreviewLoading(false);
     }
-  }, [daemon, mode, projectId, space]);
+  }, [daemon, mode, projectId, space, scope, screens, screen.id]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -152,18 +159,26 @@ export function PublishModal({
     }
     setPublishing(true);
     try {
-      const overlay = await renderOverlayPng(screen, pins);
-      const target: ConfluenceTargetView = {
-        baseUrl,
-        space,
-        email,
-        apiToken,
-      };
-      const result = await daemon.publish(projectId, {
-        target,
-        mode,
-        overlayPng: await blobToBase64(overlay.blob),
-      });
+      const target: ConfluenceTargetView = { baseUrl, space, email, apiToken };
+      const selected = screens.filter((s) => scope === 'all' || s.id === scope);
+      if (selected.length === 0) throw new Error('발행할 화면을 선택해 주세요.');
+      let result: PublishOutcomeView | null = null;
+      for (const selectedScreen of selected) {
+        const overlay = await renderOverlayPng(
+          selectedScreen,
+          pins.filter((p) => p.screenId === selectedScreen.id),
+        );
+        result = await daemon.publish(projectId, {
+          target,
+          mode,
+          screenId: selectedScreen.id,
+          overlayPng: await blobToBase64(overlay.blob),
+        });
+        // Keep successful records visible even when a later screen fails.
+        const refreshed = await daemon.publishes(projectId);
+        if (alive.current) onRecords(refreshed);
+      }
+      if (result === null) return;
       if (!alive.current) return;
       rememberSettings({ baseUrl, space, email });
       setOutcome(result);
@@ -202,13 +217,24 @@ export function PublishModal({
           <div className="modal-title">
             <h2>Confluence 발행</h2>
             <p>
-              {screen.title} · <span className="mono">{screen.code}</span> · 핀 {pins.length}개 ·
-              로컬 정본에서 단방향 복사
+              {screen.title} · <span className="mono">{screen.code}</span> · 핀{' '}
+              {pins.filter((p) => p.screenId === screen.id).length}개 · 로컬 정본에서 단방향 복사
             </p>
           </div>
-          <button type="button" className="icon-btn" aria-label="닫기" onClick={onClose} data-testid="publish-close">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="닫기"
+            onClick={onClose}
+            data-testid="publish-close"
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-              <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <path
+                d="M3 3l8 8M11 3l-8 8"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
         </header>
@@ -216,6 +242,29 @@ export function PublishModal({
         <div className="publish-body">
           <div className="publish-form">
             <h3>대상</h3>
+            <label className="field">
+              <span>발행 화면</span>
+              <select
+                className="input"
+                aria-label="발행 화면"
+                value={scope}
+                onChange={(e) => setScope(e.target.value)}
+                disabled={publishing}
+              >
+                <option value="all">전체 화면 ({screens.length}개)</option>
+                {screens.map((s) => (
+                  <option value={s.id} key={s.id}>
+                    {s.code} · {s.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {scope === 'all' && (
+              <p className="field-hint">
+                전체 화면을 각 페이지로 차례로 발행합니다. 아래 미리보기는 첫 화면이며, 중간 실패 시
+                이미 발행한 페이지는 기록에 남습니다.
+              </p>
+            )}
             <label className="field">
               <span>Base URL</span>
               <input
@@ -259,8 +308,8 @@ export function PublishModal({
               />
             </label>
             <p className="publish-hint">
-              토큰은 이 창의 메모리에만 있고 SQLite·localStorage에 저장하지 않습니다. 창을 닫으면 사라집니다.
-              주소·Space·이메일만 다음 발행을 위해 이 브라우저에 기억합니다.
+              토큰은 이 창의 메모리에만 있고 SQLite·localStorage에 저장하지 않습니다. 창을 닫으면
+              사라집니다. 주소·Space·이메일만 다음 발행을 위해 이 브라우저에 기억합니다.
             </p>
 
             <h3>발행 방식</h3>
@@ -289,8 +338,8 @@ export function PublishModal({
 
             {!hasImage && (
               <p className="publish-hint" data-testid="publish-no-image">
-                이 화면은 Figma 프레임만 등록되어 오버레이 PNG를 만들 수 없습니다. 화면 이미지를 등록하면
-                발행할 수 있습니다.
+                이 화면은 Figma 프레임만 등록되어 오버레이 PNG를 만들 수 없습니다. 화면 이미지를
+                등록하면 발행할 수 있습니다.
               </p>
             )}
 
@@ -336,7 +385,10 @@ export function PublishModal({
                 )}
                 {outcome.attachments.length > 0 && (
                   <p className="publish-hint">
-                    첨부: {outcome.attachments.map((item) => `${item.fileName} (${item.action})`).join(' · ')}
+                    첨부:{' '}
+                    {outcome.attachments
+                      .map((item) => `${item.fileName} (${item.action})`)
+                      .join(' · ')}
                   </p>
                 )}
               </div>
@@ -415,7 +467,9 @@ export function PublishModal({
                     </div>
                   )}
                   {preview === null && previewError === null && !previewLoading && (
-                    <p className="modal-loading">Space를 입력하면 발행 계획과 본문을 미리 보여줍니다.</p>
+                    <p className="modal-loading">
+                      Space를 입력하면 발행 계획과 본문을 미리 보여줍니다.
+                    </p>
                   )}
                 </>
               )}
