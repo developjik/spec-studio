@@ -167,7 +167,7 @@ export default function App() {
           published: publishes.some((record) => record.status === 'ok'),
         });
   const report = project === null ? null : traceability(project);
-  const graphNodes = project === null ? [] : graphViewNodes(project);
+  const graphNodes = project === null ? null : graphViewNodes(project);
   const nextNumber = (project?.pinSeq ?? 0) + 1;
 
   return (
@@ -185,7 +185,7 @@ export default function App() {
         onOpenOutputs={() => outputs.setOutputOpen(true)}
         onOpenPublish={() => outputs.setPublishOpen(true)}
         onOpenAi={ai.openAiPanel}
-        aiSource={aiSource}
+        aiSource={docsApi.proposal?.source ?? aiSource}
         uiMode={mode}
         onToggleMode={uiMode.toggleMode}
       />
@@ -280,167 +280,167 @@ export default function App() {
               onAnswer={runsApi.answerRun}
             />
           )}
-        <main
-          className={`studio${doc !== null && doc.kind === 'research' ? ' studio--research' : ''}`}
-        >
-          <section className="canvas-column" {...surfaceProps('canvas')}>
-            <div className="canvas-tools">
-              <span className="tool-label">Screen</span>
-              <span className="tool-meta">
-                {screen.code}
-                {screen.viewport !== null
-                  ? ` · ${screen.viewport.width}×${screen.viewport.height}`
-                  : ' · Figma'}
-              </span>
-              {/* F2 (AC-1): easy's first screen keeps one pin gesture — the
-                  canvas click below. The center-anchor accelerator stays in
-                  pro, where the workshop's full chrome lives. */}
-              {mode === 'pro' && (
-                <button
-                  type="button"
-                  className="btn btn--sm tool-action"
-                  onClick={() => {
-                    pinsApi.setDraftAnchor({ x: 0.5, y: 0.5 });
-                    pinsApi.setSelectedPinId(null);
-                  }}
-                >
-                  핀 추가
-                </button>
+          <main
+            className={`studio${doc !== null && doc.kind === 'research' ? ' studio--research' : ''}`}
+          >
+            <section className="canvas-column" {...surfaceProps('canvas')}>
+              <div className="canvas-tools">
+                <span className="tool-label">Screen</span>
+                <span className="tool-meta">
+                  {screen.code}
+                  {screen.viewport !== null
+                    ? ` · ${screen.viewport.width}×${screen.viewport.height}`
+                    : ' · Figma'}
+                </span>
+                {/* F2 (AC-1): easy's first screen keeps one pin gesture — the
+                    canvas click below. The center-anchor accelerator stays in
+                    pro, where the workshop's full chrome lives. */}
+                {mode === 'pro' && (
+                  <button
+                    type="button"
+                    className="btn btn--sm tool-action"
+                    onClick={() => {
+                      pinsApi.setDraftAnchor({ x: 0.5, y: 0.5 });
+                      pinsApi.setSelectedPinId(null);
+                    }}
+                  >
+                    핀 추가
+                  </button>
+                )}
+                <span className="tool-hint">이미지 클릭 → 번호 핀</span>
+              </div>
+
+              {surfaceVisible('figmaBar', mode) && (
+                <FigmaBar screen={screen} onSave={pinsApi.saveFigmaUrl} />
               )}
-              <span className="tool-hint">이미지 클릭 → 번호 핀</span>
-            </div>
 
-            {surfaceVisible('figmaBar', mode) && (
-              <FigmaBar screen={screen} onSave={pinsApi.saveFigmaUrl} />
-            )}
+              <CanvasStage
+                screen={screen}
+                pins={pins}
+                selectedPinId={selectedPinId}
+                draft={draftAnchor}
+                nextNumber={nextNumber}
+                onCanvasClick={(anchor) => {
+                  pinsApi.setDraftAnchor(anchor);
+                  pinsApi.setSelectedPinId(null);
+                }}
+                onSelectPin={pinsApi.setSelectedPinId}
+                onMovePin={pinsApi.movePin}
+                onSavePin={(input) => void pinsApi.savePin(input)}
+                onCancelDraft={() => pinsApi.setDraftAnchor(null)}
+              />
 
-            <CanvasStage
-              screen={screen}
-              pins={pins}
-              selectedPinId={selectedPinId}
-              draft={draftAnchor}
-              nextNumber={nextNumber}
-              onCanvasClick={(anchor) => {
-                pinsApi.setDraftAnchor(anchor);
-                pinsApi.setSelectedPinId(null);
-              }}
-              onSelectPin={pinsApi.setSelectedPinId}
-              onMovePin={pinsApi.movePin}
-              onSavePin={(input) => void pinsApi.savePin(input)}
-              onCancelDraft={() => pinsApi.setDraftAnchor(null)}
-            />
+              <div className="canvas-foot">
+                <span>
+                  {sqliteMode
+                    ? '모든 변경은 로컬 SQLite 파일에 즉시 저장됩니다.'
+                    : '모든 변경은 이 브라우저에만 저장됩니다.'}
+                </span>
+                <span className="mono">
+                  {pins.length} pins · next #{nextNumber}
+                </span>
+              </div>
+            </section>
 
-            <div className="canvas-foot">
-              <span>
-                {sqliteMode
-                  ? '모든 변경은 로컬 SQLite 파일에 즉시 저장됩니다.'
-                  : '모든 변경은 이 브라우저에만 저장됩니다.'}
-              </span>
-              <span className="mono">
-                {pins.length} pins · next #{nextNumber}
-              </span>
-            </div>
-          </section>
-
-          <DocPanel
-            uiMode={mode}
-            doc={doc}
-            docs={docs}
-            pins={pins}
-            proposal={proposal}
-            mode={docMode}
-            selectedPinId={selectedPinId}
-            focusBlockId={focusBlockId}
-            revertable={revertable}
-            ungrounded={ungroundedReqs}
-            sourceHint={aiCardSource}
-            sqliteMode={sqliteMode}
-            busy={busy}
-            onMode={docsApi.setDocMode}
-            onSwitchDoc={docsApi.setActiveDocId}
-            onCreateDoc={docsApi.createDoc}
-            onDeleteDoc={docsApi.deleteDoc}
-            onRenameDoc={docsApi.renameDoc}
-            onAddBlock={docsApi.addBlock}
-            onUpdateText={docsApi.updateBlockText}
-            onChangeType={docsApi.changeBlockType}
-            onDeleteBlock={docsApi.deleteBlock}
-            onMoveBlock={docsApi.moveBlock}
-            onLinkPin={docsApi.linkBlockPin}
-            onUnlinkPin={docsApi.unlinkBlockPin}
-            onClearStale={docsApi.clearStale}
-            onSelectPin={pinsApi.setSelectedPinId}
-            onCreateProposal={docsApi.createProposal}
-            onAdopt={() => docsApi.decideProposal('adopt')}
-            onReject={() => docsApi.decideProposal('reject')}
-            onRevert={() => void docsApi.revertAdopted()}
-            onFocusHandled={() => docsApi.setFocusBlockId(null)}
-          />
-
-          {surfaceVisible('evidencePanel', mode) && doc !== null && doc.kind === 'research' && (
-            <EvidencePanel
-              evidence={project.evidence}
-              requirements={reqOptions}
-              busy={busy}
-              onCapture={inbox.captureEvidence}
-              onDismiss={inbox.dismissEvidence}
-              onLink={inbox.linkEvidence}
-            />
-          )}
-
-          <div className="side-rail">
-            <PinPanel
+            <DocPanel
               uiMode={mode}
               doc={doc}
-              onFocusBlock={docsApi.setFocusBlockId}
+              docs={docs}
               pins={pins}
-              filter={filter}
-              screenCode={screen.code}
-              nextNumber={nextNumber}
-              pinSeq={project.pinSeq}
+              proposal={proposal}
+              mode={docMode}
               selectedPinId={selectedPinId}
-              onFilter={pinsApi.setFilter}
-              onSelect={pinsApi.setSelectedPinId}
-              onDelete={(pin) => void pinsApi.deletePin(pin)}
-              onUpdate={pinsApi.updatePin}
-              onCloseEditor={() => pinsApi.setSelectedPinId(null)}
-            />
-
-            {surfaceVisible('ideaInbox', mode) && (
-            <IdeaInboxPanel
-              ideas={project.ideas}
-              evidence={project.evidence}
-              busy={busy}
-              briefBusy={aiBusy}
+              focusBlockId={focusBlockId}
+              revertable={revertable}
+              ungrounded={ungroundedReqs}
+              sourceHint={aiCardSource}
               sqliteMode={sqliteMode}
-              captureOpen={inbox.inboxCaptureOpen}
-              onOpenCapture={() => inbox.setInboxCaptureOpen(true)}
-              onCloseCapture={() => inbox.setInboxCaptureOpen(false)}
-              onCapture={inbox.captureIdea}
-              onArchive={inbox.archiveIdea}
-              onPromote={(idea) => void inbox.promoteIdea(idea)}
-              onRunBrief={(ideaId, evidenceIds) => void ai.runBrief(ideaId, evidenceIds)}
-              onRunAgent={(ideaId) => void runsApi.startAgentRun(ideaId)}
+              busy={busy}
+              onMode={docsApi.setDocMode}
+              onSwitchDoc={docsApi.setActiveDocId}
+              onCreateDoc={docsApi.createDoc}
+              onDeleteDoc={docsApi.deleteDoc}
+              onRenameDoc={docsApi.renameDoc}
+              onAddBlock={docsApi.addBlock}
+              onUpdateText={docsApi.updateBlockText}
+              onChangeType={docsApi.changeBlockType}
+              onDeleteBlock={docsApi.deleteBlock}
+              onMoveBlock={docsApi.moveBlock}
+              onLinkPin={docsApi.linkBlockPin}
+              onUnlinkPin={docsApi.unlinkBlockPin}
+              onClearStale={docsApi.clearStale}
+              onSelectPin={pinsApi.setSelectedPinId}
+              onCreateProposal={docsApi.createProposal}
+              onAdopt={() => docsApi.decideProposal('adopt')}
+              onReject={() => docsApi.decideProposal('reject')}
+              onRevert={() => void docsApi.revertAdopted()}
+              onFocusHandled={() => docsApi.setFocusBlockId(null)}
             />
-            )}
 
-            {/* F2: easy's run surface lives in the dock (A-F2-2); the rail
-                placement below is the pro workshop's (A-F2-1, unchanged). */}
-            {mode === 'pro' && sqliteMode && runsApi.runs.length > 0 && (
-              <RunPanel
-                runs={runsApi.runs}
-                activeId={runsApi.activeRunId}
-                log={runsApi.runLog}
-                modelLabel={runsApi.runModelLabel}
+            {surfaceVisible('evidencePanel', mode) && doc !== null && doc.kind === 'research' && (
+              <EvidencePanel
+                evidence={project.evidence}
+                requirements={reqOptions}
                 busy={busy}
-                onSelect={runsApi.watchRun}
-                onCancel={runsApi.cancelRun}
-                onResume={runsApi.resumeRun}
-                onAnswer={runsApi.answerRun}
+                onCapture={inbox.captureEvidence}
+                onDismiss={inbox.dismissEvidence}
+                onLink={inbox.linkEvidence}
               />
             )}
-          </div>
-        </main>
+
+            <div className="side-rail">
+              <PinPanel
+                uiMode={mode}
+                doc={doc}
+                onFocusBlock={docsApi.setFocusBlockId}
+                pins={pins}
+                filter={filter}
+                screenCode={screen.code}
+                nextNumber={nextNumber}
+                pinSeq={project.pinSeq}
+                selectedPinId={selectedPinId}
+                onFilter={pinsApi.setFilter}
+                onSelect={pinsApi.setSelectedPinId}
+                onDelete={(pin) => void pinsApi.deletePin(pin)}
+                onUpdate={pinsApi.updatePin}
+                onCloseEditor={() => pinsApi.setSelectedPinId(null)}
+              />
+
+              {surfaceVisible('ideaInbox', mode) && (
+                <IdeaInboxPanel
+                  ideas={project.ideas}
+                  evidence={project.evidence}
+                  busy={busy}
+                  briefBusy={aiBusy}
+                  sqliteMode={sqliteMode}
+                  captureOpen={inbox.inboxCaptureOpen}
+                  onOpenCapture={() => inbox.setInboxCaptureOpen(true)}
+                  onCloseCapture={() => inbox.setInboxCaptureOpen(false)}
+                  onCapture={inbox.captureIdea}
+                  onArchive={inbox.archiveIdea}
+                  onPromote={(idea) => void inbox.promoteIdea(idea)}
+                  onRunBrief={(ideaId, evidenceIds) => void ai.runBrief(ideaId, evidenceIds)}
+                  onRunAgent={(ideaId) => void runsApi.startAgentRun(ideaId)}
+                />
+              )}
+
+              {/* F2: easy's run surface lives in the dock (A-F2-2); the rail
+                  placement below is the pro workshop's (A-F2-1, unchanged). */}
+              {mode === 'pro' && sqliteMode && runsApi.runs.length > 0 && (
+                <RunPanel
+                  runs={runsApi.runs}
+                  activeId={runsApi.activeRunId}
+                  log={runsApi.runLog}
+                  modelLabel={runsApi.runModelLabel}
+                  busy={busy}
+                  onSelect={runsApi.watchRun}
+                  onCancel={runsApi.cancelRun}
+                  onResume={runsApi.resumeRun}
+                  onAnswer={runsApi.answerRun}
+                />
+              )}
+            </div>
+          </main>
         </>
       ) : (
         <EntryGate
