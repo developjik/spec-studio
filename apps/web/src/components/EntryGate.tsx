@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react';
-import { surfaceProps } from '../model/surfaces';
 
 interface EntryGateProps {
   error: string | null;
@@ -19,10 +18,19 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
     onFigma(submittedUrl);
   };
 
+  const handleInvalidFigma = (event: FormEvent<HTMLFormElement>) => {
+    // Keep the original type=url markup for SSR/hydration; route native URL
+    // validation failures through the app's accessible error message instead.
+    event.preventDefault();
+    const submittedUrl = figmaUrl.trim();
+    setFigmaUrl('');
+    if (submittedUrl !== '') onFigma(submittedUrl);
+  };
+
   return (
-    <main className="gate" {...surfaceProps('entryGate')}>
+    <main className="gate">
       <div className="gate-inner">
-        <p className="eyebrow">첫 3분</p>
+        <p className="eyebrow">W2 · 첫 3분</p>
         <h1>
           화면 한 장이면
           <br />
@@ -75,7 +83,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
             </label>
           </div>
 
-          <form className="entry" onSubmit={submitFigma} noValidate>
+          <form className="entry" onSubmit={submitFigma} onInvalid={handleInvalidFigma}>
             <span className="entry-index">03</span>
             <span className="entry-body">
               <span className="entry-title">Figma URL</span>
