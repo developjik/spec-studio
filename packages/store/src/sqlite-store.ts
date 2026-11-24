@@ -1682,6 +1682,7 @@ function snapshotOfBlocks(doc: Doc, blockIds: readonly string[], rev: number): D
       blockId,
       existed: true as const,
       type: block.type,
+      data: block.data,
       text: block.text,
       pinRefs: block.pinRefs,
       index,
