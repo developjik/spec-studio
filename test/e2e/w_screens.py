@@ -8,8 +8,9 @@ from diagnostics import capturing_playwright
 from w3_publish import start_daemon, mock_state, MOCK, OUT_DIR, WEB_URL
 
 
-def request(path):
-    with urllib.request.urlopen('http://127.0.0.1:8787'+path) as response:
+def request(path,command=None):
+    body=None if command is None else json.dumps({'command':command}).encode()
+    with urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8787'+path,data=body,headers={'Content-Type':'application/json'})) as response:
         return json.load(response)
 
 
@@ -69,6 +70,23 @@ def main():
             assert len(mock_state()['pages'])==3,mock_state()
             page.screenshot(path=str(OUT_DIR/'screens-publish.png'),full_page=True)
             page.locator('[data-testid=publish-close]').click()
+            # A non-image active screen must not block a selected image screen.
+            at='2026-11-19T00:00:00Z'
+            figma_id='S_figmatest001'
+            request('/api/projects/'+pid+'/commands',{'type':'screen.add','screen':{'id':figma_id,'title':'Figma 화면','code':'SCR-999','ref':{'kind':'figma_frame','value':'https://www.figma.com/design/x/Frame'},'viewport':None,'createdAt':at,'updatedAt':at}})
+            page.reload()
+            page.get_by_role('button',name='Confluence 발행',exact=True).click()
+            expect(page.locator('[data-testid=publish-run]')).to_be_disabled()
+            page.get_by_label('발행 화면',exact=True).select_option(third)
+            expect(page.locator('[data-testid=publish-run]')).to_be_enabled()
+            page.get_by_label('발행 화면',exact=True).select_option('all')
+            expect(page.locator('[data-testid=publish-run]')).to_be_disabled()
+            expect(page.locator('[data-testid=publish-no-image]')).to_contain_text('Figma 화면')
+            page.locator('[data-testid=publish-close]').click()
+            page.once('dialog',lambda d:d.accept())
+            page.get_by_role('button',name='Figma 화면 삭제',exact=True).click()
+            page.get_by_label('현재 화면',exact=True).select_option(third)
+
             # Deleting an active screen clears its in-progress pin draft.
             box=page.locator('[data-testid=stage]').bounding_box()
             page.mouse.click(box['x']+box['width']*.7,box['y']+box['height']*.4)
