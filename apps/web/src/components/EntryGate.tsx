@@ -102,7 +102,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
           </p>
         )}
         <p className="gate-foot">
-          모든 데이터는 이 브라우저에만 저장됩니다 · 서버 전송 없음 · 계정 불필요
+          모든 데이터는 이 기기의 로컬 저장소에만 저장됩니다 · 서버 전송 없음 · 계정 불필요
         </p>
       </div>
     </main>
