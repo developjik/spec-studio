@@ -42,6 +42,23 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(selected.parent, root)
             self.assertEqual(sentinel.read_text(), 'keep')
 
+    def test_mktemp_failure_stops_before_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'bin'
+            binary.mkdir()
+            fake = binary / 'mktemp'
+            fake.write_text('#!/bin/sh\nexit 23\n')
+            fake.chmod(0o755)
+            shell = Path(__file__).with_name('run_all.sh').read_text()
+            prefix = shell.split('if [[ "${E2E_DAEMON_BUILT:-0}"')[0]
+            result = subprocess.run(['bash', '-c', prefix + '\necho SHOULD_NOT_RUN'],
+                                    env={**os.environ, 'E2E_ARTIFACTS': str(root / 'output'),
+                                         'PATH': str(binary) + os.pathsep + os.environ['PATH']},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 23)
+            self.assertNotIn('SHOULD_NOT_RUN', result.stdout)
+
     def test_sigterm_cleans_process_group(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -61,7 +78,11 @@ class RunnerTests(unittest.TestCase):
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline:
                     stat = Path(f'/proc/{child}/stat')
-                    if not stat.exists() or stat.read_text().split()[2] == 'Z':
+                    try:
+                        state = stat.read_text().split()[2]
+                    except FileNotFoundError:
+                        break
+                    if state == 'Z':
                         break
                     time.sleep(0.02)
                 else:
