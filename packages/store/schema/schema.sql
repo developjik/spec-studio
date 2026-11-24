@@ -8,7 +8,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = NORMAL;      -- 발행 경로만 FULL (연결 단위 설정)
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;
 
 -- 0. 프로젝트 ───────────────────────────────────────────────────
 -- One database file is one project. The row is how the file introduces
@@ -260,6 +260,9 @@ CREATE TABLE proposal (
                CHECK (state IN ('open','reviewing','adopted','rejected','superseded')),
   created_at   TEXT NOT NULL,
   decided_at   TEXT,
+  queued_at    TEXT,
+  queue_order  INTEGER NOT NULL DEFAULT 0,
+  source       TEXT CHECK (source IN ('llm','rule')),
   CHECK (state NOT IN ('adopted','rejected') OR decided_at IS NOT NULL)
 );
 CREATE INDEX proposal_doc ON proposal(doc_id, state);

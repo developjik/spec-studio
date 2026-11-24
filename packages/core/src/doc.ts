@@ -205,7 +205,7 @@ export function blockRefFor(pin: Pin, at: string): BlockPinRef {
 }
 
 /**
- * Builds the single proposal a screen produces: every block whose pin facts
+ * Builds one queueable proposal from a screen: every block whose pin facts
  * moved gets new citation text, and when nothing is stale the proposal adds
  * the pin summary paragraph the document is missing. The patches carry both
  * sides so the decision card can show them and the store can keep `before`.
@@ -528,4 +528,28 @@ export function restoreSnapshot(doc: Doc, snapshot: DocSnapshot, at: string): Do
 /** A compact line for the history list: what an adopted operation changed. */
 export function proposalSummary(proposal: Proposal): string {
   return proposal.summary;
+}
+
+/** Open cards in persistent queue order; stable ties keep creation order. */
+export function proposalQueue(proposals: readonly Proposal[], docId: string): Proposal[] {
+  return proposals.filter(p => p.docId === docId && p.state === 'open')
+    .sort((a,b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0) || (a.queuedAt ?? a.createdAt).localeCompare(b.queuedAt ?? b.createdAt));
+}
+export function proposalConflicts(proposal: Proposal, queue: readonly Proposal[]): string[] {
+  const blocks = new Set(proposal.patches.map(p => p.blockId));
+  return queue.filter(p => p.id !== proposal.id && p.docId === proposal.docId && p.state === 'open' && p.patches.some(patch => blocks.has(patch.blockId))).map(p => p.id);
+}
+
+/** Compare the semantic base, independent of object property insertion order. */
+export function proposalIsStale(doc: Doc, proposal: Proposal): boolean {
+  const sameRefs = (a: readonly BlockPinRef[], b: readonly BlockPinRef[]) =>
+    a.length === b.length && a.every((ref, i) => {
+      const other = b[i];
+      return other !== undefined && ref.pinId === other.pinId && ref.fingerprint === other.fingerprint && ref.linkedAt === other.linkedAt;
+    });
+  return proposal.patches.some(patch => {
+    const current = findBlock(doc, patch.blockId);
+    if (patch.before === null) return current !== undefined;
+    return current === undefined || current.type !== patch.before.type || current.text !== patch.before.text || !sameRefs(current.pinRefs, patch.before.pinRefs);
+  });
 }

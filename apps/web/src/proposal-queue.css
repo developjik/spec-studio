@@ -1,0 +1,22 @@
+/* Multiple decision cards must scroll inside their panel, never over siblings. */
+.doc-foot {
+  min-height: 0;
+  max-height: 62%;
+  overflow-y: auto;
+}
+.proposal-card { flex-shrink: 0; overflow-wrap: anywhere; }
+.proposal-queue-title { margin: 8px 0; font-size: 14px; }
+@media (max-width: 980px) {
+  .topbar { overflow-x: auto; min-width: 0; }
+  .topbar > * { flex-shrink: 0; }
+  .studio { min-width: 0; }
+  .doc-panel { height: 65vh; max-height: 65vh; overflow: hidden; }
+  .doc-foot { max-height: 65%; }
+}
+@media (max-width: 980px) {
+  .app { height: auto; min-height: 100%; }
+  .studio, .studio--research { display: flex; flex-direction: column; }
+  .canvas-column { flex: none; height: 340px; }
+  .doc-panel { flex: none; height: 760px; max-height: none; }
+  .side-rail { flex: none; }
+}

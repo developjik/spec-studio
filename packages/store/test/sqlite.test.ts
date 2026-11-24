@@ -72,7 +72,7 @@ describe('the schema', () => {
   it('creates itself on an empty file and reports the promised version', () => {
     const store = open();
     expect(store.schema.created).toBe(true);
-    expect(store.schema.actual).toBe(15);
+    expect(store.schema.actual).toBe(16);
   });
 
   it('does not re-create tables when the file already carries them', async () => {

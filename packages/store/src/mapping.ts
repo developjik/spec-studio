@@ -525,6 +525,9 @@ export function docFromRows(row: DocRow, blocks: BlockRow[]): Doc {
 // ── proposal rows ──────────────────────────────────────────────────────
 
 export interface ProposalRow {
+  queued_at?: string | null;
+  queue_order?: number;
+  source?: string | null;
   id: string;
   doc_id: string;
   origin: string;
@@ -558,6 +561,9 @@ export function proposalToRow(proposal: Proposal): ProposalRow {
     origin: proposal.origin,
     summary: proposal.summary,
     base_rev: proposal.baseRev,
+    queued_at: proposal.queuedAt ?? null,
+    queue_order: proposal.queueOrder ?? 0,
+    source: proposal.source ?? null,
     state: proposal.state,
     created_at: proposal.createdAt,
     decided_at: proposal.decidedAt,
@@ -604,6 +610,9 @@ export function proposalFromRows(row: ProposalRow, ops: ProposalOpRow[]): Propos
     summary: row.summary,
     origin: row.origin as Proposal['origin'],
     baseRev: Number(row.base_rev ?? 0),
+    queueOrder: row.queue_order ?? 0,
+    ...(row.queued_at ? { queuedAt: row.queued_at } : {}),
+    ...(row.source === "llm" || row.source === "rule" ? { source: row.source } : {}),
     state: row.state as Proposal['state'],
     patches,
     createdAt: row.created_at,

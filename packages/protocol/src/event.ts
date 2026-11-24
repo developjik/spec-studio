@@ -76,6 +76,7 @@ export const EventSchema = z.discriminatedUnion('type', [
     pinId: PinIdSchema,
   }),
   z.object({ type: z.literal('proposal.created'), proposal: ProposalSchema }),
+  z.object({ type: z.literal('proposal.deferred'), docId: DocIdSchema, proposalId: ProposalIdSchema }),
   z.object({
     type: z.literal('proposal.adopted'),
     docId: DocIdSchema,

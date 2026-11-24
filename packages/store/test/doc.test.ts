@@ -281,6 +281,9 @@ describe('the document in SQLite', () => {
       ALTER TABLE doc DROP COLUMN updated_at;
       ALTER TABLE block DROP COLUMN created_at;
       ALTER TABLE block DROP COLUMN updated_at;
+      ALTER TABLE proposal DROP COLUMN queued_at;
+      ALTER TABLE proposal DROP COLUMN queue_order;
+      ALTER TABLE proposal DROP COLUMN source;
       -- v15 additions a real v12 file never had: strip those too, or the
       -- v14 → v15 ALTERs collide with columns that are still there.
       DROP INDEX IF EXISTS event_device_seq;
@@ -295,7 +298,7 @@ describe('the document in SQLite', () => {
     raw.close();
 
     const upgraded = open();
-    expect(upgraded.schema.actual).toBe(15);
+    expect(upgraded.schema.actual).toBe(16);
     const columns = upgraded.database
       .prepare('PRAGMA table_info(doc)')
       .all() as Array<{ name: string }>;

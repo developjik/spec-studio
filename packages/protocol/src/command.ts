@@ -184,6 +184,8 @@ export const CommandSchema = z.discriminatedUnion('type', [
     proposalId: ProposalIdSchema,
   }),
 
+  z.object({ type: z.literal('proposal.defer'), docId: DocIdSchema, proposalId: ProposalIdSchema }),
+
   // ── object graph (v1) ─────────────────────────────────────────────────
   z.object({
     type: z.literal('node.create'),

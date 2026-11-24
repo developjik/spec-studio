@@ -218,6 +218,7 @@ describe('the v11 → v12 migration', () => {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE proposal(id TEXT PRIMARY KEY);
       CREATE TABLE doc(id TEXT PRIMARY KEY);
       CREATE TABLE block(id TEXT PRIMARY KEY);
       CREATE TABLE link_type(
@@ -261,7 +262,7 @@ describe('the v11 → v12 migration', () => {
     `);
 
     const info = applySchema(legacy);
-    expect(info.actual).toBe(15);
+    expect(info.actual).toBe(16);
     expect(info.created).toBe(false);
 
     const columns = legacy

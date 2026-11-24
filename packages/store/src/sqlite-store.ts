@@ -144,6 +144,7 @@ const OP_KIND: Readonly<Record<string, string>> = {
   'doc.pin.link': 'block.pin.link',
   'doc.pin.unlink': 'block.pin.unlink',
   'doc.stale.clear': 'block.stale.clear',
+  'proposal.defer': 'proposal.defer',
   'node.create': 'node.create',
   'node.update': 'node.update',
   'node.delete': 'node.delete',
@@ -883,7 +884,7 @@ export class SqliteStore implements StorePort {
       this.#db,
       `SELECT p.* FROM proposal p JOIN doc d ON d.id = p.doc_id
         WHERE d.project_id = ?
-          AND p.rowid = (SELECT MAX(rowid) FROM proposal WHERE doc_id = p.doc_id)
+          AND p.state IN ('open','reviewing','adopted','rejected')
         ORDER BY p.created_at, p.rowid`,
       projectId,
     );
@@ -1409,13 +1410,16 @@ export class SqliteStore implements StorePort {
     const row = proposalToRow(proposal);
     this.#db
       .prepare(
-        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, created_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?)
+        `INSERT INTO proposal (id, doc_id, origin, summary, base_rev, author_kind, risk, state, created_at, decided_at, queued_at, source, queue_order)
+         VALUES (?, ?, ?, ?, ?, 'ai', 'low', ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            summary    = excluded.summary,
            state      = excluded.state,
            risk       = excluded.risk,
-           decided_at = excluded.decided_at`,
+           decided_at = excluded.decided_at,
+           queued_at  = excluded.queued_at,
+           queue_order = excluded.queue_order,
+           source     = excluded.source`,
       )
       .run(
         row.id,
@@ -1426,6 +1430,9 @@ export class SqliteStore implements StorePort {
         row.state,
         row.created_at,
         row.decided_at,
+        row.queued_at ?? null,
+        row.source ?? null,
+        row.queue_order ?? 0,
       );
 
     this.#db.prepare('DELETE FROM proposal_op WHERE proposal_id = ?').run(proposal.id);
