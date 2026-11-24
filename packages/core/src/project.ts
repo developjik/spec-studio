@@ -1049,6 +1049,7 @@ function executeActive(
       const screen=(project.screens??[]).find(s=>s.id===(command.screenId??project.screen?.id));
       if(!screen) throw new DomainError('screen_missing','화면을 찾지 못했습니다');
       const scoped={...project,screen,pins:project.pins.filter(p=>p.screenId===screen.id)};
+      if(command.draft===undefined&&scoped.pins.length===0) throw new DomainError('invalid_input','선택한 화면에 추출할 핀이 없습니다');
       const proposal =
         command.draft === undefined
           ? extractGraphProposal(scoped, {
