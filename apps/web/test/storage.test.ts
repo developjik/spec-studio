@@ -10,7 +10,7 @@ it('stores each image once and reconstructs the active alias and high-water coun
  let project=execute(createProject({id:'PRJ_aaaaaaaaaaaa',name:'설계',at}),{type:'screen.add',screen},ctx).project;
  project=execute(project,{type:'pin.create',screenId:screen.id,pinType:'function',title:'핀',body:'',anchor:{x:.5,y:.5}},ctx).project;
  const text=serializeProject(project);expect(text.match(/VU5JUVVF/g)).toHaveLength(1);
- expect(bundleOf(project).project.screen?.id).toBe(screen.id);
+ const single=bundleOf(project,at);expect(single.version).toBe(1);expect(single.project.screen?.id).toBe(screen.id);expect(parseBundleFile(JSON.stringify(single)).project.screen?.id).toBe(screen.id);
  const restored=parseProjectFile(text);expect(restored.screen).toEqual(screen);expect(restored.activeScreenId).toBe(screen.id);expect(restored.pinSeq).toBe(1);expect(restored.pins).toEqual(project.pins);
 });
 
