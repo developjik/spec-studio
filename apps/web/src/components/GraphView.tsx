@@ -334,7 +334,7 @@ export function GraphView(props: GraphViewProps) {
           type="button"
           className="btn btn--primary graph-suggest"
           onClick={props.onProposal}
-          disabled={busy || project.pins.length === 0}
+          disabled={busy || !project.pins.some(p=>p.screenId===project.screen?.id)}
           data-testid="graph-suggest"
           title="화면의 핀에서 정책·요구사항·QA 초안과 링크를 읽습니다"
         >
