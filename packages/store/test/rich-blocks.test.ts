@@ -1,0 +1,37 @@
+import {mkdtempSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {it,expect} from 'vitest';
+import {BlockSchema,CommandSchema,ProjectSchema,bundleVersion,type Command,type Block} from '@spec-studio/protocol';
+import {renderStaticHtml,renderRichBlock,remapProject,execute,applyPatches,snapshotForPatches,restoreSnapshot} from '@spec-studio/core';
+import {openSqliteStore} from '../src';
+const at='2026-11-19T00:00:00Z';const sid='S_aaaaaaaaaaaa';
+const screen={id:sid,title:'주문 상세',code:'SCR-110',ref:{kind:'image' as const,value:'data:image/svg+xml;base64,PHN2Zy8+'},viewport:{width:100,height:100},createdAt:at,updatedAt:at};
+it('preserves all seven kinds plus opaque blocks across reopen, remap and escaped output',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'rich-'));const file=join(dir,'db');let store=openSqliteStore({file});
+ try{
+ const pid=(await store.createProject({name:'리치 문서'})).id;await store.execute(pid,{type:'screen.add',screen});let project=(await store.readProject(pid))!;const did=project.docs[0]!.id;
+ const commands:Command[]=(['paragraph','heading','list','caption','table','code','figure'] as const).map(blockType=>({type:'doc.block.create',docId:did,blockType,text:blockType==='code'?'const x = "<script>";':'내용 <>&',...(blockType==='table'?{data:{table:{rows:[['항목','값'],['주문','완료']],header:true}}}:blockType==='code'?{data:{code:{language:'typescript',lineNumbers:false}}}:blockType==='figure'?{data:{figure:{screenId:sid,alt:'주문 상세 캡처'}}}:{})}));
+ for(const cmd of commands)await store.execute(pid,CommandSchema.parse(cmd));
+ project=(await store.readProject(pid))!;const opaque=BlockSchema.parse({id:'B_opaque000001',type:'future-widget',text:'보존',pinRefs:[],createdAt:at,updatedAt:at,custom:{nested:['원문',7]}});let u=0;const distinct=remapProject(project,kind=>`${kind==='screen'?'S':kind==='doc'?'D':kind==='block'?'B':'PRJ'}_${String(++u).padStart(12,'0')}`);const unknownProject={...distinct,id:'PRJ_opaque0001',docs:distinct.docs.map(d=>({...d,id:'D_opaque00001',blocks:[...d.blocks,opaque]}))};await store.importProject(ProjectSchema.parse(unknownProject));
+ await store.close();store=openSqliteStore({file});project=(await store.readProject(pid))!;expect(bundleVersion(project)).toBe(2);const blocks=project.docs[0]!.blocks;expect(blocks.map(b=>b.type)).toEqual(['paragraph','heading','list','caption','table','code','figure']);expect(blocks[4]?.data?.table?.rows[1]).toEqual(['주문','완료']);expect(blocks[5]?.data?.code?.language).toBe('typescript');expect(blocks[6]?.data?.figure?.alt).toBe('주문 상세 캡처');
+ const html=renderStaticHtml({screen,pins:[],doc:project.docs[0]!,generatedAt:at});expect(html).toContain('<th>항목</th>');expect(html).toContain('const x = &quot;&lt;script&gt;&quot;;');expect(html).toContain('alt="주문 상세 캡처"');expect(html).toContain('@media print');
+ const loaded=(await store.readProject(unknownProject.id))!;expect(loaded.docs[0]?.blocks.at(-1)).toEqual(opaque);await store.execute(loaded.id,{type:'project.rename',name:'다른 내용 변경'});expect((await store.readProject(loaded.id))!.docs[0]!.blocks.at(-1)).toEqual(opaque);
+ expect(()=>execute(loaded,{type:'doc.block.update',docId:'D_opaque00001',blockId:opaque.id,text:'파괴'}, {at,nextId:()=>''})).toThrow('읽기 전용');expect(renderRichBlock(opaque)).toContain('읽기 전용');
+ let seq=0;const copy=remapProject(project,kind=>`${kind}_${String(++seq).padStart(12,'0')}`);expect(copy.docs[0]!.blocks[6]!.data?.figure?.screenId).toBe(copy.screen!.id);expect(copy.screen!.id).not.toBe(sid);
+ }finally{await store.close();rmSync(dir,{recursive:true,force:true})}
+});
+it('updates, moves and deletes rich payloads without losing table cells',async()=>{
+ const store=openSqliteStore({file:':memory:'});try{const pid=(await store.createProject({name:'편집'})).id;await store.execute(pid,{type:'screen.add',screen});let project=(await store.readProject(pid))!;const did=project.docs[0]!.id;
+ await store.execute(pid,{type:'doc.block.create',docId:did,blockType:'table',text:'',data:{table:{rows:[['제목'],['원본']],header:true}}});project=(await store.readProject(pid))!;const bid=project.docs[0]!.blocks[0]!.id;
+ await store.execute(pid,{type:'doc.block.update',docId:did,blockId:bid,data:{table:{rows:[['제목'],['수정']],header:false}}});expect((await store.readProject(pid))!.docs[0]!.blocks[0]!.data!.table!.rows[1]).toEqual(['수정']);
+ await store.execute(pid,{type:'doc.block.create',docId:did,blockType:'code',text:'print(1)',data:{code:{language:'python',lineNumbers:false}}});await store.execute(pid,{type:'doc.block.move',docId:did,blockId:bid,afterBlockId:(await store.readProject(pid))!.docs[0]!.blocks[1]!.id});expect((await store.readProject(pid))!.docs[0]!.blocks.at(-1)!.id).toBe(bid);await store.execute(pid,{type:'doc.block.delete',docId:did,blockId:bid});expect((await store.readProject(pid))!.docs[0]!.blocks.map(b=>b.type)).toEqual(['code']);
+ }finally{await store.close()}
+});
+it('rejects unsafe or malformed structured data and escapes unknown markup',()=>{
+ expect(CommandSchema.safeParse({type:'doc.block.create',docId:'D_aaaaaaaaaaaa',blockType:'table',text:'',data:{table:{rows:[['a'],['b','c']],header:true}}}).success).toBe(false);
+ expect(CommandSchema.safeParse({type:'doc.block.create',docId:'D_aaaaaaaaaaaa',blockType:'figure',text:'',data:{figure:{screenId:sid,alt:' '}}}).success).toBe(false);
+ const code:Block={id:'B_aaaaaaaaaaaa',type:'code',text:'</code><script>alert(1)</script>',pinRefs:[],createdAt:at,updatedAt:at};expect(renderRichBlock(code)).not.toContain('<script>');
+});
+
+it('snapshots rich payloads when adopting and reverting a prose proposal',()=>{const before=BlockSchema.parse({id:'B_aaaaaaaaaaaa',type:'table',text:'설명',data:{table:{rows:[['항목'],['값']],header:true}},pinRefs:[],createdAt:at,updatedAt:at});const doc={id:'D_aaaaaaaaaaaa',title:'문서',rev:0,blocks:[before],kind:'spec' as const,deletedAt:null,createdAt:at,updatedAt:at};const base={type:before.type,text:before.text,pinRefs:before.pinRefs,data:before.data};const patches=[{blockId:before.id,afterBlockId:null,before:base,after:{...base,text:'새 설명'}}];const snap=snapshotForPatches(doc,patches);const edited=applyPatches(doc,patches,at).doc;expect(edited.blocks[0]!.data).toEqual(before.data);expect(restoreSnapshot(edited,snap,at).blocks[0]!.data).toEqual(before.data)});
