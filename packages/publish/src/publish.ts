@@ -45,12 +45,14 @@ export interface PublishRecordSaveInput {
 export interface PublishRecordPort {
   findBySpec(input: {
     projectId: string;
+    screenId?: string;
     target: 'confluence';
     spaceKey: string;
     specHash: string;
   }): Promise<PublishRecordSnapshot | null>;
   findLatest(input: {
     projectId: string;
+    screenId?: string;
     target: 'confluence';
     spaceKey: string;
   }): Promise<PublishRecordSnapshot | null>;
@@ -115,10 +117,21 @@ export function normalizeSpaceKey(space: string): string {
 
 async function decidePlan(
   records: PublishRecordPort,
-  input: { projectId: string; spaceKey: string; specHash: string; mode: PublishMode },
-): Promise<{ plan: PublishPlan; pageId: string | null; exact: PublishRecordSnapshot | null }> {
+  input: {
+    projectId: string;
+    screenId: string;
+    spaceKey: string;
+    specHash: string;
+    mode: PublishMode;
+  },
+): Promise<{
+  plan: PublishPlan;
+  pageId: string | null;
+  exact: PublishRecordSnapshot | null;
+}> {
   const exact = await records.findBySpec({
     projectId: input.projectId,
+    screenId: input.screenId,
     target: 'confluence',
     spaceKey: input.spaceKey,
     specHash: input.specHash,
@@ -128,6 +141,7 @@ async function decidePlan(
   }
   const latest = await records.findLatest({
     projectId: input.projectId,
+    screenId: input.screenId,
     target: 'confluence',
     spaceKey: input.spaceKey,
   });
@@ -162,6 +176,7 @@ export async function previewPublish(
   });
   const { plan, pageId } = await decidePlan(deps.records, {
     projectId: input.projectId,
+    screenId: input.screen.id,
     spaceKey,
     specHash: pkg.specHash,
     mode: input.mode,
@@ -200,6 +215,7 @@ export async function publishSpec(
 
   const decision = await decidePlan(deps.records, {
     projectId: input.projectId,
+    screenId: input.screen.id,
     spaceKey,
     specHash: pkg.specHash,
     mode: input.mode,
@@ -301,7 +317,12 @@ export async function publishSpec(
     return {
       status: pageId === null ? 'created' : 'updated',
       specHash: pkg.specHash,
-      page: { id: page.id, title: page.title, version: page.version, url: page.url },
+      page: {
+        id: page.id,
+        title: page.title,
+        version: page.version,
+        url: page.url,
+      },
       record,
       attachments: uploaded,
       message:
