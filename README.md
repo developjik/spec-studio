@@ -573,7 +573,7 @@ If that screen has no image, the missing capture is shown explicitly.
 `doc.block.create` and `doc.block.update` accept optional `data`: `table` contains
 `rows: string[][]` and `header: boolean`; `code` contains `language` and
 `lineNumbers`; `figure` contains `screenId`, optional `pinId`, and nonempty `alt`.
-Rich data is stored in the existing block `attrs` JSON, without a DB migration. Exports containing rich or unknown blocks use bundle v2
+Rich data is stored in the existing block `attrs` JSON, without a DB migration. Exports containing rich or unknown blocks use bundle v3
 so older readers reject them rather than stripping structured fields.
 `block.type` stays open when reading: unknown types retain all fields, use a
 read-only fallback in the editor and escaped text in output. SQLite stores their
@@ -581,7 +581,8 @@ original payload in attrs with its existing `criteria` carrier type. Editing an
 unrelated block does not strip unknown data. Unknown blocks cannot be changed,
 reordered, linked or deleted through block commands or proposal adoption.
 
-HTML and Confluence use the same escaped block renderer. HTML embeds print CSS
+HTML and Confluence share escaped table/code markup. Confluence figures reference
+the uploaded screen overlay attachment rather than embedding data URLs. HTML embeds print CSS
 and prints to PDF using the browser, preserving cells, code whitespace and figure
 alt captions. It makes no external image requests. Rich blocks are edited directly,
 not rewritten by prose AI proposals; pin references never alter code contents.
