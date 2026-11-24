@@ -55,7 +55,7 @@ export type ProjectFile = Project;
  */
 export const ProjectBundleSchema = z.object({
   format: z.literal('spec-studio.bundle'),
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   exportedAt: z.string().min(1),
   project: z.preprocess(normalizeLegacyProject, ProjectSchema),
 });
