@@ -21,7 +21,7 @@ describe('parseFigmaUrl', () => {
 });
 
 describe('EntryGate Figma form', () => {
-  it('bypasses silent browser URL rejection and exposes errors as an alert', () => {
+  it('preserves native URL validation markup and exposes errors as an alert', () => {
     const markup = renderToStaticMarkup(
       createElement(EntryGate, {
         error: 'Figma 주소는 HTTPS를 사용하고 figma.com 도메인이어야 합니다.',
@@ -31,7 +31,7 @@ describe('EntryGate Figma form', () => {
       }),
     );
 
-    expect(markup.toLowerCase()).toContain('novalidate=""');
+    expect(markup.toLowerCase()).not.toContain('novalidate');
     expect(markup).toContain('type="url"');
     expect(markup).toContain('role="alert"');
     expect(markup).toContain('Figma 주소는 HTTPS를 사용하고 figma.com 도메인이어야 합니다.');

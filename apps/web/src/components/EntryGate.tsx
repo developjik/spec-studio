@@ -19,6 +19,15 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
     onFigma(submittedUrl);
   };
 
+  const handleInvalidFigma = (event: FormEvent<HTMLFormElement>) => {
+    // Keep the original type=url markup for SSR/hydration; route native URL
+    // validation failures through the app's accessible error message instead.
+    event.preventDefault();
+    const submittedUrl = figmaUrl.trim();
+    setFigmaUrl('');
+    if (submittedUrl !== '') onFigma(submittedUrl);
+  };
+
   return (
     <main className="gate" {...surfaceProps('entryGate')}>
       <div className="gate-inner">
@@ -75,7 +84,7 @@ export function EntryGate({ error, onSample, onFile, onFigma }: EntryGateProps) 
             </label>
           </div>
 
-          <form className="entry" onSubmit={submitFigma} noValidate>
+          <form className="entry" onSubmit={submitFigma} onInvalid={handleInvalidFigma}>
             <span className="entry-index">03</span>
             <span className="entry-body">
               <span className="entry-title">Figma URL</span>
