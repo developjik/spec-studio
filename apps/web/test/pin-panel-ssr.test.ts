@@ -23,7 +23,9 @@ describe('PinPanel filter scope SSR markup', () => {
       }),
     );
 
-    expect(markup).toContain('aria-describedby="pin-filter-scope"');
+    expect(markup).toMatch(
+      /<div(?=[^>]*class="filters")(?=[^>]*role="group")(?=[^>]*aria-label="핀 타입 필터")(?=[^>]*aria-describedby="pin-filter-scope")[^>]*>/,
+    );
     expect(markup).toContain('<p id="pin-filter-scope"');
     expect(markup).toContain(
       '핀 타입 필터는 핀 목록에만 적용됩니다. 캔버스의 핀 표시는 바뀌지 않습니다.',
