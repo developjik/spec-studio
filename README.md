@@ -548,3 +548,9 @@ screens. The all-screen preview explicitly shows only the first screen.
 numbers, switch/reload persistence and one all-screen action against a local mock
 Confluence. It creates three distinct pages, not three updates of the same page.
 No real Confluence account or external model is used by this test.
+
+Graph proposals, including local rules, use the selected screen unless an explicit
+request-time screenId is supplied. This prevents duplicate per-screen pin numbers
+from crossing screens. Adoption rejects deleted link endpoints atomically.
+Browser storage and downloaded bundles store the active screenshot once and
+reconstruct the legacy screen alias on load.
