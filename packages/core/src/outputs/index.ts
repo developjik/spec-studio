@@ -64,3 +64,5 @@ export * from './overlay';
 export * from './summary';
 export * from './tables';
 export * from './tasks';
+
+export * from './rich-block';
