@@ -72,11 +72,13 @@ export const isKnownBlockType = (type:string): type is BlockType => (BLOCK_TYPES
 export const BlockSchema = z.looseObject({
   id: BlockIdSchema,
   type: z.string().min(1).max(100),
-  data: RichBlockDataSchema.optional(),
+  data: z.custom<RichBlockData>((v)=>v!==null&&typeof v==='object'&&!Array.isArray(v)).optional(),
   text: z.string().max(8000),
   pinRefs: z.array(BlockPinRefSchema).max(24),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+}).superRefine((block,ctx)=>{
+ if(isKnownBlockType(block.type)&&block.data!==undefined){const result=RichBlockDataSchema.safeParse(block.data);if(!result.success) for(const issue of result.error.issues)ctx.addIssue({code:'custom',path:['data',...issue.path],message:issue.message});}
 });
 
 export type Block = z.infer<typeof BlockSchema>;
