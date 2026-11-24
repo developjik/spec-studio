@@ -1,5 +1,6 @@
 """DEV49: three screens, independent immutable pins, reopen and one all-screen publish."""
 import json
+import re
 import os
 import urllib.request
 from pathlib import Path
@@ -51,6 +52,17 @@ def main():
             state=request('/api/projects/'+pid)['project']
             assert len(state['screens'])==3 and len(state['pins'])==4,state
             assert len(set(d['screenId'] for d in state['docs']))==3,state['docs']
+            # Preserve a non-default document deep link while initial daemon state
+            # replaces a different browser-mode project on load.
+            request('/api/projects/'+pid+'/commands',{'type':'doc.create','title':'보조 문서','kind':'research'})
+            detail=request('/api/projects/'+pid)['project']
+            linked_doc=detail['docs'][-1]['id']
+            browser_copy={**state,'id':'PRJ_browsersaved','screen':state['screens'][0],'activeScreenId':first}
+            page.evaluate('(p)=>localStorage.setItem("spec-studio.project.v1",JSON.stringify(p))',browser_copy)
+            page.goto(WEB_URL+'?doc='+linked_doc)
+            page.locator('[data-testid=daemon-status][data-status=connected]').wait_for()
+            expect(page.locator('[data-testid=doc-tab][aria-selected=true]')).to_contain_text('보조 문서')
+            expect(page).to_have_url(re.compile('doc='+linked_doc))
             page.reload()
             expect(page.get_by_label('현재 화면',exact=True)).to_have_value(third)
             expect(page.locator('[data-testid=pin-2]')).to_have_count(1)
