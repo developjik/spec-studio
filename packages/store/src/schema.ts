@@ -19,7 +19,7 @@ export const SCHEMA_DIR =
 export const SCHEMA_FILE = join(SCHEMA_DIR, 'schema.sql');
 
 /** `PRAGMA user_version` of the DDL above. */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /**
  * Additive steps applied when an older file is opened. A database is only ever
@@ -32,6 +32,7 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   13: join(SCHEMA_DIR, 'migrate-13-14.sql'),
   14: join(SCHEMA_DIR, 'migrate-14-15.sql'),
   15: join(SCHEMA_DIR, 'migrate-15-16.sql'),
+  16: join(SCHEMA_DIR, 'migrate-16-17.sql'),
 };
 
 /**
@@ -107,7 +108,12 @@ export function applySchema(db: DatabaseSync, schemaPath: string = SCHEMA_FILE):
     );
   }
 
-  return { expected: SCHEMA_VERSION, actual: after, created: before === 0, fts5 };
+  return {
+    expected: SCHEMA_VERSION,
+    actual: after,
+    created: before === 0,
+    fts5,
+  };
 }
 
 /** One transaction per command: either the whole state change lands or none of it. */
