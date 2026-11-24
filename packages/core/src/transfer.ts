@@ -1,3 +1,4 @@
+import {isKnownBlockType} from '@spec-studio/protocol';
 import type {
   Block,
   Doc,
@@ -105,7 +106,7 @@ function remapDoc(doc: Doc, nextId: RemapId, pinIds: ReadonlyMap<string, string>
   const blocks: Block[] = doc.blocks.map((block) => ({
     ...block,
     id: blockIds.get(block.id)!,
-    ...(block.data?.figure?{data:{...block.data,figure:{...block.data.figure,screenId:screenIds.get(block.data.figure.screenId)??block.data.figure.screenId,...(block.data.figure.pinId?{pinId:pinIds.get(block.data.figure.pinId)??block.data.figure.pinId}:{})}}}:{}),
+    ...(isKnownBlockType(block.type)&&block.data?.figure?{data:{...block.data,figure:{...block.data.figure,screenId:screenIds.get(block.data.figure.screenId)??block.data.figure.screenId,...(block.data.figure.pinId?{pinId:pinIds.get(block.data.figure.pinId)??block.data.figure.pinId}:{})}}}:{}),
     pinRefs: block.pinRefs
       .map((ref) => {
         const pinId = pinIds.get(ref.pinId);
