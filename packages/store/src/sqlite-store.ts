@@ -1692,4 +1692,4 @@ function snapshotOfBlocks(doc: Doc, blockIds: readonly string[], rev: number): D
 
 export function openSqliteStore(options: SqliteStoreOptions): SqliteStore {
   return SqliteStore.open(options);
-        }
+}
