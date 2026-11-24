@@ -64,7 +64,8 @@ export function requireEvidence(project: Project, evidenceId: string): Evidence 
  * and the evidence board. `null` means "not in this project".
  */
 export function objectKindOf(project: Project, id: string): ObjectKind | null {
-  if (project.screen !== null && project.screen.id === id) return 'screen';
+  if ((project.screens ?? (project.screen ? [project.screen] : [])).some((s) => s.id === id))
+    return 'screen';
   if (project.pins.some((pin) => pin.id === id)) return 'pin';
   const node = project.graph.nodes.find((candidate) => candidate.id === id);
   if (node !== undefined) return NODE_TYPE_KIND[node.type].kind;
@@ -97,7 +98,15 @@ export function evidenceTitleOf(url: string, excerpt: string): string {
 
 type InboxCommand = Extract<
   Command,
-  { type: 'idea.capture' | 'idea.update' | 'idea.archive' | 'evidence.capture' | 'evidence.update' | 'evidence.dismiss' }
+  {
+    type:
+      | 'idea.capture'
+      | 'idea.update'
+      | 'idea.archive'
+      | 'evidence.capture'
+      | 'evidence.update'
+      | 'evidence.dismiss';
+  }
 >;
 
 /**
@@ -133,14 +142,22 @@ export function executeInbox(
         text: command.text,
         ...(command.url === undefined ? {} : { url: command.url }),
         ...(command.image === undefined ? {} : { imagePath: command.image }),
-        tags: ideaTagsOf({ text: command.text, url: command.url, imagePath: command.image }),
+        tags: ideaTagsOf({
+          text: command.text,
+          url: command.url,
+          imagePath: command.image,
+        }),
         state: 'captured',
         capturedAt: ctx.at,
         createdAt: ctx.at,
         updatedAt: ctx.at,
       });
       return {
-        project: { ...project, ideas: [...project.ideas, idea], updatedAt: ctx.at },
+        project: {
+          ...project,
+          ideas: [...project.ideas, idea],
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'idea.captured', idea }],
       };
     }
@@ -148,7 +165,8 @@ export function executeInbox(
     case 'idea.update':
     case 'idea.archive': {
       const current = requireIdea(project, command.ideaId);
-      const nextState = command.type === 'idea.archive' ? 'archived' : (command.state ?? current.state);
+      const nextState =
+        command.type === 'idea.archive' ? 'archived' : (command.state ?? current.state);
       if (nextState !== current.state) {
         const allowed: Record<Idea['state'], Idea['state'][]> = {
           captured: ['promoted', 'archived'],
@@ -202,7 +220,11 @@ export function executeInbox(
         updatedAt: ctx.at,
       });
       return {
-        project: { ...project, evidence: [...project.evidence, evidence], updatedAt: ctx.at },
+        project: {
+          ...project,
+          evidence: [...project.evidence, evidence],
+          updatedAt: ctx.at,
+        },
         events: [{ type: 'evidence.captured', evidence }],
       };
     }
@@ -233,7 +255,11 @@ export function executeInbox(
       if (current.state === 'dismissed') {
         throw new DomainError('invalid_input', '이미 기각된 근거입니다');
       }
-      const evidence: Evidence = { ...current, state: 'dismissed', updatedAt: ctx.at };
+      const evidence: Evidence = {
+        ...current,
+        state: 'dismissed',
+        updatedAt: ctx.at,
+      };
       return {
         project: {
           ...project,
