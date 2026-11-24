@@ -250,3 +250,13 @@ it('rejects an oversized screen before it can corrupt persisted project state',(
   expect(()=>run(project,{type:'screen.add',screen:{...SCREEN,id:`S_${'y'.repeat(12)}`,code:'SCR-112',title:'가'.repeat(121)}},ctx)).toThrow();
   expect(project.screens).toHaveLength(1);
 });
+
+
+it('preserves an open proposal when rule extraction on an empty screen is rejected',()=>{
+ let {project,ctx}=seeded();
+ project=run(project,{type:'graph.proposal.create'},ctx).project;
+ const proposal=project.graphProposal;
+ project=run(project,{type:'screen.add',screen:{...SCREEN,id:`S_${'q'.repeat(12)}`,code:'SCR-112'}},ctx).project;
+ expect(()=>run(project,{type:'graph.proposal.create'},ctx)).toThrow();
+ expect(project.graphProposal).toEqual(proposal);
+});
