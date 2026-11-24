@@ -215,13 +215,14 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
       project,
       events: [{ type: 'package.exported', files: command.files }],
     };
+  if(command.type==='screen.add'||command.type==='screen.attach') command={...command,screen:ScreenSchema.parse(command.screen)};
   const current = normalizeProject(project);
   const screens = current.screens!;
   if (command.type === 'screen.attach') {
     if (!screens.some((s) => s.id === command.screen.id))
       return execute(current, { type: 'screen.add', screen: command.screen }, ctx);
     if (screens.some((s) => s.id !== command.screen.id && s.code === command.screen.code))
-      throw new DomainError('invalid_input', 'screen code must be unique');
+      throw new DomainError('invalid_input', '화면 코드는 중복될 수 없습니다');
     return {
       project: normalizeProject({
         ...current,
@@ -237,7 +238,7 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
   let result: ExecutionResult;
   if (command.type === 'screen.add') {
     if (screens.some((s) => s.id === command.screen.id || s.code === command.screen.code))
-      throw new DomainError('invalid_input', 'screen id and code must be unique');
+      throw new DomainError('invalid_input', '화면 ID와 코드는 중복될 수 없습니다');
     const next = [...screens];
     next.splice(Math.min(command.order ?? next.length, next.length), 0, command.screen);
     const doc = {
@@ -265,7 +266,7 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
     };
   } else if (command.type === 'screen.select') {
     const screen = screens.find((s) => s.id === command.screenId);
-    if (!screen) throw new DomainError('screen_missing', 'screen not found');
+    if (!screen) throw new DomainError('screen_missing', '화면을 찾지 못했습니다');
     result = {
       project: {
         ...current,
@@ -282,7 +283,7 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
       new Set(command.screenIds).size !== screens.length ||
       command.screenIds.some((id) => !screens.some((s) => s.id === id))
     )
-      throw new DomainError('invalid_input', 'reorder must include every screen exactly once');
+      throw new DomainError('invalid_input', '모든 화면을 한 번씩 포함해야 합니다');
     result = {
       project: {
         ...current,
@@ -293,7 +294,7 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
     };
   } else if (command.type === 'screen.delete') {
     if (!screens.some((s) => s.id === command.screenId))
-      throw new DomainError('screen_missing', 'screen not found');
+      throw new DomainError('screen_missing', '화면을 찾지 못했습니다');
     const next = screens.filter((s) => s.id !== command.screenId);
     const screen = current.screen?.id === command.screenId ? (next[0] ?? null) : current.screen;
     const docIds = new Set(
@@ -614,7 +615,7 @@ function executeActive(
         );
       }
       if (doc.screenId != null && doc.screenId !== pin.screenId)
-        throw new DomainError('invalid_input', 'pin belongs to another screen');
+        throw new DomainError('invalid_input', '다른 화면의 핀은 연결할 수 없습니다');
       const ref = blockRefFor(pin, ctx.at);
       const updated = {
         ...block,
@@ -1045,13 +1046,16 @@ function executeActive(
     }
 
     case 'graph.proposal.create': {
+      const screen=(project.screens??[]).find(s=>s.id===(command.screenId??project.screen?.id));
+      if(!screen) throw new DomainError('screen_missing','화면을 찾지 못했습니다');
+      const scoped={...project,screen,pins:project.pins.filter(p=>p.screenId===screen.id)};
       const proposal =
         command.draft === undefined
-          ? extractGraphProposal(project, {
+          ? extractGraphProposal(scoped, {
               id: ctx.nextId('graphProposal'),
               at: ctx.at,
             })
-          : buildGraphProposalFromDraft(project, command.draft, {
+          : buildGraphProposalFromDraft(scoped, command.draft, {
               id: ctx.nextId('graphProposal'),
               at: ctx.at,
               source: command.source ?? 'llm',
@@ -1094,11 +1098,12 @@ function executeActive(
       // fails rather than half-landing, the same all-or-nothing an unknown
       // pin or node ref already gets.
       const ideaIds = new Set(project.ideas.map((idea) => idea.id));
+      const liveIds=new Set([...(project.screens??[]).map(s=>s.id),...project.pins.map(p=>p.id),...project.graph.nodes.map(n=>n.id),...ideaIds]);
       const links: GraphLink[] = [...project.graph.links];
       for (const draft of proposal.links) {
         const src = resolveProposalRef(draft.src, created, ideaIds);
         const dst = resolveProposalRef(draft.dst, created, ideaIds);
-        if (src === null || dst === null) {
+        if (src === null || dst === null || (!liveIds.has(src)&&![...created.values()].includes(src)) || (!liveIds.has(dst)&&![...created.values()].includes(dst))) {
           throw new DomainError('invalid_input', '제안 링크의 대상을 풀지 못했습니다');
         }
         links.push({
@@ -1207,4 +1212,4 @@ export function applyGraphProposal(project: Project, ctx: ExecuteContext): Execu
     throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
   }
   return execute(project, { type: 'graph.proposal.adopt', proposalId: proposal.id }, ctx);
-}
+        }
