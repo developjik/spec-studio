@@ -1,6 +1,6 @@
 import { expect,it } from 'vitest';
 import { createProject,execute } from '@spec-studio/core';
-import { parseProjectFile,serializeProject } from '../src/model/storage';
+import { parseProjectFile,serializeProject,bundleOf } from '../src/model/storage';
 
 it('stores each image once and reconstructs the active alias and high-water counter',()=>{
  const at='2026-11-19T00:00:00Z';let i=0;
@@ -9,5 +9,6 @@ it('stores each image once and reconstructs the active alias and high-water coun
  let project=execute(createProject({id:'PRJ_aaaaaaaaaaaa',name:'설계',at}),{type:'screen.add',screen},ctx).project;
  project=execute(project,{type:'pin.create',screenId:screen.id,pinType:'function',title:'핀',body:'',anchor:{x:.5,y:.5}},ctx).project;
  const text=serializeProject(project);expect(text.match(/VU5JUVVF/g)).toHaveLength(1);
+ expect(bundleOf(project).project.screen?.id).toBe(screen.id);
  const restored=parseProjectFile(text);expect(restored.screen).toEqual(screen);expect(restored.activeScreenId).toBe(screen.id);expect(restored.pinSeq).toBe(1);expect(restored.pins).toEqual(project.pins);
 });
