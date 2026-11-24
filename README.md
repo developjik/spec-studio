@@ -69,7 +69,7 @@ Three commitments follow from that:
   `stale` badge on the paragraphs that cite it. Moving a pin never does: an anchor is not part of
   what a sentence claims. A person either confirms the sentence (`확인 · 해제`, which re-baselines
   the link) or lets a proposal bring it up to date.
-- **One proposal, one decision card, one revert** — 시안 mode builds a single suggestion from the
+- **Proposal queue, individual decisions, attributed revert** — 시안 mode builds a single suggestion from the
   current pins or the stale blocks, shows it as a summary line plus before/after block patches,
   and changes nothing until **채택**. Adopting writes the patches and an `op_log.before`
   snapshot in the same transaction; **되돌리기** restores exactly those blocks from that snapshot,
@@ -476,8 +476,10 @@ pnpm test:contract
   an editor that cannot show them would delete them.
 - **One document per screen.** A new screen brings a new document; the old one stays in the file
   with its blocks, not in the UI.
-- **One proposal at a time.** A new suggestion replaces the open one; adopted and rejected
-  proposals stay in `proposal` as history. There is no multi-proposal queue.
+- **Document proposal queue.** Open suggestions stay visible together with source, block count,
+  before/after preview and same-block conflict warnings. Each card can be adopted, rejected or
+  deferred to the bottom. A changed base block blocks adoption instead of overwriting newer text.
+  Queue order and decisions survive reopening SQLite; revert records the adopted proposal id.
 - **Revert restores blocks, not pins.** Undoing an adoption returns the paragraphs to their
   pre-adoption text and links; the pin edit that caused it is not undone.
 
