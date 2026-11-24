@@ -593,4 +593,4 @@ export function GraphView(props: GraphViewProps) {
       </aside>
     </main>
   );
-                    }
+}
