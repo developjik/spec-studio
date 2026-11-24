@@ -319,7 +319,7 @@ export function GraphView(props: GraphViewProps) {
                 <button
                   type="button"
                   className="btn btn--sm"
-                  disabled={busy}
+                  disabled={busy || !project.pins.some(p=>p.screenId===project.screen?.id)}
                   onClick={props.onProposal}
                   data-testid="graph-proposal-again"
                 >
@@ -593,4 +593,4 @@ export function GraphView(props: GraphViewProps) {
       </aside>
     </main>
   );
-}
+                    }
