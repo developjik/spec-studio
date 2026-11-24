@@ -2,6 +2,9 @@ import { proposalQueue, proposalConflicts, proposalIsStale } from '@spec-studio/
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   BLOCK_TYPES,
+  isKnownBlockType,
+  type RichBlockData,
+  type Screen,
   BLOCK_TYPE_LABEL,
   PIN_TYPE_LABEL,
   type Block,
@@ -29,6 +32,8 @@ export interface RevertableView {
 }
 
 interface DocPanelProps {
+  screens: Screen[];
+  onUpdateData: (blockId:string,data:RichBlockData)=>void;
   doc: Doc | null;
   /** The registry; one tab each, the active one is `doc`. */
   docs: Doc[];
@@ -355,6 +360,8 @@ export function DocPanel(props: DocPanelProps) {
                 selectedPinId={selectedPinId}
                 flashed={flash === block.id}
                 first={index === 0}
+                screens={props.screens}
+                onUpdateData={props.onUpdateData}
                 onUpdateText={props.onUpdateText}
                 onChangeType={props.onChangeType}
                 onDelete={props.onDeleteBlock}
@@ -494,6 +501,8 @@ function truncate(text: string, size = 64): string {
 }
 
 interface BlockRowProps {
+  screens: Screen[];
+  onUpdateData: (blockId:string,data:RichBlockData)=>void;
   block: Block;
   position: number;
   pins: Pin[];
@@ -513,7 +522,8 @@ interface BlockRowProps {
 }
 
 function BlockRow(props: BlockRowProps) {
-  const { block, pins, doc, editable } = props;
+  const { block, pins, doc } = props;
+  const editable = props.editable && isKnownBlockType(block.type);
   const [text, setText] = useState(block.text);
   const [linkPin, setLinkPin] = useState('');
 
@@ -554,6 +564,7 @@ function BlockRow(props: BlockRowProps) {
           onChange={(event) => props.onChangeType(block.id, event.target.value as BlockType)}
           data-testid={`block-type-${props.position}`}
         >
+          {!isKnownBlockType(block.type)&&<option value={block.type}>읽기 전용: {block.type}</option>}
           {BLOCK_TYPES.map((type) => (
             <option key={type} value={type}>
               {BLOCK_TYPE_LABEL[type]}
@@ -604,6 +615,8 @@ function BlockRow(props: BlockRowProps) {
         </div>
       </div>
 
+      {isKnownBlockType(block.type) && ['table','code','figure'].includes(block.type) && <RichBlockEditor block={block} screens={props.screens} pins={pins} editable={editable} onUpdate={(data)=>props.onUpdateData(block.id,data)} />}
+      {!isKnownBlockType(block.type) && <p className="unknown-block-note">알 수 없는 블록은 수정하지 않고 원본 데이터를 보존합니다.</p>}
       <textarea
         className="doc-text"
         value={text}
@@ -709,4 +722,25 @@ function BlockRow(props: BlockRowProps) {
       )}
     </li>
   );
+}
+
+function RichBlockEditor({block,screens,pins,editable,onUpdate}:{block:Block;screens:Screen[];pins:Pin[];editable:boolean;onUpdate:(data:RichBlockData)=>void}) {
+ const [data,setData]=useState<RichBlockData>(block.data??{});
+ useEffect(()=>setData(block.data??{}),[block.id,block.data]);
+ const change=(value:RichBlockData)=>{setData(value);onUpdate(value)};
+ if(block.type==='table'){
+  const table=data.table??{rows:[['',''],['','']],header:true};
+  const update=(rows:string[][])=>change({...data,table:{...table,rows}});
+  return <section className="rich-editor" aria-label="표 편집">
+   <label><input type="checkbox" checked={table.header} disabled={!editable} onChange={e=>change({...data,table:{...table,header:e.target.checked}})} />첫 행은 제목</label>
+   <div className="rich-table-wrap"><table className="rich-table"><tbody>{table.rows.map((row,r)=><tr key={r}>{row.map((cell,c)=>{const Cell=table.header&&r===0?'th':'td';return <Cell key={c}><input aria-label={`표 ${r+1}행 ${c+1}열`} disabled={!editable} value={cell} onChange={e=>setData({...data,table:{...table,rows:table.rows.map((line,i)=>i===r?line.map((v,j)=>j===c?e.target.value:v):line)}})} onBlur={()=>onUpdate(data)} /></Cell>})}</tr>)}</tbody></table></div>
+   <div className="rich-tools"><button type="button" disabled={!editable||table.rows.length>=100} onClick={()=>update([...table.rows,Array(table.rows[0]?.length??2).fill('')])}>행 추가</button><button type="button" disabled={!editable||(table.rows[0]?.length??0)>=30} onClick={()=>update(table.rows.map(row=>[...row,'']))}>열 추가</button><button type="button" disabled={!editable||table.rows.length<=1} onClick={()=>update(table.rows.slice(0,-1))}>마지막 행 삭제</button><button type="button" disabled={!editable||(table.rows[0]?.length??0)<=1} onClick={()=>update(table.rows.map(row=>row.slice(0,-1)))}>마지막 열 삭제</button></div>
+  </section>;
+ }
+ if(block.type==='code')return <section className="rich-editor"><label>언어 <select aria-label="코드 언어" value={data.code?.language??'text'} disabled={!editable} onChange={e=>change({...data,code:{language:e.target.value,lineNumbers:data.code?.lineNumbers??false}})}>{['text','typescript','javascript','json','html','css','python','sql','bash'].map(s=><option key={s}>{s}</option>)}</select></label><button type="button" onClick={()=>void navigator.clipboard.writeText(block.text).then(()=>window.alert('코드를 복사했습니다.')).catch(()=>window.alert('복사 권한이 없습니다. 아래 코드에서 직접 복사하세요.'))}>코드 복사</button><pre className="rich-code"><code>{block.text}</code></pre></section>;
+ if(block.type==='figure'){
+  const figure=data.figure??{screenId:screens[0]?.id??'',alt:''};const screen=screens.find(s=>s.id===figure.screenId);
+  return <section className="rich-editor"><label>캡처 화면 <select aria-label="그림 캡처 화면" disabled={!editable} value={figure.screenId} onChange={e=>change({...data,figure:{screenId:e.target.value,alt:figure.alt||'화면 캡처'}})}>{screens.map(s=><option key={s.id} value={s.id}>{s.code} · {s.title}</option>)}</select></label><label>연결 핀 <select aria-label="그림 연결 핀" disabled={!editable} value={figure.pinId??''} onChange={e=>{const {pinId,...f}=figure;change({...data,figure:e.target.value?{...f,pinId:e.target.value}:f})}}><option value="">전체 화면</option>{pins.filter(p=>p.screenId===figure.screenId).map(p=><option key={p.id} value={p.id}>#{p.number} {p.title}</option>)}</select></label><label>대체 텍스트(필수)<input aria-label="그림 대체 텍스트" required disabled={!editable} value={figure.alt} onChange={e=>setData({...data,figure:{...figure,alt:e.target.value}})} onBlur={()=>{if(figure.alt.trim())onUpdate(data)}} /></label>{!figure.alt.trim()&&<p role="alert">대체 텍스트를 입력해야 저장됩니다.</p>}{screen?.ref.kind==='image'?<figure><img src={screen.ref.value} alt={figure.alt}/><figcaption>{figure.alt}{figure.pinId?' · 연결 핀 있음':''}</figcaption></figure>:<p>이 화면에는 이미지 캡처가 없습니다.</p>}</section>;
+ }
+ return null;
 }
