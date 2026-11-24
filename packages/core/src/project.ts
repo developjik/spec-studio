@@ -640,6 +640,15 @@ export function execute(
         // naming none.
         throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       }
+      // Preserve the public error code for a missing insert anchor.
+      const available = new Set(doc.blocks.map(block => block.id));
+      for (const patch of proposal.patches) {
+        if (patch.before !== null) continue;
+        if (patch.afterBlockId !== null && !available.has(patch.afterBlockId)) {
+          throw new DomainError('block_not_found', '삽입 기준 문단이 변경됐습니다. 새 제안을 만들어 비교하세요');
+        }
+        available.add(patch.blockId);
+      }
       if (proposalIsStale(doc, proposal, project.pins)) {
         throw new DomainError('invalid_input', '제안 이후 문단이나 참조 핀이 변경됐습니다. 새 제안을 만들어 비교하세요');
       }
