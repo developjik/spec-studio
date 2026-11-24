@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './styles.css';
+import './rich-block.css';
 import './proposal-queue.css';
 
 const container = document.getElementById('root');
