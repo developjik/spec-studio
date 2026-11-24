@@ -38,7 +38,11 @@ def main():
                     page.locator('[data-testid=pin-save]').click()
                     expect(page.locator(f'[data-testid=pin-{n}]')).to_have_count(1)
             third=page.get_by_label('현재 화면',exact=True).input_value()
+            # Unsaved Figma input belongs to one screen, never the next one.
+            page.locator('[data-testid=figma-register]').click()
+            page.locator('[data-testid=figma-url-input]').fill('https://www.figma.com/design/unsaved/Frame')
             page.get_by_label('상단 화면 전환',exact=True).select_option(first)
+            expect(page.locator('[data-testid=figma-url-input]')).to_have_count(0)
             expect(page.locator('[data-testid=pin-1]')).to_have_count(0)
             page.get_by_label('현재 화면',exact=True).select_option(third)
             expect(page.locator('[data-testid=pin-2]')).to_have_count(1)
@@ -65,6 +69,15 @@ def main():
             assert len(mock_state()['pages'])==3,mock_state()
             page.screenshot(path=str(OUT_DIR/'screens-publish.png'),full_page=True)
             page.locator('[data-testid=publish-close]').click()
+            # Deleting an active screen clears its in-progress pin draft.
+            box=page.locator('[data-testid=stage]').bounding_box()
+            page.mouse.click(box['x']+box['width']*.7,box['y']+box['height']*.4)
+            page.locator('[data-testid=pin-title]').fill('삭제 화면의 미저장 핀')
+            page.once('dialog',lambda d:d.accept())
+            page.get_by_role('button',name='결제 내역 삭제',exact=True).click()
+            expect(page.locator('.screen-card')).to_have_count(2)
+            expect(page.locator('[data-testid=pin-title]')).to_have_count(0)
+
             page.set_viewport_size({'width':390,'height':844})
             page.locator('.toast').wait_for(state='hidden',timeout=10000)
             page.screenshot(path=str(OUT_DIR/'screens-mobile.png'),full_page=True)
