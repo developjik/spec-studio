@@ -627,7 +627,7 @@ export function execute(
       if (proposal.docId !== doc.id) throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       const next = { ...proposal, queuedAt: ctx.at, queueOrder: Math.max(0, ...project.proposals.map(p => p.queueOrder ?? 0)) + 1 };
       return {
-        project: { ...project, proposals: [...project.proposals.filter(p => p.id !== proposal.id), next], updatedAt: ctx.at },
+        project: { ...project, proposals: project.proposals.map(p => p.id === proposal.id ? next : p), updatedAt: ctx.at },
         events: [{ type: 'proposal.deferred', docId: doc.id, proposalId: proposal.id }],
       };
     }
@@ -640,8 +640,8 @@ export function execute(
         // naming none.
         throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       }
-      if (proposalIsStale(doc, proposal)) {
-        throw new DomainError('invalid_input', '제안 이후 문단이 변경됐습니다. 새 제안을 만들어 비교하세요');
+      if (proposalIsStale(doc, proposal, project.pins)) {
+        throw new DomainError('invalid_input', '제안 이후 문단이나 참조 핀이 변경됐습니다. 새 제안을 만들어 비교하세요');
       }
       const applied = applyPatches(doc, proposal.patches, ctx.at);
       const decided: Proposal = { ...proposal, state: 'adopted', decidedAt: ctx.at };
@@ -996,4 +996,4 @@ export function applyGraphProposal(project: Project, ctx: ExecuteContext): Execu
     throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
   }
   return execute(project, { type: 'graph.proposal.adopt', proposalId: proposal.id }, ctx);
-      }
+}
