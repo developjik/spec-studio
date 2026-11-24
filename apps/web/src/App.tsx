@@ -136,7 +136,7 @@ export default function App() {
   const [filter, setFilter] = useState<PinFilter>('all');
   const [draftAnchor, setDraftAnchor] = useState<Anchor | null>(null);
   const previousScreen=useRef<string|null>(null);
-  useEffect(()=>{const id=project?.screen?.id??null;if(previousScreen.current!==null&&previousScreen.current!==id){setDraftAnchor(null);setSelectedPinId(null);setActiveDocId(null);setFocusBlockId(null);setFilter('all');}previousScreen.current=id;},[project?.screen?.id]);
+  useEffect(()=>{const id=project?.screen?.id??null;if(previousScreen.current!==null&&previousScreen.current!==id){setDraftAnchor(null);setSelectedPinId(null);setActiveDocId(current=>project?.docs.some(d=>d.id===current&&(d.screenId==null||d.screenId===id))?current:null);setFocusBlockId(null);setFilter('all');}previousScreen.current=id;},[project?.screen?.id]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -1309,7 +1309,7 @@ export default function App() {
       if(ids.has(link.src)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.dst)&&!ids.has(link.dst)){ids.add(link.dst);changed=true;}
       if(ids.has(link.dst)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.src)&&!ids.has(link.src)){ids.add(link.src);changed=true;}
     }}
-    selectedProject.graph={nodes:selectedProject.graph.nodes.filter(n=>ids.has(n.id)),links:selectedProject.graph.links.filter(l=>ids.has(l.src)&&ids.has(l.dst))};
+    selectedProject.graph={nodes:selectedProject.graph.nodes.filter(n=>ids.has(n.id)),links:selectedProject.graph.links.filter(l=>(ids.has(l.src)&&ids.has(l.dst))||pins.some(p=>p.id===l.src||p.id===l.dst))};
   }
   const report = project === null ? null : traceability(project);
   const graphNodes = project === null ? [] : graphViewNodes(project);
