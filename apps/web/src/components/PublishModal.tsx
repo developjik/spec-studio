@@ -160,7 +160,8 @@ export function PublishModal({
     setPublishing(true);
     try {
       const target: ConfluenceTargetView = { baseUrl, space, email, apiToken };
-      const selected = screens.filter((s) => scope === 'all' || s.id === scope);
+      const selected = selectedScreens;
+      if(!hasImage) throw new Error('선택한 화면에 이미지를 먼저 등록해 주세요.');
       if (selected.length === 0) throw new Error('발행할 화면을 선택해 주세요.');
       let result: PublishOutcomeView | null = null;
       for (const selectedScreen of selected) {
@@ -201,7 +202,9 @@ export function PublishModal({
   };
 
   const figmaUrl = screen.figmaUrl ?? (screen.ref.kind === 'figma_frame' ? screen.ref.value : null);
-  const hasImage = screen.ref.kind === 'image';
+  const selectedScreens=screens.filter(s=>scope==='all'||s.id===scope);
+  const noImage=selectedScreens.filter(s=>s.ref.kind!=='image');
+  const hasImage=selectedScreens.length>0&&noImage.length===0;
 
   return (
     <div className="modal-veil" role="presentation" onClick={onClose}>
@@ -338,8 +341,7 @@ export function PublishModal({
 
             {!hasImage && (
               <p className="publish-hint" data-testid="publish-no-image">
-                이 화면은 Figma 프레임만 등록되어 오버레이 PNG를 만들 수 없습니다. 화면 이미지를
-                등록하면 발행할 수 있습니다.
+                선택한 화면에 이미지가 없어 발행할 수 없습니다: {noImage.map(s=>s.title).join(', ')}. 화면 이미지를 먼저 등록해 주세요.
               </p>
             )}
 
