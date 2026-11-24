@@ -27,6 +27,7 @@ interface GraphViewProps {
   project: Project;
   nodes: GraphViewNode[];
   report: TraceabilityReport;
+  screenReport?: TraceabilityReport;
   maturity: Maturity;
   busy: boolean;
   selectedId: string | null;
@@ -571,7 +572,7 @@ export function GraphView(props: GraphViewProps) {
         )}
 
         <section className="graph-panel graph-matrix" data-testid="rtm-matrix">
-          <h3 className="graph-panel-title">RTM 요약</h3>
+          <h3 className="graph-panel-title">RTM 요약 · 선택 화면</h3>
           <table>
             <thead>
               <tr>
@@ -583,7 +584,7 @@ export function GraphView(props: GraphViewProps) {
               {GRAPH_LINK_TYPES.map((type) => (
                 <tr key={type}>
                   <td>{GRAPH_LINK_LABEL[type]}</td>
-                  <td className="mono">{report.byType[type]}</td>
+                  <td className="mono">{(props.screenReport??report).byType[type]}</td>
                 </tr>
               ))}
             </tbody>
