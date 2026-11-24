@@ -28,7 +28,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from diagnostics import capturing_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE = os.environ.get("SPEC_STUDIO_NODE", "node")
@@ -97,7 +97,7 @@ def main() -> int:
             failures.append(label)
 
     try:
-        with sync_playwright() as playwright:
+        with capturing_playwright(OUT_DIR) as playwright:
             browser = playwright.chromium.launch(
                 executable_path=CHROMIUM if Path(CHROMIUM).exists() else None,
                 chromium_sandbox=False,
@@ -289,6 +289,8 @@ def main() -> int:
             )
 
             check("콘솔 오류 0건", console_errors == [], " | ".join(console_errors[:3]))
+            if failures:
+                page.screenshot(path=str(OUT_DIR / "failure-checks.png"))
             browser.close()
     finally:
         daemon.terminate()
