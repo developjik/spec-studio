@@ -1212,4 +1212,4 @@ export function applyGraphProposal(project: Project, ctx: ExecuteContext): Execu
     throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
   }
   return execute(project, { type: 'graph.proposal.adopt', proposalId: proposal.id }, ctx);
-        }
+}
