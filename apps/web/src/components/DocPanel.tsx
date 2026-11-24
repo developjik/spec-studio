@@ -1,3 +1,4 @@
+import { proposalQueue, proposalConflicts, proposalIsStale } from '@spec-studio/core';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   BLOCK_TYPES,
@@ -24,6 +25,7 @@ export interface RevertableView {
   blocks: number;
   /** The `op_log.kind` the undo would take back (proposal adopts or doc ops). */
   op: string;
+  proposalId?: string | null;
 }
 
 interface DocPanelProps {
@@ -32,6 +34,7 @@ interface DocPanelProps {
   docs: Doc[];
   pins: Pin[];
   proposal: Proposal | null;
+  proposals?: Proposal[];
   mode: DocMode;
   selectedPinId: string | null;
   focusBlockId: string | null;
@@ -62,8 +65,9 @@ interface DocPanelProps {
   onClearStale: (blockId: string, pinIds: string[]) => Promise<void>;
   onSelectPin: (pinId: string) => void;
   onCreateProposal: () => void;
-  onAdopt: () => void;
-  onReject: () => void;
+  onAdopt: (proposalId: string) => void;
+  onReject: (proposalId: string) => void;
+  onDefer?: (proposalId: string) => void;
   onRevert: () => void;
   onFocusHandled: () => void;
 }
@@ -266,16 +270,9 @@ export function DocPanel(props: DocPanelProps) {
   const staleCount = badges.length;
   // A proposal belongs to the doc it was filed against; other tabs never see it.
   const ours = proposal !== null && proposal.docId === doc.id ? proposal : null;
-  const proposalOpen = ours !== null && ours.state === 'open';
+  const queue = proposalQueue(props.proposals ?? (ours === null ? [] : [ours]), doc.id);
   const directEditable = mode === 'direct' && !props.busy;
-  // The honest badge: what the daemon said filed this card wins; the origin
-  // fallback keeps the old meaning (핀 추출 = rule, 그 외 = LLM 문안).
-  const cardSource =
-    ours !== null && props.sourceHint !== null && props.sourceHint.proposalId === ours.id
-      ? props.sourceHint.source
-      : ours?.origin === 'doc-chat'
-        ? 'llm'
-        : 'rule';
+
 
 
   return (
@@ -397,10 +394,15 @@ export function DocPanel(props: DocPanelProps) {
           </button>
         )}
 
-        {proposalOpen && (
-          <section className="proposal-card" data-testid="proposal-card">
+        {queue.length > 0 && <h3 className="proposal-queue-title">결정 대기 {queue.length}건</h3>}
+        {queue.map((card) => {
+          const conflicts = proposalConflicts(card, queue);
+          const stale = proposalIsStale(doc, card);
+          const cardSource = card.source ?? (props.sourceHint?.proposalId === card.id ? props.sourceHint.source : card.origin === 'doc-chat' ? 'llm' : 'rule');
+          return (
+          <section key={card.id} className="proposal-card" data-proposal-id={card.id} data-testid="proposal-card">
             <p className="proposal-eyebrow">
-              제안 1건 · 결정 카드 1개
+              {card.patches.length}개 블록 · {card.origin} · {card.id}
               <span
                 className={`decision-source decision-source--${cardSource}`}
                 data-testid="proposal-source"
@@ -415,10 +417,10 @@ export function DocPanel(props: DocPanelProps) {
               </span>
             </p>
             <p className="proposal-summary" data-testid="proposal-summary">
-              {ours.summary}
+              {card.summary}
             </p>
             <ul className="proposal-patches">
-              {ours.patches.map((patch) => (
+              {card.patches.map((patch) => (
                 <li key={patch.blockId} data-testid="proposal-patch">
                   <span className={`patch-kind patch-kind--${patch.before === null ? 'add' : 'edit'}`}>
                     {patch.before === null ? '추가' : '수정'}
@@ -431,12 +433,14 @@ export function DocPanel(props: DocPanelProps) {
                 </li>
               ))}
             </ul>
+            {conflicts.length > 0 && <p role="status" data-testid="proposal-conflict">충돌: 다른 제안 {conflicts.length}건이 같은 블록을 변경합니다. 채택하면 다른 제안은 다시 확인해야 합니다.</p>}
+            {stale && <p role="alert" data-testid="proposal-stale">제안 이후 문단이 변경됐습니다. 덮어쓰지 않도록 채택을 막았습니다. 새 제안을 만들어 비교하세요.</p>}
             <div className="proposal-actions">
               <button
                 type="button"
                 className="btn btn--primary btn--sm"
-                onClick={props.onAdopt}
-                disabled={props.busy}
+                onClick={() => props.onAdopt(card.id)}
+                disabled={props.busy || stale}
                 data-testid="proposal-adopt"
               >
                 채택
@@ -444,20 +448,21 @@ export function DocPanel(props: DocPanelProps) {
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={props.onReject}
+                onClick={() => props.onReject(card.id)}
                 disabled={props.busy}
                 data-testid="proposal-reject"
               >
                 거절
               </button>
+              {props.onDefer && <button type="button" className="btn btn--sm" disabled={props.busy} data-testid="proposal-defer" onClick={() => props.onDefer?.(card.id)}>나중에</button>}
             </div>
           </section>
-        )}
+        ); })}
 
-        {ours !== null && ours.state === 'adopted' && revertable !== null && (
+        {revertable !== null && revertable.op === 'proposal.adopt' && (
           <div className="adopted-bar" data-testid="adopted-bar">
             <span className="adopted-text">
-              채택됨 · {truncate(ours.summary, 48)}
+              채택됨 · {revertable.proposalId} · {truncate(revertable.summary, 48)}
               {props.sqliteMode ? '' : ' (데몬 연결 시 되돌리기 가능)'}
             </span>
             <button
