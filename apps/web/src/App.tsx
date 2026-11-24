@@ -1300,7 +1300,16 @@ export default function App() {
       : evaluateMaturityLevel(project, {
           published: publishes.some((record) => record.status === 'ok'),
         });
-  const report = project === null ? null : traceability(selectedProject!);
+  if(selectedProject){
+    const ids=new Set([...(screen?[screen.id]:[]),...pins.map(p=>p.id)]);
+    let changed=true;
+    while(changed){changed=false;for(const link of selectedProject.graph.links){
+      if(ids.has(link.src)&&project!.graph.nodes.some(n=>n.id===link.dst)&&!ids.has(link.dst)){ids.add(link.dst);changed=true;}
+      if(ids.has(link.dst)&&project!.graph.nodes.some(n=>n.id===link.src)&&!ids.has(link.src)){ids.add(link.src);changed=true;}
+    }}
+    selectedProject.graph={nodes:selectedProject.graph.nodes.filter(n=>ids.has(n.id)),links:selectedProject.graph.links.filter(l=>ids.has(l.src)&&ids.has(l.dst))};
+  }
+  const report = project === null ? null : traceability(project);
   const graphNodes = project === null ? [] : graphViewNodes(project);
   const nextNumber = (project?.pinSeq ?? 0) + 1;
   /** F3-3's spec-view warning: requirements no references→evidence link grounds. */
@@ -1518,6 +1527,7 @@ export default function App() {
           project={project}
           nodes={graphNodes}
           report={report}
+          screenReport={selectedProject ? traceability(selectedProject) : report}
           maturity={maturity}
           busy={busy}
           selectedId={selectedGraphId}
@@ -1732,4 +1742,4 @@ export default function App() {
       )}
     </div>
   );
-        }
+}
