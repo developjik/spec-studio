@@ -15,6 +15,7 @@ import {
 } from '@spec-studio/protocol';
 import {
   applyPatches,
+  proposalIsStale,
   buildProposal,
   buildProposalFromBrief,
   buildProposalFromDraft,
@@ -613,32 +614,21 @@ export function execute(
                 draft: command.draft,
                 at: ctx.at,
               });
-      // One open proposal per doc: a new card retires the one still on the
-      // table for the same doc, the same way a refusal would.
-      const retired = project.proposals.filter(
-        (candidate) => candidate.docId === doc.id && candidate.state === 'open',
-      );
+      const queued: Proposal = { ...proposal, queuedAt: ctx.at, queueOrder: Math.max(0, ...project.proposals.map(p => p.queueOrder ?? 0)) + 1, source: command.source ?? (command.draft === undefined ? 'rule' : 'llm') };
       return {
-        project: {
-          ...project,
-          proposals: [
-            ...project.proposals.map((candidate) =>
-              candidate.docId === doc.id && candidate.state === 'open'
-                ? { ...candidate, state: 'rejected' as const, decidedAt: ctx.at }
-                : candidate,
-            ),
-            proposal,
-          ],
-          updatedAt: ctx.at,
-        },
-        events: [
-          ...retired.map((candidate) => ({
-            type: 'proposal.rejected' as const,
-            docId: doc.id,
-            proposalId: candidate.id,
-          })),
-          { type: 'proposal.created' as const, proposal },
-        ],
+        project: { ...project, proposals: [...project.proposals, queued], updatedAt: ctx.at },
+        events: [{ type: 'proposal.created', proposal: queued }],
+      };
+    }
+
+    case 'proposal.defer': {
+      const doc = requireDoc(project, command.docId);
+      const proposal = requireOpenProposal(project, command.proposalId);
+      if (proposal.docId !== doc.id) throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
+      const next = { ...proposal, queuedAt: ctx.at, queueOrder: Math.max(0, ...project.proposals.map(p => p.queueOrder ?? 0)) + 1 };
+      return {
+        project: { ...project, proposals: [...project.proposals.filter(p => p.id !== proposal.id), next], updatedAt: ctx.at },
+        events: [{ type: 'proposal.deferred', docId: doc.id, proposalId: proposal.id }],
       };
     }
 
@@ -649,6 +639,9 @@ export function execute(
         // One registry: a proposal naming another doc is the same failure as
         // naming none.
         throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
+      }
+      if (proposalIsStale(doc, proposal)) {
+        throw new DomainError('invalid_input', '제안 이후 문단이 변경됐습니다. 새 제안을 만들어 비교하세요');
       }
       const applied = applyPatches(doc, proposal.patches, ctx.at);
       const decided: Proposal = { ...proposal, state: 'adopted', decidedAt: ctx.at };
@@ -677,6 +670,7 @@ export function execute(
     case 'proposal.reject': {
       const doc = requireDoc(project, command.docId);
       const proposal = requireOpenProposal(project, command.proposalId);
+      if (proposal.docId !== doc.id) throw new DomainError('doc_missing', '이 제안은 다른 문서의 것입니다');
       const decided: Proposal = { ...proposal, state: 'rejected', decidedAt: ctx.at };
       return {
         project: {
@@ -1002,4 +996,4 @@ export function applyGraphProposal(project: Project, ctx: ExecuteContext): Execu
     throw new DomainError('proposal_missing', '제안을 찾지 못했습니다');
   }
   return execute(project, { type: 'graph.proposal.adopt', proposalId: proposal.id }, ctx);
-}
+      }
