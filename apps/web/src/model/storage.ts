@@ -58,7 +58,7 @@ export function downloadProject(project: Project): void {
 
 /** The file a person keeps: the project plus what it is and when it left. */
 export function bundleOf(project: Project, at = new Date().toISOString()): ProjectBundle {
-  return { format: 'spec-studio.bundle', version: 1, exportedAt: at, project };
+  return { format: 'spec-studio.bundle', version: (project.screens?.length ?? 0) > 1 ? 2 : 1, exportedAt: at, project };
 }
 
 export function downloadBundle(bundle: ProjectBundle): void {
@@ -75,7 +75,7 @@ export function downloadBundle(bundle: ProjectBundle): void {
 }
 
 /**
- * A bundle is the v1 format; a bare project file (the W1–W4 export) still
+ * A bundle accepts v1 and v2 formats; a bare project file (the W1–W4 export) still
  * opens, because a file a person saved last month should not stop working.
  */
 export function parseBundleFile(text: string): ProjectBundle {
@@ -97,4 +97,4 @@ export function projectForStorage(project:Project):Project{
 }
 export function serializeProject(project:Project):string{
   return JSON.stringify(projectForStorage(project));
-}
+                                   }
