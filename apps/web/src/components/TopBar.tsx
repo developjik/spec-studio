@@ -185,7 +185,7 @@ export function TopBar({
             : '간편 모드로 전환 — 캔버스·문서·제안 카드·출력만 둡니다'
         }
       >
-        {uiMode === 'easy' ? '간편 모드' : '전문 모드'}
+        {uiMode === 'easy' ? '전문 모드로 전환' : '간편 모드로 전환'}
       </button>
 
       {screen !== null && (
