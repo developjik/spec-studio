@@ -1261,7 +1261,10 @@ export class SqliteStore implements StorePort {
       if (!keptDocs.has(old.id)) this.#retireDoc(old.id, at);
     }
 
-    for (const proposal of project.proposals) this.#writeProposal(proposal);
+    const oldProposals = new Map((before?.proposals ?? []).map(proposal => [proposal.id, proposal]));
+    for (const proposal of project.proposals) {
+      if (JSON.stringify(oldProposals.get(proposal.id)) !== JSON.stringify(proposal)) this.#writeProposal(proposal);
+    }
 
     for (const node of project.graph.nodes) {
       this.#upsertObj(graphNodeToRow(node, project.id));
