@@ -227,3 +227,26 @@ describe('the pin-derived proposal', () => {
     expect(again.summary).toContain('없습니다');
   });
 });
+
+it('maps duplicate pin numbers only within the requested screen and rejects deleted endpoints',()=>{
+  let {project,ctx}=seeded();
+  const first=project.pins[0]!;
+  const second={...SCREEN,id:`S_${'x'.repeat(12)}`,code:'SCR-111',title:'두번째'};
+  project=run(project,{type:'screen.add',screen:second},ctx).project;
+  project=run(project,{type:'pin.create',screenId:second.id,pinType:'function',title:'다른 버튼',body:'',anchor:{x:.2,y:.2}},ctx).project;
+  project=run(project,{type:'graph.proposal.create',screenId:SCREEN.id,draft:{summary:'첫 화면',nodes:[{key:'r1',type:'req',title:'첫 화면 요구',body:'',pins:[1]}],links:[{type:'implements',src:'pin:1',dst:'item:r1'}]}},ctx).project;
+  expect(JSON.stringify(project.graphProposal)).toContain(first.id);
+  const other=project.pins.find(p=>p.screenId===second.id)!;
+  expect(JSON.stringify(project.graphProposal)).not.toContain(other.id);
+  const pending=project;
+  const adopted=run(project,{type:'graph.proposal.adopt',proposalId:project.graphProposal!.id},ctx).project;
+  expect(adopted.graph.links.some(l=>l.src===first.id||l.dst===first.id)).toBe(true);
+  project=run(pending,{type:'screen.delete',screenId:SCREEN.id},ctx).project;
+  expect(()=>run(project,{type:'graph.proposal.adopt',proposalId:project.graphProposal!.id},ctx)).toThrow();
+});
+
+it('rejects an oversized screen before it can corrupt persisted project state',()=>{
+  const {project,ctx}=seeded();
+  expect(()=>run(project,{type:'screen.add',screen:{...SCREEN,id:`S_${'y'.repeat(12)}`,code:'SCR-112',title:'가'.repeat(121)}},ctx)).toThrow();
+  expect(project.screens).toHaveLength(1);
+});
