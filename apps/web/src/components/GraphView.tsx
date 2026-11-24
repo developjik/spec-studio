@@ -17,7 +17,7 @@ import {
 import { useState } from 'react';
 
 /**
- * The graph surface: one screen, its pins, and what a spec owes them. The three
+ * The graph surface: the project screens, their pins, and what a spec owes them. The three
  * columns answer three questions in order — what exists, how it is joined, and
  * what is still unowned. Nothing here edits pins; a pin is born in the studio
  * and arrives here as a node, which is what keeps one writer per object.
