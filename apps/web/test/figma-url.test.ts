@@ -31,7 +31,7 @@ describe('EntryGate Figma form', () => {
       }),
     );
 
-    expect(markup).toContain('novalidate=""');
+    expect(markup.toLowerCase()).toContain('novalidate=""');
     expect(markup).toContain('type="url"');
     expect(markup).toContain('role="alert"');
     expect(markup).toContain('Figma 주소는 HTTPS를 사용하고 figma.com 도메인이어야 합니다.');
