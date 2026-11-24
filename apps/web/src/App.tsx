@@ -185,7 +185,7 @@ export default function App() {
         onOpenOutputs={() => outputs.setOutputOpen(true)}
         onOpenPublish={() => outputs.setPublishOpen(true)}
         onOpenAi={ai.openAiPanel}
-        aiSource={aiSource}
+        aiSource={docsApi.proposal?.source ?? aiSource}
         uiMode={mode}
         onToggleMode={uiMode.toggleMode}
       />
