@@ -648,7 +648,7 @@ export default function App() {
   };
 
   const updateBlockData = (blockId:string,data:import('@spec-studio/protocol').RichBlockData) => {
-    if(doc!==null) void runDoc({type:'doc.block.update',docId:doc.id,blockId,data});
+    if(doc!==null && JSON.stringify(doc.blocks.find(b=>b.id===blockId)?.data)!==JSON.stringify(data)) void runDoc({type:'doc.block.update',docId:doc.id,blockId,data});
   };
   const changeBlockType = (blockId: string, blockType: BlockType) => {
     if (doc === null) return;
@@ -657,7 +657,7 @@ export default function App() {
       docId: doc.id,
       blockId,
       blockType,
-      ...(blockType==='table'?{data:{table:{rows:[['제목','값'],['','']],header:true}}}:blockType==='code'?{data:{code:{language:'text',lineNumbers:false}}}:blockType==='figure'&&project?.screen?{data:{figure:{screenId:project.screen.id,alt:project.screen.title}}}:{}),
+      ...(blockType==='figure'&&!doc.blocks.find(b=>b.id===blockId)?.data?.figure&&project?.screen?{data:{...doc.blocks.find(b=>b.id===blockId)?.data,figure:{screenId:project.screen.id,alt:project.screen.title}}}:{}),
     });
   };
 
@@ -1751,4 +1751,4 @@ export default function App() {
       )}
     </div>
   );
-}
+      }
