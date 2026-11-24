@@ -79,6 +79,38 @@ async function seeded(store: SqliteStore): Promise<string> {
 }
 
 describe('the document in SQLite', () => {
+  it('invalidates queued pin text changes but not anchor moves, and does not rewrite unchanged history', async () => {
+    const store = open();
+    const projectId = await seeded(store);
+    let project = (await store.readProject(projectId))!;
+    const docId = project.docs[0]!.id;
+    const pinId = project.pins[0]!.id;
+    const created = await store.execute(projectId, { type: 'proposal.create', docId });
+    const proposalId = created.project.proposals.at(-1)!.id;
+    const beforeRows = store.database.prepare('SELECT id FROM proposal_op WHERE proposal_id = ?').all(proposalId);
+    await store.execute(projectId, { type: 'pin.update', screenId: SCREEN.id, pinId, anchor: {x:0.4,y:0.4} });
+    expect(store.database.prepare('SELECT id FROM proposal_op WHERE proposal_id = ?').all(proposalId)).toEqual(beforeRows);
+    await store.execute(projectId, { type: 'proposal.adopt', docId, proposalId });
+    const next = await store.execute(projectId, { type: 'proposal.create', docId });
+    const nextId = next.project.proposals.at(-1)!.id;
+    await store.execute(projectId, { type: 'pin.update', screenId: SCREEN.id, pinId, title: '새 제목' });
+    await expect(store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: nextId })).rejects.toThrow(/참조 핀/);
+    const refreshed = await store.execute(projectId, { type: 'proposal.create', docId });
+    await store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: refreshed.project.proposals.at(-1)!.id });
+  });
+
+  it('blocks an insert with a reverted anchor while leaving a fresh insert adoptable', async () => {
+    const store = open();
+    const projectId = await seeded(store);
+    const docId = (await store.readProject(projectId))!.docs[0]!.id;
+    const first = await store.execute(projectId, { type: 'proposal.create', docId });
+    const adopted = await store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: first.project.proposals.at(-1)!.id });
+    const second = await store.execute(projectId, { type: 'proposal.create', docId });
+    const secondId = second.project.proposals.at(-1)!.id;
+    await store.revert(projectId, adopted.opSeq);
+    await expect(store.execute(projectId, { type: 'proposal.adopt', docId, proposalId: secondId })).rejects.toThrow(/변경/);
+  });
+
   it('creates the document with the screen and stores blocks under it', async () => {
     const store = open();
     const projectId = await seeded(store);
