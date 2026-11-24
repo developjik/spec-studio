@@ -655,11 +655,12 @@ export default function App() {
     void runDoc({ type: 'proposal.create', docId: doc.id });
   };
 
-  const decideProposal = (decision: 'adopt' | 'reject') => {
-    if (doc === null || proposal === null) return;
-    const proposalId = proposal.id;
-    const summary = proposal.summary;
-    const patches = proposal.patches.length;
+  const decideProposal = (decision: 'adopt' | 'reject', proposalId: string) => {
+    if (doc === null) return;
+    const selected = project?.proposals.find(p => p.id === proposalId && p.docId === doc.id);
+    if (selected === undefined) return;
+    const summary = selected.summary;
+    const patches = selected.patches.length;
     if (decision === 'reject') {
       void runDoc({ type: 'proposal.reject', docId: doc.id, proposalId });
       return;
@@ -1403,6 +1404,7 @@ export default function App() {
             docs={docs}
             pins={pins}
             proposal={proposal}
+            proposals={project?.proposals ?? []}
             mode={docMode}
             selectedPinId={selectedPinId}
             focusBlockId={focusBlockId}
@@ -1425,8 +1427,9 @@ export default function App() {
             onClearStale={clearStale}
             onSelectPin={setSelectedPinId}
             onCreateProposal={createProposal}
-            onAdopt={() => decideProposal('adopt')}
-            onReject={() => decideProposal('reject')}
+            onAdopt={(id) => decideProposal('adopt', id)}
+            onReject={(id) => decideProposal('reject', id)}
+            onDefer={(proposalId) => { if (doc !== null) void runDoc({ type: 'proposal.defer', docId: doc.id, proposalId }); }}
             onRevert={() => void revertAdopted()}
             onFocusHandled={() => setFocusBlockId(null)}
           />
@@ -1522,4 +1525,4 @@ export default function App() {
       )}
     </div>
   );
-}
+        }
