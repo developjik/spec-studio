@@ -10,6 +10,8 @@ export type StudioView = 'studio' | 'graph';
 
 interface TopBarProps {
   screen: Screen | null;
+  screens?: readonly Screen[];
+  onSelectScreen?: (id: string) => void;
   daemonStatus: DaemonStatus;
   /** Daemon mode only; browser mode passes none and the switcher stays hidden. */
   projects: SwitcherProject[];
@@ -167,7 +169,11 @@ function MaturityBadge({ maturity }: { maturity: Maturity }) {
         {maturity.level === 'L2' && <span className="maturity-todo-count">검증 준비 완료</span>}
       </button>
       {open && (
-        <div className="maturity-pop" data-testid="maturity-checklist" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="maturity-pop"
+          data-testid="maturity-checklist"
+          onClick={(event) => event.stopPropagation()}
+        >
           {maturity.levels.map((level) => (
             <div key={level.level} className="maturity-row">
               <span
@@ -200,6 +206,8 @@ function MaturityBadge({ maturity }: { maturity: Maturity }) {
 
 export function TopBar({
   screen,
+  screens = [],
+  onSelectScreen,
   daemonStatus,
   projects,
   currentProjectId,
@@ -273,6 +281,20 @@ export function TopBar({
             <span className="screen-source">{sourceLabel(screen)}</span>
           </div>
 
+          {screens.length > 1 && (
+            <select
+              className="topbar-screen-select"
+              aria-label="상단 화면 전환"
+              value={screen.id}
+              onChange={(e) => onSelectScreen?.(e.target.value)}
+            >
+              {screens.map((s) => (
+                <option value={s.id} key={s.id}>
+                  {s.code} · {s.title}
+                </option>
+              ))}
+            </select>
+          )}
           <MaturityBadge maturity={maturity} />
         </>
       )}
