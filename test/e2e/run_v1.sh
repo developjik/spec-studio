@@ -11,7 +11,9 @@ export SPEC_STUDIO_DB="$WORK/graph.db"
 export DAEMON_LOG="$WORK/daemon.log"
 export OUT_DIR="${OUT_DIR:-$PWD/../../downloads}"
 
-pnpm daemon:build > "$WORK/build.log" 2>&1
+if [[ "${E2E_DAEMON_BUILT:-0}" != 1 ]]; then
+  pnpm daemon:build > "$WORK/build.log" 2>&1
+fi
 
 # Serve the built app, not the dev transform: the check should exercise the
 # bundle that ships, and the preview server is the same Vite.
