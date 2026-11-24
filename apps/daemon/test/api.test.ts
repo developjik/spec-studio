@@ -722,3 +722,35 @@ describe('project.rename (#5)', () => {
     expect(read.body.project?.name).toBe('주문 상세 기획');
   });
 });
+
+
+describe('multi-screen publish isolation',()=>{
+  it('creates a page per screen, previews the explicit screen and never updates its neighbor',async()=>{
+    const created=await api<Envelope>(daemon,'/api/projects',{body:{name:'화면별 발행'}});
+    const id=created.body.project!.id;
+    const command=async(command:unknown)=>api<Envelope>(daemon,`/api/projects/${id}/commands`,{body:{command}});
+    const second={...SCREEN,id:`S_${'e'.repeat(12)}`,code:'SCR-111',title:'다른 화면'};
+    await command({type:'screen.add',screen:SCREEN});
+    await command({type:'pin.create',screenId:SCREEN.id,pinType:'function',title:'첫 화면 전용',body:'',anchor:{x:.1,y:.2}});
+    await command({type:'screen.add',screen:second});
+    const preview=await api<Envelope>(daemon,`/api/projects/${id}/publish/preview`,{body:{space:'SPEC',mode:'auto',screenId:SCREEN.id}});
+    expect(preview.body.preview?.body).toContain('첫 화면 전용');
+    const send=async(screenId:string)=>api<Envelope>(daemon,`/api/projects/${id}/publish`,{body:{target:target(),mode:'auto',screenId,overlayPng:PNG_BASE64}});
+    const first=await send(SCREEN.id); const other=await send(second.id);
+    expect(first.body.outcome?.status).toBe('created');
+    expect(other.body.outcome?.status).toBe('created');
+    expect(first.body.outcome?.page?.id).not.toBe(other.body.outcome?.page?.id);
+    expect((await send(SCREEN.id)).body.outcome?.status).toBe('skipped');
+    const detail=await api<Envelope>(daemon,`/api/projects/${id}`);
+    const pinId=detail.body.project!.pins[0]!.id;
+    await command({type:'screen.select',screenId:SCREEN.id});
+    await command({type:'pin.update',screenId:SCREEN.id,pinId,title:'첫 화면 수정'});
+    const updated=await send(SCREEN.id);
+    expect(updated.body.outcome?.status).toBe('updated');
+    expect(updated.body.outcome?.page?.id).toBe(first.body.outcome?.page?.id);
+    expect((await send(second.id)).body.outcome?.status).toBe('skipped');
+    expect(mock.pageCreates).toBe(2); expect(mock.pageUpdates).toBe(1);
+    const unknown=await send(`S_${'z'.repeat(12)}`);
+    expect(unknown.status).toBe(400);expect(mock.pageCreates).toBe(2);
+  });
+});
