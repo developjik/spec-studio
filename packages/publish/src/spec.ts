@@ -68,6 +68,7 @@ export function specFingerprint(input: {
           rev: input.doc.rev,
           blocks: input.doc.blocks.map((block) => ({
             type: block.type,
+            data: block.data,
             text: block.text,
             pins: block.pinRefs.map((ref) => ref.pinId),
           })),
