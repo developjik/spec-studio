@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: apps/daemon/dist
-          key: daemon-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/daemon/**', 'packages/**') }}
+          key: daemon-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/daemon/src/**', 'apps/daemon/build.mjs', 'apps/daemon/package.json', 'packages/*/src/**', 'packages/store/schema/**') }}
       - name: Build daemon
         if: steps.daemon-cache.outputs.cache-hit != 'true'
         run: pnpm daemon:build
