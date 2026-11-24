@@ -135,6 +135,8 @@ export default function App() {
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [filter, setFilter] = useState<PinFilter>('all');
   const [draftAnchor, setDraftAnchor] = useState<Anchor | null>(null);
+  const previousScreen=useRef<string|null>(null);
+  useEffect(()=>{const id=project?.screen?.id??null;if(previousScreen.current!==null&&previousScreen.current!==id){setDraftAnchor(null);setSelectedPinId(null);setActiveDocId(null);setFocusBlockId(null);setFilter('all');}previousScreen.current=id;},[project?.screen?.id]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -1304,8 +1306,8 @@ export default function App() {
     const ids=new Set([...(screen?[screen.id]:[]),...pins.map(p=>p.id)]);
     let changed=true;
     while(changed){changed=false;for(const link of selectedProject.graph.links){
-      if(ids.has(link.src)&&project!.graph.nodes.some(n=>n.id===link.dst)&&!ids.has(link.dst)){ids.add(link.dst);changed=true;}
-      if(ids.has(link.dst)&&project!.graph.nodes.some(n=>n.id===link.src)&&!ids.has(link.src)){ids.add(link.src);changed=true;}
+      if(ids.has(link.src)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.dst)&&!ids.has(link.dst)){ids.add(link.dst);changed=true;}
+      if(ids.has(link.dst)&&[...project!.graph.nodes,...project!.ideas,...project!.evidence].some(n=>n.id===link.src)&&!ids.has(link.src)){ids.add(link.src);changed=true;}
     }}
     selectedProject.graph={nodes:selectedProject.graph.nodes.filter(n=>ids.has(n.id)),links:selectedProject.graph.links.filter(l=>ids.has(l.src)&&ids.has(l.dst))};
   }
@@ -1470,6 +1472,7 @@ export default function App() {
             onClick={() => {
               const title = window.prompt('새 화면 이름');
               if (!title?.trim()) return;
+              if(title.trim().length>120){setNotice({tone:'error',text:'화면 이름은 120자 이하로 입력해 주세요.'});return;}
               const at = nowIso();
               void attachScreen({
                 id: newScreenId(),
@@ -1578,7 +1581,7 @@ export default function App() {
               <span className="tool-hint">이미지 클릭 → 번호 핀</span>
             </div>
 
-            <FigmaBar screen={screen} onSave={saveFigmaUrl} />
+            <FigmaBar key={screen.id} screen={screen} onSave={saveFigmaUrl} />
 
             <CanvasStage
               screen={screen}
@@ -1742,4 +1745,4 @@ export default function App() {
       )}
     </div>
   );
-}
+                }
