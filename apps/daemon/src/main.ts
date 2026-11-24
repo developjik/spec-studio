@@ -1,4 +1,3 @@
-throw new Error('DEV39 deliberate daemon path failure');
 import './bootstrap';
 import { resolve } from 'node:path';
 import { startDaemon, DEFAULT_ORIGINS, DEFAULT_PORT } from './server';
