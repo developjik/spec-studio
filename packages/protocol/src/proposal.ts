@@ -18,6 +18,7 @@ export type ProposalState = z.infer<typeof ProposalStateSchema>;
 /** Exactly the fields a patch may change. Ids and positions are the store's. */
 export const BlockStateSchema = z.object({
   type: BlockSchema.shape.type,
+  data: BlockSchema.shape.data,
   text: BlockSchema.shape.text,
   pinRefs: BlockSchema.shape.pinRefs,
 });
@@ -65,6 +66,7 @@ export const BlockSnapshotEntrySchema = z.object({
   /** False when the operation created the block; a revert removes it. */
   existed: z.boolean(),
   type: BlockSchema.shape.type.nullable(),
+  data: BlockSchema.shape.data,
   text: z.string().nullable(),
   pinRefs: z.array(BlockSchema.shape.pinRefs.element).nullable(),
   /** Position among the document's blocks at snapshot time. */

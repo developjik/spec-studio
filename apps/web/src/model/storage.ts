@@ -1,3 +1,4 @@
+import { bundleVersion } from '@spec-studio/protocol';
 import { normalizeProject } from '@spec-studio/core';
 import {
   normalizeLegacyProject,
@@ -58,7 +59,7 @@ export function downloadProject(project: Project): void {
 
 /** The file a person keeps: the project plus what it is and when it left. */
 export function bundleOf(project: Project, at = new Date().toISOString()): ProjectBundle {
-  return { format: 'spec-studio.bundle', version: (project.screens?.length ?? 0) > 1 ? 2 : 1, exportedAt: at, project };
+  return { format: 'spec-studio.bundle', version: bundleVersion(project), exportedAt: at, project };
 }
 
 export function downloadBundle(bundle: ProjectBundle): void {

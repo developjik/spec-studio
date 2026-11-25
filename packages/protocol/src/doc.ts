@@ -23,11 +23,10 @@ export type BlockId = z.infer<typeof BlockIdSchema>;
 export type ProposalId = z.infer<typeof ProposalIdSchema>;
 
 /**
- * The four block types v1 edits. The schema knows more (table cells, figures,
- * code), but a paragraph-level editor that cannot render them would delete
- * what it cannot see, so they are added when the editor can.
+ * The seven editable block types. Unknown imported types remain read-only and
+ * retain their original fields for lossless export. Structured data lives in attrs.
  */
-export const BLOCK_TYPES = ['paragraph', 'heading', 'list', 'caption'] as const;
+export const BLOCK_TYPES = ['paragraph', 'heading', 'list', 'caption', 'table', 'code', 'figure'] as const;
 export const BlockTypeSchema = z.enum(BLOCK_TYPES);
 export type BlockType = z.infer<typeof BlockTypeSchema>;
 
@@ -36,6 +35,9 @@ export const BLOCK_TYPE_LABEL: Record<BlockType, string> = {
   heading: '제목',
   list: '목록',
   caption: '캡션',
+  table: '표',
+  code: '코드',
+  figure: '그림',
 };
 
 /**
@@ -60,13 +62,23 @@ export const BlockPinRefSchema = z.object({
 
 export type BlockPinRef = z.infer<typeof BlockPinRefSchema>;
 
-export const BlockSchema = z.object({
+export const RichBlockDataSchema = z.looseObject({
+  table: z.object({ rows: z.array(z.array(z.string().max(8000)).min(1).max(30)).min(1).max(100), header: z.boolean() }).refine(t=>t.rows.every(row=>row.length===t.rows[0]?.length), '표의 열 수가 일치해야 합니다').optional(),
+  code: z.object({ language: z.string().max(40), lineNumbers: z.boolean() }).optional(),
+  figure: z.object({ screenId: z.string().min(1), pinId: PinIdSchema.optional(), alt: z.string().trim().min(1).max(500) }).optional(),
+});
+export type RichBlockData = z.infer<typeof RichBlockDataSchema>;
+export const isKnownBlockType = (type:string): type is BlockType => (BLOCK_TYPES as readonly string[]).includes(type);
+export const BlockSchema = z.looseObject({
   id: BlockIdSchema,
-  type: BlockTypeSchema,
+  type: z.string().min(1).max(100),
+  data: z.custom<RichBlockData>((v)=>v!==null&&typeof v==='object'&&!Array.isArray(v)).optional(),
   text: z.string().max(8000),
   pinRefs: z.array(BlockPinRefSchema).max(24),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+}).superRefine((block,ctx)=>{
+ if(isKnownBlockType(block.type)&&block.data!==undefined){const result=RichBlockDataSchema.safeParse(block.data);if(!result.success) for(const issue of result.error.issues)ctx.addIssue({code:'custom',path:['data',...issue.path],message:issue.message});}
 });
 
 export type Block = z.infer<typeof BlockSchema>;

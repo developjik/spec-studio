@@ -1,5 +1,7 @@
 import {
   BlockSchema,
+  isKnownBlockType,
+  type RichBlockData,
   type AiBriefDraft,
   type AiDocDraft,
   type Block,
@@ -143,6 +145,7 @@ function newRef(pin: Pin, at: string): BlockPinRef {
 export function makeBlock(input: {
   id: string;
   type: Block['type'];
+  data?: RichBlockData | undefined;
   text: string;
   pinRefs?: BlockPinRef[];
   at: string;
@@ -150,6 +153,7 @@ export function makeBlock(input: {
   return BlockSchema.parse({
     id: input.id,
     type: input.type,
+    data: input.data,
     text: input.text,
     pinRefs: input.pinRefs ?? [],
     createdAt: input.at,
@@ -226,7 +230,7 @@ export function buildProposal(input: {
     if (touched.has(badge.blockId)) continue;
     touched.add(badge.blockId);
     const block = findBlock(doc, badge.blockId);
-    if (block === undefined) continue;
+    if (block === undefined || !isKnownBlockType(block.type) || ['code','table','figure'].includes(block.type)) continue;
     // A pin that vanished loses its citation; a pin that changed keeps it.
     const refs = block.pinRefs
       .filter((ref) => byId.has(ref.pinId))
@@ -234,8 +238,8 @@ export function buildProposal(input: {
     patches.push({
       blockId: block.id,
       afterBlockId: null,
-      before: { type: block.type, text: block.text, pinRefs: block.pinRefs },
-      after: { type: block.type, text: syncBlockText(block.text, refs, pins), pinRefs: refs },
+      before: { type: block.type, text: block.text, pinRefs: block.pinRefs, data: block.data },
+      after: { type: block.type, text: syncBlockText(block.text, refs, pins), pinRefs: refs, data: block.data },
     });
   }
 
@@ -313,6 +317,7 @@ export function buildProposalFromDraft(input: {
         '제안이 이 문서에 없는 문단을 가리킵니다. 다시 추출해 주세요.',
       );
     }
+    if(!isKnownBlockType(block.type)||['code','table','figure'].includes(block.type)) throw new DomainError('invalid_input','리치 블록은 직접 편집으로 수정하세요');
     const kept = block.pinRefs.filter((ref) => byId.has(ref.pinId));
     const cited = draftPatch.pins
       .map((number) => byNumber.get(number))
@@ -326,6 +331,7 @@ export function buildProposalFromDraft(input: {
     }
     const after = {
       type: block.type,
+      data: block.data,
       text: syncBlockText(draftPatch.text, refs, pins),
       pinRefs: refs,
     };
@@ -337,7 +343,7 @@ export function buildProposalFromDraft(input: {
     patches.push({
       blockId: block.id,
       afterBlockId: null,
-      before: { type: block.type, text: block.text, pinRefs: block.pinRefs },
+      before: { type: block.type, text: block.text, pinRefs: block.pinRefs, data: block.data },
       after,
     });
   }
@@ -439,6 +445,7 @@ export function applyPatches(
   const created: string[] = [];
   for (const patch of patches) {
     const current = blocks.find((block) => block.id === patch.blockId);
+    if(!isKnownBlockType(patch.after.type)||(current&&!isKnownBlockType(current.type))) throw new DomainError('invalid_input','알 수 없는 블록은 읽기 전용입니다');
     if (patch.before === null) {
       if (current !== undefined) {
         throw new DomainError('invalid_input', '이미 있는 문단을 추가하려 했습니다');
@@ -446,6 +453,7 @@ export function applyPatches(
       const block = makeBlock({
         id: patch.blockId,
         type: patch.after.type,
+        data: patch.after.data,
         text: patch.after.text,
         pinRefs: patch.after.pinRefs,
         at,
@@ -457,7 +465,7 @@ export function applyPatches(
     if (current === undefined) throw new DomainError('block_not_found', '문단을 찾지 못했습니다');
     blocks = blocks.map((block) =>
       block.id === patch.blockId
-        ? { ...block, type: patch.after.type, text: patch.after.text, pinRefs: patch.after.pinRefs, updatedAt: at }
+        ? { ...block, type: patch.after.type, text: patch.after.text, pinRefs: patch.after.pinRefs, data: patch.after.data ?? block.data, updatedAt: at }
         : block,
     );
   }
@@ -477,6 +485,7 @@ export function snapshotForPatches(doc: Doc, patches: readonly ProposalPatch[]):
         blockId: patch.blockId,
         existed: true,
         type: patch.before.type,
+        data: patch.before.data,
         text: patch.before.text,
         pinRefs: patch.before.pinRefs,
         index,
@@ -512,7 +521,9 @@ export function restoreSnapshot(doc: Doc, snapshot: DocSnapshot, at: string): Do
     const previous = before.get(entry.blockId);
     const restored = BlockSchema.parse({
       id: entry.blockId,
+      ...previous,
       type: entry.type ?? previous?.type ?? 'paragraph',
+      data: entry.data ?? previous?.data,
       text: entry.text ?? '',
       pinRefs: entry.pinRefs ?? [],
       createdAt: previous?.createdAt ?? at,
@@ -561,6 +572,6 @@ export function proposalIsStale(doc: Doc, proposal: Proposal, pins?: readonly Pi
     }
     const current = findBlock(doc, patch.blockId);
     if (patch.before === null) return current !== undefined;
-    return current === undefined || current.type !== patch.before.type || current.text !== patch.before.text || !sameRefs(current.pinRefs, patch.before.pinRefs);
+    return current === undefined || current.type !== patch.before.type || current.text !== patch.before.text || JSON.stringify(current.data) !== JSON.stringify(patch.before.data) || !sameRefs(current.pinRefs, patch.before.pinRefs);
   });
 }

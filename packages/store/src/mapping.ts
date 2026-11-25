@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   NODE_TYPE_KIND,
+  isKnownBlockType,
+  type RichBlockData,
   type Block,
   type BlockPinRef,
   type Doc,
@@ -483,26 +485,29 @@ export function blockIdx(index: number): string {
   return String(Math.max(0, Math.trunc(index))).padStart(6, '0');
 }
 
-export function blockHash(block: Pick<Block, 'type' | 'text' | 'pinRefs'>): string {
+export function blockHash(block: Pick<Block, 'type' | 'text' | 'pinRefs' | 'data'>): string {
   return contentHash({
     type: block.type,
+    data: block.data,
     text: block.text,
     pins: block.pinRefs.map((ref) => [ref.pinId, ref.fingerprint]),
   });
 }
 
 interface BlockAttrs {
+  data?: RichBlockData | undefined;
+  preserved?: Block;
   pinRefs?: BlockPinRef[];
 }
 
 export function blockToRow(block: Block, docId: string, index: number): BlockRow {
-  const attrs: BlockAttrs = { pinRefs: block.pinRefs };
+  const attrs: BlockAttrs = { ...(!isKnownBlockType(block.type) && typeof block.legacyAttrs==='object' && block.legacyAttrs!==null ? block.legacyAttrs : {}), pinRefs: block.pinRefs, data: block.data, preserved: block };
   return {
     id: block.id,
     doc_id: docId,
-    parent_id: null,
+    parent_id: !isKnownBlockType(block.type) && typeof block.parentBlockId==='string' ? block.parentBlockId : null,
     idx: blockIdx(index),
-    type: block.type,
+    type: ['paragraph','heading','list','caption','table','code','figure','criteria','table_row','table_cell'].includes(block.type) ? block.type : 'criteria',
     text: block.text,
     attrs: JSON.stringify(attrs),
     hash: blockHash(block),
@@ -516,9 +521,14 @@ export function blockToRow(block: Block, docId: string, index: number): BlockRow
 export function blockFromRow(row: BlockRow): Block {
   const attrs = parseJson<BlockAttrs>(row.attrs || '{}');
   const at = row.created_at ?? row.updated_at ?? '';
+  const originalType=attrs.preserved?.type??row.type;
+  const {preserved,...legacyAttrs}=attrs;
   return {
+    ...attrs.preserved,
+    ...(!isKnownBlockType(originalType) && !attrs.preserved ? {legacyAttrs,parentBlockId:row.parent_id}:{}),
     id: row.id,
-    type: row.type as Block['type'],
+    type: attrs.preserved?.type ?? row.type,
+    data: attrs.data,
     text: row.text,
     pinRefs: attrs.pinRefs ?? [],
     createdAt: at,

@@ -1,5 +1,8 @@
 import {
   PinSchema,
+  BlockSchema,
+  RichBlockDataSchema,
+  isKnownBlockType,
   ScreenSchema,
   type Command,
   type DomainEvent,
@@ -216,6 +219,18 @@ export function execute(project: Project, command: Command, ctx: ExecuteContext)
       events: [{ type: 'package.exported', files: command.files }],
     };
   if(command.type==='screen.add'||command.type==='screen.attach') command={...command,screen:ScreenSchema.parse(command.screen)};
+  if (command.type.startsWith('doc.') && 'blockId' in command) {
+    const block = project.docs.flatMap(doc=>doc.blocks).find(block=>block.id===command.blockId);
+    if(block && !isKnownBlockType(block.type)) throw new DomainError('invalid_input','알 수 없는 블록은 읽기 전용입니다');
+  }
+  if ((command.type==='doc.block.create'||command.type==='doc.block.update') && command.data!==undefined) {
+    RichBlockDataSchema.parse(command.data);
+    const figure=command.data.figure;
+    const owner=project.docs.find(d=>d.id===command.docId)?.screenId;
+    if(figure&&owner&&figure.screenId!==owner) throw new DomainError('invalid_input','문서와 같은 화면의 캡처를 선택하세요');
+    if(figure && !(project.screens??[]).some(s=>s.id===figure.screenId)) throw new DomainError('invalid_input','그림 화면을 찾지 못했습니다');
+    if(figure?.pinId && !project.pins.some(p=>p.id===figure.pinId&&p.screenId===figure.screenId)) throw new DomainError('invalid_input','그림 핀이 해당 화면에 없습니다');
+  }
   const current = normalizeProject(project);
   const screens = current.screens!;
   if (command.type === 'screen.attach') {
@@ -517,9 +532,11 @@ function executeActive(
       const block = makeBlock({
         id: ctx.nextId('block'),
         type: command.blockType,
+        data: command.data ?? (command.blockType==='table'?{table:{rows:[['',''],['','']],header:true}}:command.blockType==='code'?{code:{language:'text',lineNumbers:false}}:undefined),
         text: command.text,
         at: ctx.at,
       });
+      if(block.type==='figure'&&!block.data?.figure) throw new DomainError('invalid_input','그림에는 화면과 대체 텍스트가 필요합니다');
       // No `afterBlockId` means "at the end", which is what writing does.
       const after =
         command.afterBlockId === undefined ? (doc.blocks.at(-1)?.id ?? null) : command.afterBlockId;
@@ -538,17 +555,20 @@ function executeActive(
 
     case 'doc.block.update': {
       const doc = requireDoc(project, command.docId);
-      if (command.text === undefined && command.blockType === undefined) {
+      if (command.text === undefined && command.blockType === undefined && command.data === undefined) {
         throw new DomainError('invalid_input', '바꿀 내용이 없습니다');
       }
       const current = findBlock(doc, command.blockId);
       if (current === undefined) throw new DomainError('block_not_found', '문단을 찾지 못했습니다');
-      const block = {
+      if (!isKnownBlockType(current.type)) throw new DomainError('invalid_input', '알 수 없는 블록은 읽기 전용입니다');
+      const block = BlockSchema.parse({
         ...current,
+        data: command.data ? {...current.data,...command.data} : current.data ?? (command.blockType==='table'?{table:{rows:[['',''],['','']],header:true}}:command.blockType==='code'?{code:{language:'text',lineNumbers:false}}:undefined),
         type: command.blockType ?? current.type,
         text: command.text ?? current.text,
         updatedAt: ctx.at,
-      };
+      });
+      if(block.type==='figure'&&!block.data?.figure) throw new DomainError('invalid_input','그림에는 화면과 대체 텍스트가 필요합니다');
       const blocks = doc.blocks.map((candidate) => (candidate.id === block.id ? block : candidate));
       return {
         project: {
@@ -620,7 +640,7 @@ function executeActive(
       const updated = {
         ...block,
         pinRefs: [...block.pinRefs, ref],
-        text: syncBlockText(block.text, [...block.pinRefs, ref], project.pins),
+        text: ['code','table','figure'].includes(block.type) ? block.text : syncBlockText(block.text, [...block.pinRefs, ref], project.pins),
         updatedAt: ctx.at,
       };
       return {
@@ -659,7 +679,7 @@ function executeActive(
       const updated = {
         ...block,
         pinRefs: refs,
-        text: syncBlockText(block.text, refs, project.pins),
+        text: ['code','table','figure'].includes(block.type) ? block.text : syncBlockText(block.text, refs, project.pins),
         updatedAt: ctx.at,
       };
       return {
@@ -707,7 +727,7 @@ function executeActive(
       const updated = {
         ...block,
         pinRefs: refs,
-        text: syncBlockText(block.text, refs, project.pins),
+        text: ['code','table','figure'].includes(block.type) ? block.text : syncBlockText(block.text, refs, project.pins),
         updatedAt: ctx.at,
       };
       return {
@@ -828,6 +848,7 @@ function executeActive(
           '제안 이후 문단이나 참조 핀이 변경됐습니다. 새 제안을 만들어 비교하세요',
         );
       }
+      if(proposal.patches.some(p=>!isKnownBlockType(p.after.type)||doc.blocks.some(b=>b.id===p.blockId&&!isKnownBlockType(b.type)))) throw new DomainError('invalid_input','읽기 전용 블록은 제안으로 수정할 수 없습니다');
       const applied = applyPatches(doc, proposal.patches, ctx.at);
       const decided: Proposal = {
         ...proposal,

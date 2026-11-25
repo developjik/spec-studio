@@ -25,3 +25,10 @@ it('exports multi-screen bundles as v2 and reads them without losing screen owne
  const bundle=bundleOf(project,at);expect(bundle.version).toBe(2);
  ProjectBundleSchema.parse(bundle);const restored=parseBundleFile(JSON.stringify(bundle));expect(restored.project.screens).toHaveLength(2);expect(restored.project.pins.map(p=>[p.screenId,p.number])).toEqual(project.pins.map(p=>[p.screenId,p.number]));
 });
+
+it('uses v3 for hidden rich data and preserves opaque nested data on browser import',()=>{
+ const at='2026-11-19T00:00:00Z';const project=createProject({id:'PRJ_aaaaaaaaaaaa',name:'보존',at});
+ const base={id:'B_aaaaaaaaaaaa',type:'paragraph',text:'',pinRefs:[],createdAt:at,updatedAt:at};
+ project.docs=[{id:'D_aaaaaaaaaaaa',title:'문서',rev:0,kind:'spec',deletedAt:null,createdAt:at,updatedAt:at,blocks:[{...base,data:{table:{rows:[['보존']],header:true}}},{...base,id:'B_bbbbbbbbbbbb',type:'future-table',data:{table:{rows:[['확장']],header:true,columnWidths:[120,240]},code:{custom:{x:1}}}}]}];
+ const bundle=bundleOf(project,at);expect(bundle.version).toBe(3);expect(parseBundleFile(JSON.stringify(bundle)).project.docs[0]!.blocks).toEqual(project.docs[0]!.blocks);
+});

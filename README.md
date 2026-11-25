@@ -559,3 +559,32 @@ screen alias on load. Single-screen downloads keep bundle version 1 and the scre
 downloads use bundle version 2 so older single-screen readers reject them instead
 of silently collapsing ownership. New readers accept both versions. Images may
 appear twice in downloaded bundles; only browser storage compacts the alias.
+
+
+### Rich document blocks (DEV-118)
+
+The document editor supports paragraph, heading, list, caption, table, code and
+figure blocks. Tables have editable cells, a header row toggle and row/column
+controls (100 rows, 30 columns maximum). Code has a language label and copy
+button. Figures reference the document's own screen image and an optional pin;
+alt text is required. They do not upload files or implement DEV-52 state capture.
+If that screen has no image, the missing capture is shown explicitly.
+
+`doc.block.create` and `doc.block.update` accept optional `data`: `table` contains
+`rows: string[][]` and `header: boolean`; `code` contains `language` and
+`lineNumbers`; `figure` contains `screenId`, optional `pinId`, and nonempty `alt`.
+Rich data is stored in the existing block `attrs` JSON, without a DB migration. Exports containing rich or unknown blocks use bundle v3
+so older readers reject them rather than stripping structured fields.
+`block.type` stays open when reading: unknown types retain all fields, use a
+read-only fallback in the editor and escaped text in output. SQLite stores their
+original payload in attrs with its existing `criteria` carrier type. Editing an
+unrelated block does not strip unknown data. Unknown blocks cannot be changed,
+reordered, linked or deleted through block commands or proposal adoption.
+
+HTML and Confluence share escaped table/code markup. Confluence figures reference
+the uploaded screen overlay attachment rather than embedding data URLs. HTML embeds print CSS
+and prints to PDF using the browser, preserving cells, code whitespace and figure
+alt captions. It makes no external image requests. Rich blocks are edited directly,
+not rewritten by prose AI proposals; pin references never alter code contents.
+`test/e2e/run_rich.sh` verifies editor changes, reload, HTML download, PDF rendering
+and mobile layout. The full E2E runner includes this as its ninth harness.

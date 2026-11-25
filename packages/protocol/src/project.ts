@@ -55,7 +55,7 @@ export type ProjectFile = Project;
  */
 export const ProjectBundleSchema = z.object({
   format: z.literal('spec-studio.bundle'),
-  version: z.union([z.literal(1), z.literal(2)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   exportedAt: z.string().min(1),
   project: z.preprocess(normalizeLegacyProject, ProjectSchema),
 });
@@ -70,4 +70,10 @@ export function normalizeLegacyProject(raw: unknown): unknown {
   const value = raw as Record<string, unknown>;
   if ('docs' in value || !('doc' in value)) return raw;
   return { ...value, docs: value.doc === null ? [] : [value.doc] };
+}
+
+/** Readers predating rich blocks must reject rather than silently strip their data. */
+export function bundleVersion(project: Project):1|2|3 {
+ if(project.docs.some(doc=>doc.blocks.some(block=>!['paragraph','heading','list','caption'].includes(block.type)||block.data!==undefined))) return 3;
+ return (project.screens?.length??0)>1 ? 2 : 1;
 }

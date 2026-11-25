@@ -1,3 +1,4 @@
+import { bundleVersion } from '@spec-studio/protocol';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -522,7 +523,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'GET만 허용됩니다.');
       const bundle: ProjectBundle = {
         format: 'spec-studio.bundle',
-        version: (project.screens?.length ?? 0) > 1 ? 2 : 1,
+        version: bundleVersion(project),
         exportedAt: now(),
         project,
       };
