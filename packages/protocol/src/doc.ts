@@ -63,9 +63,9 @@ export const BlockPinRefSchema = z.object({
 export type BlockPinRef = z.infer<typeof BlockPinRefSchema>;
 
 export const RichBlockDataSchema = z.looseObject({
-  table: z.object({ rows: z.array(z.array(z.string().max(8000)).min(1).max(30)).min(1).max(100), header: z.boolean() }).refine(t=>t.rows.every(row=>row.length===t.rows[0]?.length), '표의 열 수가 일치해야 합니다').optional(),
-  code: z.object({ language: z.string().max(40), lineNumbers: z.boolean() }).optional(),
-  figure: z.object({ screenId: z.string().min(1), pinId: PinIdSchema.optional(), alt: z.string().trim().min(1).max(500) }).optional(),
+  table: z.looseObject({ rows: z.array(z.array(z.string().max(8000)).min(1).max(30)).min(1).max(100), header: z.boolean() }).refine(t=>t.rows.every(row=>row.length===t.rows[0]?.length), '표의 열 수가 일치해야 합니다').optional(),
+  code: z.looseObject({ language: z.string().max(40), lineNumbers: z.boolean() }).optional(),
+  figure: z.looseObject({ screenId: z.string().min(1), pinId: PinIdSchema.optional(), alt: z.string().trim().min(1).max(500) }).optional(),
 });
 export type RichBlockData = z.infer<typeof RichBlockDataSchema>;
 export const isKnownBlockType = (type:string): type is BlockType => (BLOCK_TYPES as readonly string[]).includes(type);
